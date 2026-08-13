@@ -30,3 +30,5 @@ yarn build
 ```
 
 Use Yarn, not npm. Open a pull request against `main`.
+
+CI is defined in `.github/ci.yml`. After granting the GitHub `workflow` scope (`gh auth refresh -s workflow`), move it to `.github/workflows/ci.yml` so Actions can run.
