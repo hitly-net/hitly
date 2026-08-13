@@ -1,0 +1,23 @@
+services:
+  db:
+    image: mariadb:11
+    container_name: hitly-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: hitly
+      MARIADB_USER: hitly
+      MARIADB_PASSWORD: hitly
+      MARIADB_ROOT_PASSWORD: hitly-root
+    ports:
+      - '3306:3306'
+    volumes:
+      - hitly_mariadb:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  hitly_mariadb:

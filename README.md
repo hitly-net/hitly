@@ -9,11 +9,13 @@ Self-host this repo, or use the hosted product at [hitly.net](https://hitly.net)
 
 ```bash
 yarn install
+cp apps/app/.env.example apps/app/.env.local
+yarn db:up
+yarn db:migrate
 yarn dev:web
 yarn dev:app
 ```
 
-Copy `apps/app/.env.example` to `apps/app/.env.local` and set `DATABASE_URL` for Better Auth.
 
 Developer guides: `/docs` and `/integrations/mastra`. Self-host notes: `/docs/self-host`.
 

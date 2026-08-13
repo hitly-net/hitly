@@ -11,5 +11,6 @@ dist
 .source
 coverage
 .mastra
+*.tsbuildinfo
 AGENTS.md
 CLAUDE.md

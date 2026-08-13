@@ -8,14 +8,19 @@
     "./schema": "./src/schema.ts"
   },
   "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/migrate.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hitly/core": "*",
-    "drizzle-orm": "^0.44.5"
+    "drizzle-orm": "^0.44.5",
+    "mysql2": "^3.23.3"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "drizzle-kit": "^0.31.4",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.2"
   }
 }

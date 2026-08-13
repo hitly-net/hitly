@@ -4,11 +4,12 @@
 
 ```bash
 yarn install
+cp apps/app/.env.example apps/app/.env.local
+yarn db:up
+yarn db:migrate
 yarn dev:web   # http://localhost:3000
 yarn dev:app   # http://localhost:3001
 ```
-
-Copy `apps/app/.env.example` to `apps/app/.env.local`.
 
 ## Layout
 

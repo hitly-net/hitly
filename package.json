@@ -12,6 +12,10 @@
     "dev": "turbo dev",
     "dev:web": "yarn workspace @hitly/web dev",
     "dev:app": "yarn workspace @hitly/app dev",
+    "db:up": "docker compose -f docker-compose.yml up -d --wait",
+    "db:down": "docker compose -f docker-compose.yml down",
+    "db:generate": "yarn workspace @hitly/db db:generate",
+    "db:migrate": "yarn workspace @hitly/db db:migrate",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck"

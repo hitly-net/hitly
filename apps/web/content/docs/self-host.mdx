@@ -10,7 +10,8 @@ This repository is the open-source Hitly server. Self-hosting includes the inbox
 ```bash
 yarn install
 cp apps/app/.env.example apps/app/.env.local
-# set DATABASE_URL to Postgres
+yarn db:up
+yarn db:migrate
 yarn dev:app
 ```
 

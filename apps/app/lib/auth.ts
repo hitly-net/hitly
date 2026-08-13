@@ -7,7 +7,7 @@ import { db } from './db'
 export const auth = db
   ? betterAuth({
       database: drizzleAdapter(db, {
-        provider: 'pg',
+        provider: 'mysql',
         schema: {
           user: schema.users,
           session: schema.sessions,
