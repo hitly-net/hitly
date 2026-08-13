@@ -1,0 +1,127 @@
+---
+title: Mastra
+description: Suspend a Mastra workflow, review it in Hitly, resume or bail.
+---
+
+[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses a workflow with `suspend()` and continues with `resume()` / `bail()`. Hitly owns the reviewer UI.
+
+## How it works with Hitly
+
+1. A step calls `suspend()` and POSTs the payload to Hitly.
+2. Hitly stores an [envelope](/docs/envelope) and shows it in the [inbox](/docs/inbox).
+3. A reviewer accepts, edits, or rejects.
+4. Hitly calls Mastra `resume()` with `resumeData`. Reject maps to `approved: false` so the step can `bail()`.
+
+See the runnable example in `examples/mastra`.
+
+## Setup
+
+Create a workspace, [API key](/docs/api), and Mastra [connection](/docs/connections) (`base URL` + token).
+
+Install `@hitly/plugin-mastra`:
+
+```bash
+npm i @hitly/plugin-mastra
+```
+
+```bash
+yarn add @hitly/plugin-mastra
+```
+
+```bash
+pnpm add @hitly/plugin-mastra
+```
+
+```bash
+bun add @hitly/plugin-mastra
+```
+
+Set env:
+
+```bash
+HITLY_API_URL=http://localhost:3001
+HITLY_API_KEY=hitly_...
+HITLY_CONNECTION_ID=conn_...
+MASTRA_BASE_URL=http://localhost:4111
+```
+
+## Integration guide
+
+1. Scaffold a Mastra project (`npx create-mastra@latest`) or open `examples/mastra`.
+2. Add a Hitly approval step that notifies Hitly, then `suspend()`.
+3. On resume, read `resumeData.approved`. If `false`, `bail()`.
+4. Run `mastra dev` (default `http://localhost:4111`) and Hitly app (`http://localhost:3001`).
+5. Start the workflow. Open `app.hitly.net/inbox`, accept, watch the run resume.
+
+```ts
+import { createStep, createWorkflow } from '@mastra/core/workflows'
+import { z } from 'zod'
+import { notifyHitlyApproval } from '@hitly/plugin-mastra'
+
+const approval = createStep({
+  id: 'hitly-approval',
+  inputSchema: z.object({ orderId: z.string(), amount: z.number() }),
+  outputSchema: z.object({ approved: z.boolean() }),
+  resumeSchema: z.object({ approved: z.boolean() }),
+  suspendSchema: z.object({ reason: z.string() }),
+  execute: async ({ inputData, resumeData, suspend, bail, runId }) => {
+    if (resumeData?.approved === false) {
+      return bail({ reason: 'Reviewer rejected the refund.' })
+    }
+    if (!resumeData?.approved) {
+      await notifyHitlyApproval(
+        {
+          apiUrl: process.env.HITLY_API_URL!,
+          apiKey: process.env.HITLY_API_KEY!,
+          connectionId: process.env.HITLY_CONNECTION_ID!,
+          mastraBaseUrl: process.env.MASTRA_BASE_URL!,
+          workflowId: 'refund-workflow',
+          action: { name: 'send-refund', args: inputData },
+        },
+        {
+          runId: String(runId),
+          suspendPayload: { reason: `Refund ${inputData.amount} for order ${inputData.orderId}` },
+        },
+      )
+      return await suspend({ reason: 'Human approval required.' })
+    }
+    return { approved: true }
+  },
+})
+```
+
+## Running locally
+
+1. `yarn workspace @hitly/app dev` — Hitly on port 3001.
+2. `yarn workspace @hitly/example-mastra dev` — Mastra on 4111.
+3. Trigger the refund workflow. Approve in the inbox.
+
+## Production
+
+Hitly must reach `mastraBaseUrl` to call `resume()`. Do not point a hosted Hitly workspace at `localhost`. Restrict Mastra CORS and use a token with workflow resume access.
+
+## Configuration options
+
+| Option | Use it to |
+| --- | --- |
+| `apiUrl` | Hitly app origin, such as `https://app.hitly.net` |
+| `apiKey` | Workspace ingest key |
+| `connectionId` | Connection that stores the Mastra base URL/token |
+| `mastraBaseUrl` | Origin Mastra server Hitly will call on resume |
+| `workflowId` / `stepId` | Resume target |
+
+## Decision mapping
+
+| Hitly | Mastra |
+| --- | --- |
+| `accept` | `resume({ resumeData: { approved: true } })` |
+| `edit` | `resume({ resumeData: { approved: true, ...editedArgs } })` |
+| `reject` | `resume({ resumeData: { approved: false } })` then `bail()` |
+| `respond` | `resume({ resumeData: { approved: true, response } })` |
+| `ignore` | no resume (approval closed) |
+
+## Related
+
+- [Envelope](/docs/envelope)
+- [API](/docs/api)
+- Example: `examples/mastra`

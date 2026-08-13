@@ -1,0 +1,33 @@
+---
+title: n8n
+description: Pause on a Wait webhook, review in Hitly, POST the resume URL.
+---
+
+Status: **coming soon** (mapping is stable; a custom n8n node is not in v1).
+
+[n8n](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.wait/) pauses with a Wait node. Resume happens only via `$execution.resumeUrl` (or form URL).
+
+## How it works with Hitly
+
+1. HTTP Request node POSTs context + `$execution.resumeUrl` to Hitly ingest.
+2. Wait node **On Webhook Call**.
+3. Reviewer decides in Hitly.
+4. Hitly POSTs the signed resume URL.
+
+## Setup (hand-roll today)
+
+You do not need `@hitly/plugin-n8n` yet. Point an HTTP Request node at `POST /api/v1/approvals` with `plugin: "n8n"` and `resumeUrl`.
+
+Set `WEBHOOK_URL` on self-hosted n8n so resume URLs are not `localhost`.
+
+## Decision mapping
+
+| Hitly | n8n |
+| --- | --- |
+| `accept` / `edit` / `respond` | POST resume URL with JSON body |
+| `reject` | POST resume URL with `{ "decision": "reject" }` (branch in the workflow) |
+
+## Related
+
+- [Envelope](/docs/envelope)
+- [API](/docs/api)

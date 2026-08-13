@@ -1,0 +1,21 @@
+{
+  "name": "@hitly/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hitly/core": "*",
+    "drizzle-orm": "^0.44.5"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.4",
+    "typescript": "^5.9.2"
+  }
+}

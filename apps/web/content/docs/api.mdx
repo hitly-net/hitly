@@ -1,0 +1,39 @@
+---
+title: API
+description: Ingest and decide HTTP endpoints.
+---
+
+Authenticate ingest with a workspace API key: `Authorization: Bearer hitly_...`
+
+## Create approval
+
+`POST /api/v1/approvals`
+
+```json
+{
+  "plugin": "mastra",
+  "connectionId": "conn_...",
+  "mastraBaseUrl": "http://localhost:4111",
+  "workflowId": "refund-workflow",
+  "runId": "run_...",
+  "stepId": "hitly-approval",
+  "action": { "name": "send-refund", "args": { "orderId": "1842" } },
+  "suspendPayload": { "reason": "Human approval required." }
+}
+```
+
+Idempotency: send `Idempotency-Key` when the origin may retry the suspend POST.
+
+## Decide
+
+`POST /api/v1/approvals/:id/decide` (session cookie)
+
+```json
+{ "decision": "accept" }
+```
+
+or `{ "decision": "edit", "editedArgs": { "amount": 2000 } }`.
+
+## Retry resume
+
+`POST /api/v1/approvals/:id/retry-resume` when status is `failed_resume`.

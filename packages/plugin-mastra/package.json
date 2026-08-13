@@ -1,0 +1,26 @@
+{
+  "name": "@hitly/plugin-mastra",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hitly/core": "*"
+  },
+  "peerDependencies": {
+    "@mastra/core": ">=0.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@mastra/core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

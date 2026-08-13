@@ -1,0 +1,27 @@
+---
+title: Hitly
+description: Pause the agent, review the action, resume the run.
+---
+
+Hitly is a human-in-the-loop inbox you can self-host (Apache-2.0) or use as a hosted service at [hitly.net](https://hitly.net). Origin frameworks pause; reviewers decide in Hitly; plugins resume the origin run.
+
+Pause primitives stay framework-specific:
+
+- **Mastra** — `suspend()` / `resume()` / `bail()`
+- **n8n** — Wait node `$execution.resumeUrl`
+- **LangGraph** — `interrupt(HumanInterrupt)`
+- **Temporal** — `condition()` + signal `hitly.decision`
+
+The reviewer UI does not talk to those frameworks. It posts a `Decision`. The plugin adapter translates it.
+
+## Start here
+
+**Cloud**
+
+1. Create a workspace at the app (`app.hitly.net`).
+2. Create an API key and a connection.
+3. Follow the [Mastra integration](/integrations/mastra).
+
+**Self-host** — see [Self-host](/docs/self-host).
+
+n8n, LangGraph, and Temporal guides document the mapping today; SDKs ship next.

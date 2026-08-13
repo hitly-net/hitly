@@ -1,0 +1,23 @@
+---
+title: Self-host
+description: Run the Apache-2.0 Hitly server yourself.
+---
+
+This repository is the open-source Hitly server. Self-hosting includes the inbox, plugins, audit log, API keys, and team membership. There are no usage caps.
+
+## Run locally
+
+```bash
+yarn install
+cp apps/app/.env.example apps/app/.env.local
+# set DATABASE_URL to Postgres
+yarn dev:app
+```
+
+The marketing/docs site is optional (`yarn dev:web`).
+
+## What is not in this repo
+
+Stripe billing, hosted plan limits, and SSO ship in a private `@hitly/cloud` overlay used by [hitly.net](https://hitly.net). The `@hitly/cloud` package here is a stub: billing API routes return 404, and the nav hides Cloud-only items.
+
+Do not set an env var to "enable Cloud." Cloud features exist only when that private package replaces the stub.

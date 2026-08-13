@@ -1,0 +1,31 @@
+# Contributing
+
+## Setup
+
+```bash
+yarn install
+yarn dev:web   # http://localhost:3000
+yarn dev:app   # http://localhost:3001
+```
+
+Copy `apps/app/.env.example` to `apps/app/.env.local`.
+
+## Layout
+
+- `apps/web` — marketing and docs
+- `apps/app` — Next.js server (self-hosted and Cloud share this app)
+- `packages/core` — envelope types and edition/entitlements contract
+- `packages/cloud` — OSS stub for Cloud slots (billing routes, billing UI)
+- `packages/plugin-*` — origin-framework adapters
+
+Cloud-only implementations do not belong in this repository. Keep Stripe, metering, and SSO behind `@hitly/cloud` exports so the private overlay can replace the stub.
+
+## Checks
+
+```bash
+yarn lint
+yarn typecheck
+yarn build
+```
+
+Use Yarn, not npm. Open a pull request against `main`.

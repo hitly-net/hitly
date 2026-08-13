@@ -1,0 +1,16 @@
+{
+  "name": "@hitly/example-mastra",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hitly/plugin-mastra": "*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

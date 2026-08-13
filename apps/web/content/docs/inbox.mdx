@@ -1,0 +1,26 @@
+---
+title: Inbox
+description: Pending approvals, decisions, SLA, resume status, and retry.
+---
+
+The inbox is Hitly's product surface — the equivalent of a Studio observability view, for human decisions.
+
+## Pending list
+
+`/inbox` lists approvals for the current workspace. Filter by status (`pending`, `decided`, `expired`, `failed_resume`) and plugin.
+
+Each row shows plugin, action name, age, SLA, and status.
+
+## Decision actions
+
+Open `/inbox/[id]` to see:
+
+- markdown context from the origin suspend payload
+- action args (JSON / schema form when `edit` is allowed)
+- a decision bar gated by `allowedActions`: Accept, Reject, Edit, Respond, Ignore
+
+## Resume status
+
+A recorded decision is durable even if the origin resume fails. Status becomes `failed_resume`. Use **Retry resume** on the approval.
+
+Expired approvals (`expiresAt`) stop accepting decisions.

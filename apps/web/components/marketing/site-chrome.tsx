@@ -1,0 +1,51 @@
+import Link from 'next/link'
+import { APP_URL } from '@/lib/layout.shared'
+
+const links = [
+  { href: '/docs', label: 'Docs' },
+  { href: '/integrations', label: 'Integrations' },
+  { href: '/pricing', label: 'Pricing' },
+]
+
+export function SiteHeader() {
+  return (
+    <header className="border-b border-zinc-200 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80">
+      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+        <Link href="/" className="text-lg font-semibold tracking-tight">
+          Hitly
+        </Link>
+        <nav className="flex items-center gap-6 text-sm">
+          {links.map((link) => (
+            <Link key={link.href} href={link.href} className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50">
+              {link.label}
+            </Link>
+          ))}
+          <Link href={`${APP_URL}/login`} className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50">
+            Log in
+          </Link>
+          <Link
+            href={`${APP_URL}/signup`}
+            className="rounded-md bg-zinc-900 px-3 py-1.5 font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900"
+          >
+            Get started
+          </Link>
+        </nav>
+      </div>
+    </header>
+  )
+}
+
+export function SiteFooter() {
+  return (
+    <footer className="mt-auto border-t border-zinc-200 py-10 dark:border-zinc-800">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 text-sm text-zinc-500">
+        <p>Hitly — human-in-the-loop for agent workflows.</p>
+        <div className="flex gap-4">
+          <Link href="/docs">Docs</Link>
+          <Link href="/privacy">Privacy</Link>
+          <Link href="/terms">Terms</Link>
+        </div>
+      </div>
+    </footer>
+  )
+}

@@ -1,0 +1,31 @@
+---
+title: LangGraph
+description: interrupt(HumanInterrupt) maps onto the Hitly envelope.
+---
+
+Status: **coming soon**.
+
+[LangGraph](https://langchain-ai.github.io/langgraph/) pauses with `interrupt()`. Agent Inbox's `HumanInterrupt` is the closest cousin to Hitly's envelope (`accept` / `edit` / `ignore` / `response`).
+
+## How it works with Hitly
+
+1. Graph node calls `interrupt(HumanInterrupt)` and notifies Hitly (webhook or callback).
+2. Hitly stores the envelope (`action_request`, `config`, `description`).
+3. Reviewer decides.
+4. Hitly resumes the thread with `HumanResponse`.
+
+A checkpointer is required so the graph can pause.
+
+## Decision mapping
+
+| Hitly | HumanResponse |
+| --- | --- |
+| `accept` | `{ type: 'accept' }` |
+| `edit` | `{ type: 'edit', args: ActionRequest }` |
+| `respond` | `{ type: 'response', args: string }` |
+| `ignore` / `reject` | `{ type: 'ignore' }` |
+
+## Related
+
+- [Envelope](/docs/envelope)
+- [API](/docs/api)

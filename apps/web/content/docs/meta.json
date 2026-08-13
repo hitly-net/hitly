@@ -1,0 +1,4 @@
+{
+  "title": "Docs",
+  "pages": ["index", "self-host", "inbox", "envelope", "api", "connections"]
+}

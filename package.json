@@ -1,0 +1,23 @@
+{
+  "name": "hitly",
+  "private": true,
+  "license": "Apache-2.0",
+  "packageManager": "yarn@1.22.22",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:web": "yarn workspace @hitly/web dev",
+    "dev:app": "yarn workspace @hitly/app dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.8",
+    "typescript": "^5.9.2"
+  }
+}

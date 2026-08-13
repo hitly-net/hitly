@@ -1,0 +1,29 @@
+---
+title: Envelope
+description: Canonical ApprovalEnvelope and Decision types.
+---
+
+Every plugin maps in and out of one shape owned by `@hitly/core`.
+
+```ts
+type PluginId = 'mastra' | 'n8n' | 'langgraph' | 'temporal'
+type Decision = 'accept' | 'reject' | 'edit' | 'respond' | 'ignore'
+
+interface ApprovalEnvelope {
+  action: { name: string; args: Record<string, unknown> }
+  allowedActions: Record<Decision, boolean>
+  contextMarkdown?: string
+  resumeSchema?: Record<string, unknown>
+  expiresAt?: string
+}
+
+interface OriginRef {
+  plugin: PluginId
+  connectionId: string
+  runId: string
+  stepId?: string
+  resumeHandle: Record<string, unknown>
+}
+```
+
+`resumeHandle` is opaque per plugin (Mastra base URL + run/step ids, n8n resume URL, LangGraph thread id, Temporal workflow id).
