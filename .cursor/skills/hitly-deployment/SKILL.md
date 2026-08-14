@@ -135,6 +135,15 @@ NEXT_PUBLIC_WEB_URL=http://192.168.10.176:3000
 
 If the GitHub repo is private, clone over SSH with a read-only deploy key.
 
+If `loginctl show-user derek -p Linger` is not `yes`, user units stop after SSH logout. On 192.168.10.176 sudo is required for linger (and for Docker). Until then, install a user cron keepalive:
+
+```bash
+chmod +x ~/hitly/scripts/systemd/ensure-up.sh
+(crontab -l 2>/dev/null | grep -v ensure-up.sh; echo "* * * * * $HOME/hitly/scripts/systemd/ensure-up.sh") | crontab -
+```
+
+This host currently runs **user-space MariaDB** (`hitly-db.service`, datadir `~/hitly-data/mysql`) because Docker could not be installed without sudo. Prefer Docker Compose once `derek` has passwordless sudo or a root session.
+
 ## Common operations
 
 ### Restart only

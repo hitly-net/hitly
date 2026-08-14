@@ -67,7 +67,7 @@ bash scripts/systemd/install-user-units.sh
 
 This copies units from `deploy/systemd/user/` into `~/.config/systemd/user/`, reloads the user systemd manager, and `enable --now` both units.
 
-Units should keep running after SSH logout (`loginctl show-user "$USER" -p Linger` → `yes`). If not: `loginctl enable-linger "$USER"`.
+Units should keep running after SSH logout (`loginctl show-user "$USER" -p Linger` → `yes`). If not: `sudo loginctl enable-linger "$USER"`. Until linger is enabled, `scripts/systemd/ensure-up.sh` can be installed as a user cron (`* * * * *`).
 
 ## Recurring deploy
 
