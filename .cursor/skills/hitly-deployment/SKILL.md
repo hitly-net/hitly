@@ -26,7 +26,7 @@ Project skill for shipping this monorepo to the Ubuntu host. Operator notes: [de
 
 ## Runtime model
 
-The host runs **production** Next.js (`yarn build` then `next start`) under **user systemd**. Unit sources live in the repo:
+The host runs **production** Next.js (`yarn turbo build --filter=@hitly/web --filter=@hitly/app` then `next start`) under **user systemd**. Unit sources live in the repo:
 
 | Unit | Repo source | Installed path | Command |
 |------|-------------|----------------|---------|
@@ -71,7 +71,7 @@ docker compose up -d --wait
 
 set -a && source apps/app/.env.production && set +a
 yarn db:migrate
-yarn build
+yarn turbo build --filter=@hitly/web --filter=@hitly/app
 
 bash scripts/systemd/install-user-units.sh
 systemctl --user restart hitly-web.service hitly-app.service
@@ -90,7 +90,8 @@ Notes:
 - Run `yarn db:migrate` even when you expect no new migrations (safe no-op).
 - Run `bash scripts/systemd/install-user-units.sh` after every pull so unit file changes are applied (safe when unchanged).
 - Do **not** overwrite remote `.env.production` from the laptop. Merge new keys from `.env.example` manually when needed.
-- `NEXT_PUBLIC_*` is inlined at `yarn build`. Changing public URLs requires a rebuild.
+- `NEXT_PUBLIC_*` is inlined at build. Changing public URLs requires a rebuild.
+- Build only `@hitly/web` and `@hitly/app`. Do not `yarn build` the whole workspace (Mastra example / mobile are not deployed here).
 
 ### 3. Verify
 

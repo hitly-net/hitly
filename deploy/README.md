@@ -87,7 +87,7 @@ docker compose up -d --wait
 
 set -a && source apps/app/.env.production && set +a
 yarn db:migrate
-yarn build
+yarn turbo build --filter=@hitly/web --filter=@hitly/app
 
 bash scripts/systemd/install-user-units.sh
 systemctl --user restart hitly-web.service hitly-app.service
