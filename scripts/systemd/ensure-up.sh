@@ -12,17 +12,8 @@ listening() {
 }
 
 start_db() {
-  if systemctl --user start hitly-db.service 2>/dev/null; then
-    return 0
-  fi
-  nohup "${HOME}/opt/mariadb/bin/mariadbd" \
-    --basedir="${HOME}/opt/mariadb" \
-    --datadir="${HOME}/hitly-data/mysql" \
-    --socket="${HOME}/hitly-data/mysql.sock" \
-    --port=3306 \
-    --bind-address=127.0.0.1 \
-    --pid-file="${HOME}/hitly-data/mysqld.pid" \
-    >>/tmp/hitly-db.log 2>&1 &
+  cd "${HOME}/hitly"
+  docker compose up -d --wait
 }
 
 start_web() {

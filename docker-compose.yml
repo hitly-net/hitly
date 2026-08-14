@@ -9,7 +9,7 @@ services:
       MARIADB_PASSWORD: hitly
       MARIADB_ROOT_PASSWORD: hitly-root
     ports:
-      - '3306:3306'
+      - '127.0.0.1:3306:3306'
     volumes:
       - hitly_mariadb:/var/lib/mysql
     healthcheck:
