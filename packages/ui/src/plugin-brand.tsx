@@ -11,9 +11,10 @@ export type PluginBrand = {
 
 export const PLUGIN_BRANDS: Record<PluginId, PluginBrand> = {
   mastra: { id: 'mastra', label: 'Mastra', bg: '#111111', fg: '#F4F1EA' },
-  n8n: { id: 'n8n', label: 'n8n', bg: '#EA4B71', fg: '#FFFFFF' },
+  http: { id: 'http', label: 'HTTP', bg: '#0F172A', fg: '#38BDF8' },
   langgraph: { id: 'langgraph', label: 'LangGraph', bg: '#1C3C3C', fg: '#FFFFFF' },
   temporal: { id: 'temporal', label: 'Temporal', bg: '#000000', fg: '#FFFFFF' },
+  hermes: { id: 'hermes', label: 'Hermes', bg: '#1A1408', fg: '#E8C547' },
 }
 
 function MarkSvg({ children, ...props }: SVGProps<SVGSVGElement>) {
@@ -40,10 +41,12 @@ function MastraMark(props: SVGProps<SVGSVGElement>) {
   )
 }
 
-function N8nMark(props: SVGProps<SVGSVGElement>) {
+function HttpMark(props: SVGProps<SVGSVGElement>) {
   return (
-    <MarkSvg {...props}>
-      <path d="M21.4737 5.6842c-1.1772 0-2.1663.8051-2.4468 1.8947h-2.8955c-1.235 0-2.289.893-2.492 2.111l-.1038.623a1.263 1.263 0 0 1-1.246 1.0555H11.289c-.2805-1.0896-1.2696-1.8947-2.4468-1.8947s-2.1663.8051-2.4467 1.8947H4.973c-.2805-1.0896-1.2696-1.8947-2.4468-1.8947C1.1311 9.4737 0 10.6047 0 12s1.131 2.5263 2.5263 2.5263c1.1772 0 2.1663-.8051 2.4468-1.8947h1.4223c.2804 1.0896 1.2696 1.8947 2.4467 1.8947 1.1772 0 2.1663-.8051 2.4468-1.8947h1.0008a1.263 1.263 0 0 1 1.2459 1.0555l.1038.623c.203 1.218 1.257 2.111 2.492 2.111h.3692c.2804 1.0895 1.2696 1.8947 2.4468 1.8947 1.3952 0 2.5263-1.131 2.5263-2.5263s-1.131-2.5263-2.5263-2.5263c-1.1772 0-2.1664.805-2.4468 1.8947h-.3692a1.263 1.263 0 0 1-1.246-1.0555l-.1037-.623A2.52 2.52 0 0 0 13.9607 12a2.52 2.52 0 0 0 .821-1.4794l.1038-.623a1.263 1.263 0 0 1 1.2459-1.0555h2.8955c.2805 1.0896 1.2696 1.8947 2.4468 1.8947 1.3952 0 2.5263-1.131 2.5263-2.5263s-1.131-2.5263-2.5263-2.5263m0 1.2632a1.263 1.263 0 0 1 1.2631 1.2631 1.263 1.263 0 0 1-1.2631 1.2632 1.263 1.263 0 0 1-1.2632-1.2632 1.263 1.263 0 0 1 1.2632-1.2631M2.5263 10.7368A1.263 1.263 0 0 1 3.7895 12a1.263 1.263 0 0 1-1.2632 1.2632A1.263 1.263 0 0 1 1.2632 12a1.263 1.263 0 0 1 1.2631-1.2632m6.3158 0A1.263 1.263 0 0 1 10.1053 12a1.263 1.263 0 0 1-1.2632 1.2632A1.263 1.263 0 0 1 7.579 12a1.263 1.263 0 0 1 1.2632-1.2632m10.1053 3.7895a1.263 1.263 0 0 1 1.2631 1.2632 1.263 1.263 0 0 1-1.2631 1.2631 1.263 1.263 0 0 1-1.2632-1.2631 1.263 1.263 0 0 1 1.2632-1.2632" />
+    <MarkSvg {...props} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 12h10M7 12l2.5-2.5M7 12l2.5 2.5M17 12l-2.5-2.5M17 12l-2.5 2.5" />
+      <rect x="2.5" y="8" width="5" height="8" rx="1.5" fill="currentColor" stroke="none" opacity="0.25" />
+      <rect x="16.5" y="8" width="5" height="8" rx="1.5" fill="currentColor" stroke="none" opacity="0.25" />
     </MarkSvg>
   )
 }
@@ -64,11 +67,20 @@ function TemporalMark(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+function HermesMark(props: SVGProps<SVGSVGElement>) {
+  return (
+    <MarkSvg {...props}>
+      <path d="M11.25 2h1.5v20h-1.5zM8 3.5h8v1.75H8zM5.2 7.1l1.2-1.1 5.6 6.1 5.6-6.1 1.2 1.1-6.8 7.4zM5.2 12.6l1.2-1.1 5.6 6.1 5.6-6.1 1.2 1.1-6.8 7.4z" />
+    </MarkSvg>
+  )
+}
+
 const ICONS: Record<PluginId, (props: SVGProps<SVGSVGElement>) => ReactElement> = {
   mastra: MastraMark,
-  n8n: N8nMark,
+  http: HttpMark,
   langgraph: LangGraphMark,
   temporal: TemporalMark,
+  hermes: HermesMark,
 }
 
 export function pluginBrand(plugin: string): PluginBrand {

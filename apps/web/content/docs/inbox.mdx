@@ -3,7 +3,7 @@ title: Inbox
 description: Pending approvals, decisions, SLA, resume status, and retry.
 ---
 
-The inbox is Hitly's unified review and approval surface. Origins pause with their own primitives — Mastra `suspend()`, n8n Wait, LangGraph `interrupt()`, Temporal `condition()` — but they do not decide. Reviewers open one queue for **every visible project and plugin** in the workspace, on web or [mobile](/docs/mobile), and post a `Decision`. The plugin adapter resumes the run.
+The inbox is Hitly's unified review and approval surface. Origins pause with their own primitives — Mastra `suspend()`, Hermes approval transport / `kanban_block`, HTTP `resumeUrl`, LangGraph `interrupt()`, Temporal `condition()` — but they do not decide. Reviewers open one queue for **every visible project and plugin** in the workspace, on web or [mobile](/docs/mobile), and post a `Decision`. The plugin adapter resumes the run.
 
 Who sees which projects, who can decide, and who only watches is [governance](/docs/governance).
 

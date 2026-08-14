@@ -1,0 +1,69 @@
+---
+title: HTTP
+description: Pause on a callback URL, review in Hitly, POST the decision JSON.
+---
+
+Generic HTTP callback. Create a Hitly project with plugin **HTTP**. Any origin that can POST ingest and expose a `resumeUrl` uses this adapter — n8n Wait, Make, Zapier, Notion automations, or a tiny webhook handler.
+
+## How it works with Hitly
+
+1. The origin POSTs context + `resumeUrl` to `POST /api/v1/approvals` (`plugin: "http"`).
+2. Whatever owns `resumeUrl` waits (Wait node, scenario, Worker).
+3. Reviewer decides in Hitly.
+4. Hitly POSTs JSON to `resumeUrl`. Ingest `metadata` is echoed unchanged on accept and reject. `id` is the Hitly approval id (unknown at ingest):
+
+```json
+{
+  "decision": "accept",
+  "id": "apr_...",
+  "metadata": { "pageId": "…", "title": "…" }
+}
+```
+
+Put any correlation keys the callback needs in `metadata`. Hitly does not interpret them.
+
+## Setup
+
+Create an **HTTP** project and copy the API key. Point the origin at ingest:
+
+```json
+{
+  "plugin": "http",
+  "projectId": "prj_...",
+  "runId": "execution-or-page-id",
+  "actionName": "http-callback",
+  "contextMarkdown": "Refund $40 to order 1842.",
+  "metadata": { "pageId": "…", "orderId": "1842" },
+  "resumeUrl": "https://your-callback.example/hitly-resume"
+}
+```
+
+`Authorization: Bearer hitly_...`. Send `Idempotency-Key` when the origin may retry.
+
+n8n-shaped fields (`executionId`, `workflowId`, `workflowName`) are optional details. `runId` falls back to `executionId`.
+
+The resume URL must be reachable from Hitly. `localhost` only works when Hitly and the callback run on the same machine.
+
+## Decision mapping
+
+| Hitly | Callback |
+| --- | --- |
+| `accept` | POST `{ "decision": "accept", "id", "metadata" }` |
+| `reject` | POST `{ "decision": "reject", "id", "metadata" }` (branch in the origin) |
+
+## Recipes
+
+- [n8n Wait node](/integrations/n8n) — `$execution.resumeUrl`
+- Repo: [`examples/n8n`](https://github.com/hitly-net/hitly/blob/main/examples/n8n/n8n.md), [`examples/notion`](https://github.com/hitly-net/hitly/blob/main/examples/notion/notion.md)
+
+<DocShot
+  src="/images/n8n-hitly-workflow.png"
+  alt="n8n workflow pausing on HITLy Wait then branching to Notion Approved or Rejected"
+  caption="n8n Wait on the same chain as ingest"
+/>
+
+## Related
+
+- Adapter: `@hitly/plugin-http`
+- [Envelope](/docs/envelope)
+- [API](/docs/api)

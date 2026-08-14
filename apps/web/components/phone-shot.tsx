@@ -17,6 +17,15 @@ export function PhoneShot({ src, alt, caption }: Shot) {
   )
 }
 
+export function DocShot({ src, alt, caption }: Shot) {
+  return (
+    <figure className="not-prose my-6 flex flex-col gap-2">
+      <img src={src} alt={alt} className="w-full max-w-2xl rounded-md border border-fd-border shadow-sm" />
+      {caption ? <figcaption className="text-sm text-fd-muted-foreground">{caption}</figcaption> : null}
+    </figure>
+  )
+}
+
 export function PhoneGallery({ shots }: { shots: Shot[] }) {
   return (
     <div className="not-prose my-8 grid grid-cols-2 gap-6 sm:grid-cols-4">

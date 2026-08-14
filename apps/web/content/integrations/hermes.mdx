@@ -1,0 +1,83 @@
+---
+title: Hermes
+description: Route Hermes command approvals and kanban block/review pauses into the Hitly inbox.
+---
+
+[Hermes Agent](https://hermes-agent.nousresearch.com) is a Python agent. Hitly does not run inside Hermes — a drop-in plugin POSTs pauses to Hitly, and applies the decision on the Hermes host.
+
+Hermes “personas” are **named profiles** (`~/.hermes/profiles/<name>/`, each with its own `SOUL.md`). Cron is only one unattended runner.
+
+## How it works with Hitly
+
+### Command approval (CLI, gateway, `/background`)
+
+Dangerous terminal / `execute_code` calls pause in Hermes `tools/approval.py`. Selecting `security.approval.transport: hitly` replaces the built-in prompt (including Telegram `/approve`).
+
+1. The plugin `present()` POSTs the command to Hitly and **polls** until you decide.
+2. Accept maps to Hermes `once`; reject / timeout maps to `deny`.
+3. Hermes still enforces `approvals.timeout` (default **300 seconds**). Hitly SLA can be longer; the command still denies when Hermes times out.
+
+### Kanban workers (autonomous profiles)
+
+The gateway dispatcher spawns `hermes -p <profile>` for board tasks. Those workers **exit** when they need a human — they call `kanban_block` or `kanban_request_review`. That is the HITL path for unattended personas.
+
+1. The plugin POSTs a Hitly card (`kind: kanban`).
+2. Accept → `hermes kanban comment` + `unblock` on the Hermes host (gateway poller).
+3. Reject → comment, leave the card blocked.
+
+Hitly never POSTs into `hermes dashboard` (localhost-only by default).
+
+### What Hitly cannot wait on
+
+| Path | Hermes gate | Hitly |
+| --- | --- | --- |
+| Cron jobs | `approvals.cron_mode`: `deny` or `approve` | No wait. Documented only. |
+| Kanban **shell** commands | `approvals.kanban_mode`: `deny` or `approve` | Same. Workers should `kanban_block` instead. |
+| `delegate_task` | `delegation.subagent_auto_approve` (default deny) | Out of scope |
+
+## Setup
+
+1. Create a Hitly project with plugin **Hermes** and copy the project API key.
+2. Copy the plugin into Hermes:
+
+```bash
+cp -R examples/hermes ~/.hermes/plugins/hitly
+hermes plugins enable hitly
+```
+
+3. Configure:
+
+```yaml
+plugins:
+  enabled: [hitly]
+  entries:
+    hitly:
+      settings:
+        api_url: http://localhost:3001
+        api_key: hitly_...
+        project_id: prj_...
+security:
+  approval:
+    transport: hitly
+    transport_fallback: deny
+```
+
+Kanban ingest works even if `transport` is unset. Command routing needs both the plugin **and** `security.approval.transport: hitly`.
+
+`HITLY_API_URL`, `HITLY_API_KEY`, and `HITLY_PROJECT_ID` are env fallbacks for the same settings.
+
+## Decision mapping
+
+| Hitly | Command transport | Kanban |
+| --- | --- | --- |
+| `accept` | Hermes `once` | comment + unblock |
+| `respond` | — | comment (body) + unblock |
+| `reject` | `deny` | comment, leave blocked |
+| expire / cancel / timeout | `deny` | comment, leave blocked |
+
+## Related
+
+- Plugin adapter: `packages/plugin-hermes`
+- Drop-in origin plugin: `examples/hermes`
+- [Envelope](/docs/envelope)
+- [API](/docs/api)

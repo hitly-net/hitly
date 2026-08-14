@@ -2,7 +2,7 @@ import defaultMdxComponents from 'fumadocs-ui/mdx'
 import type { MDXComponents } from 'mdx/types'
 import type { AnchorHTMLAttributes, ComponentType } from 'react'
 import { Mermaid } from '@/components/mermaid'
-import { PhoneGallery, PhoneShot } from '@/components/phone-shot'
+import { PhoneGallery, PhoneShot, DocShot } from '@/components/phone-shot'
 import { externalLinkProps } from '@/lib/links'
 
 export function getMDXComponents(components?: MDXComponents) {
@@ -12,6 +12,7 @@ export function getMDXComponents(components?: MDXComponents) {
     Mermaid,
     PhoneGallery,
     PhoneShot,
+    DocShot,
   }
   const Anchor = merged.a as ComponentType<AnchorHTMLAttributes<HTMLAnchorElement>>
 

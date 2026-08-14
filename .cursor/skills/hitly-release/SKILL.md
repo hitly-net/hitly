@@ -7,7 +7,7 @@ description: Hitly npm release and versioning for @hitly SDK packages. Use when 
 
 Only packages with `"hitly": { "role": "sdk" }` are npm candidates. Everything else stays private. See [packages.md](packages.md).
 
-Current SDK set: `@hitly/core`, `@hitly/plugin-mastra`, `@hitly/plugin-n8n`, `@hitly/plugin-langgraph`, `@hitly/plugin-temporal`.
+Current SDK set: `@hitly/core`, `@hitly/plugin-mastra`, `@hitly/plugin-hermes`, `@hitly/plugin-http`, `@hitly/plugin-langgraph`, `@hitly/plugin-temporal`.
 
 ## Versioning (now)
 

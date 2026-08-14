@@ -1,7 +1,7 @@
 ---
 "@hitly/core": minor
 "@hitly/plugin-mastra": minor
-"@hitly/plugin-n8n": patch
+"@hitly/plugin-http": patch
 ---
 
 Store the origin resume response on each inbox decision.

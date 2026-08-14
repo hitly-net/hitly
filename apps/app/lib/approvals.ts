@@ -1,8 +1,9 @@
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import {
   isDecision,
   isOpenApprovalStatus,
   isPluginId,
+  OPEN_APPROVAL_STATUSES,
   originResumeError,
   type ApprovalEnvelope,
   type ChannelType,
@@ -13,6 +14,7 @@ import {
 } from '@hitly/core'
 import { approvals, decisionRecords, projectApiKeys, projectRules, projects } from '@hitly/db/schema'
 import { getPlugin } from './plugins'
+import { envelopeMetadata } from './origin'
 import { hashApiKey } from './keys'
 import { logProjectEvent } from './events'
 import { notifyAssignee } from './notify'
@@ -107,7 +109,13 @@ export async function ingestApproval(args: {
     const existing = await database
       .select()
       .from(approvals)
-      .where(and(eq(approvals.projectId, project.id), eq(approvals.idempotencyKey, args.idempotencyKey)))
+      .where(
+        and(
+          eq(approvals.projectId, project.id),
+          eq(approvals.idempotencyKey, args.idempotencyKey),
+          inArray(approvals.status, OPEN_APPROVAL_STATUSES),
+        ),
+      )
       .limit(1)
     if (existing[0]) {
       return { ok: true as const, approval: existing[0], replayed: true }
@@ -242,7 +250,11 @@ export async function decideApproval(args: {
       const originResponse = await getPlugin(approval.plugin).resume(
         {
           ...origin,
-          resumeHandle: { ...origin.resumeHandle, approvalId: approval.id },
+          resumeHandle: {
+            ...origin.resumeHandle,
+            approvalId: approval.id,
+            metadata: envelopeMetadata(envelope, origin),
+          },
         },
         args.payload,
         secured ? { plugin: approval.plugin, ...secured.project.credentials } : undefined,
@@ -358,5 +370,39 @@ export function parseDecisionBody(body: Record<string, unknown>): DecisionPayloa
     editedArgs:
       body.editedArgs && typeof body.editedArgs === 'object' ? (body.editedArgs as Record<string, unknown>) : undefined,
     response: typeof body.response === 'string' ? body.response : undefined,
+  }
+}
+
+/** Slim origin-poll payload. Authenticate with the project API key used at ingest. */
+export async function getApprovalForOrigin(args: { apiKey: string; approvalId: string }) {
+  const authn = await authenticateProjectKey(args.apiKey)
+  if (!authn) return { ok: false as const, error: 'Invalid API key', status: 401 as const }
+
+  const database = requireDb()
+  const rows = await database.select().from(approvals).where(eq(approvals.id, args.approvalId)).limit(1)
+  const approval = rows[0]
+  if (!approval || approval.projectId !== authn.project.id) {
+    return { ok: false as const, error: 'Not found', status: 404 as const }
+  }
+
+  const decisionRows = await database
+    .select({
+      decision: decisionRecords.decision,
+      payload: decisionRecords.payload,
+    })
+    .from(decisionRecords)
+    .where(eq(decisionRecords.approvalId, approval.id))
+    .orderBy(desc(decisionRecords.createdAt))
+    .limit(1)
+  const latest = decisionRows[0]
+  const payload = latest?.payload && typeof latest.payload === 'object' ? (latest.payload as Record<string, unknown>) : {}
+  const decision = latest && isDecision(latest.decision) ? latest.decision : undefined
+
+  return {
+    ok: true as const,
+    id: approval.id,
+    status: approval.status,
+    decision,
+    response: typeof payload.response === 'string' ? payload.response : undefined,
   }
 }

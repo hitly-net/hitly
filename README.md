@@ -1,6 +1,6 @@
 # Hitly
 
-Apache-2.0 human-in-the-loop inbox for Mastra, n8n, LangGraph, and Temporal.
+Apache-2.0 human-in-the-loop inbox for Mastra, Hermes, HTTP, LangGraph, and Temporal.
 
 Self-host this repo, or use the hosted product at [hitly.net](https://hitly.net). Cloud-only features (Stripe billing, usage metering, SSO) live in a private overlay package — they are not env-var flags in this tree.
 
@@ -19,7 +19,7 @@ yarn dev:mastra  # optional Studio demo at http://localhost:4111
 ```
 
 
-Developer guides: `/docs` and `/integrations/mastra`. Self-host notes: `/docs/self-host`. Implementing Hitly in an existing app: [`AGENT.md`](./AGENT.md).
+Developer guides: `/docs`, `/integrations/http`, `/integrations/n8n`. Self-host notes: `/docs/self-host`. Implementing Hitly in an existing app: [`AGENT.md`](./AGENT.md). HTTP recipes: [`examples/n8n`](./examples/n8n/n8n.md), [`examples/notion`](./examples/notion/notion.md).
 
 ## Editions
 

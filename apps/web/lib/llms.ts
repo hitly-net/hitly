@@ -37,7 +37,7 @@ export function buildLlmsIndex(): string {
     [
       '# Hitly',
       '',
-      '> Hitly is the review inbox for agents and workflows. Origins (Mastra, Hermes, n8n, LangGraph, Temporal) keep pause/resume; reviewers decide in Hitly. Cloud is waitlist-only; self-host is available now.',
+      '> Hitly is the review inbox for agents and workflows. Origins (Mastra, Hermes, HTTP, LangGraph, Temporal) keep pause/resume; reviewers decide in Hitly. Cloud is waitlist-only; self-host is available now.',
       '',
       ...sections,
       '',

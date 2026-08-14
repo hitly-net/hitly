@@ -1,0 +1,8 @@
+{
+  "name": "@hitly/example-hermes",
+  "version": "0.0.1",
+  "private": true,
+  "hitly": {
+    "role": "example"
+  }
+}

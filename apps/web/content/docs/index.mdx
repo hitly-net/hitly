@@ -7,12 +7,13 @@ Hitly is a human-in-the-loop inbox you can self-host (Apache-2.0) or use as a ho
 
 ## What Hitly is
 
-**A unified review and approval surface.** Mastra, n8n, LangGraph, and Temporal each have their own pause primitive. Reviewers do not approve in those UIs. They open the [inbox](/docs/inbox) — one queue across every visible project, web or mobile — and post a `Decision`. The plugin adapter resumes the origin.
+**A unified review and approval surface.** Mastra, Hermes, HTTP callbacks, LangGraph, and Temporal each have their own pause primitive. Reviewers do not approve in those UIs. They open the [inbox](/docs/inbox) — one queue across every visible project, web or mobile — and post a `Decision`. The plugin adapter resumes the origin.
 
 **Support for all your agents and workflow platforms.** Pause primitives stay framework-specific. The [envelope](/docs/envelope) does not. Add a framework by writing one adapter, not a new reviewer UI. See [Integrations](/integrations).
 
 - **Mastra** — `suspend()` / `resume()` / `bail()`
-- **n8n** — Wait node `$execution.resumeUrl`
+- **Hermes** — approval transport / `kanban_block`
+- **HTTP** — caller `resumeUrl` (n8n Wait, Notion, custom callbacks)
 - **LangGraph** — `interrupt(HumanInterrupt)`
 - **Temporal** — `condition()` + signal `hitly.decision`
 
@@ -22,6 +23,6 @@ Hitly is a human-in-the-loop inbox you can self-host (Apache-2.0) or use as a ho
 
 **Cloud** — [Join the waitlist](/#waitlist).
 
-**Self-host** — see [Self-host](/docs/self-host). Create a project, copy `HITLY_PROJECT_ID` and an API key, then follow the [Mastra integration](/integrations/mastra).
+**Self-host** — see [Self-host](/docs/self-host). Create a project, copy `HITLY_PROJECT_ID` and an API key, then follow [Mastra](/integrations/mastra), [Hermes](/integrations/hermes), [HTTP](/integrations/http), or the [n8n Wait recipe](/integrations/n8n).
 
-n8n, LangGraph, and Temporal guides document the mapping today; SDKs ship next.
+n8n Wait is HTTP today (custom n8n node later). LangGraph and Temporal guides document the mapping; SDKs ship next.

@@ -3,7 +3,7 @@ import { isOpenApprovalStatus, type ApprovalEnvelope, type OriginRef, type Plugi
 import { approvals, decisionRecords, projects } from '@hitly/db/schema'
 import { approvalHasExpired } from './approval-expiry'
 import { canDecide, getProjectAccess } from './rbac'
-import { originFields } from './origin'
+import { originFields, envelopeMetadata } from './origin'
 import { requireDb } from './require-db'
 
 export async function getApprovalDetail(args: {
@@ -56,7 +56,10 @@ export async function getApprovalDetail(args: {
     assignedUserId: approval.assignedUserId,
     createdAt: approval.createdAt,
     expiresAt: approval.expiresAt,
-    envelope,
+    envelope: {
+      ...envelope,
+      metadata: envelopeMetadata(envelope, origin),
+    },
     origin,
     originFields: originFields(origin),
     canAct,

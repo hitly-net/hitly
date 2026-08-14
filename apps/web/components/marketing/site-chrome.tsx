@@ -36,7 +36,7 @@ export function SiteFooter() {
     <footer className="mt-auto border-t border-zinc-200 py-10 dark:border-zinc-800">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 text-sm text-zinc-500">
         <p>
-          <HitlyWordmark /> — human in the loop for agent workflows.
+          <HitlyWordmark /> — human in the loop for agents & workflows.
         </p>
         <div className="flex gap-4">
           <Link href="/docs">Docs</Link>

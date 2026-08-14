@@ -1,4 +1,4 @@
 {
   "title": "Integrations",
-  "pages": ["index", "mastra", "n8n", "langgraph", "temporal"]
+  "pages": ["index", "mastra", "hermes", "http", "n8n", "langgraph", "temporal"]
 }

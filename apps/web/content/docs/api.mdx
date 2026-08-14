@@ -5,7 +5,7 @@ description: Ingest and decide HTTP endpoints.
 
 Authenticate ingest with a **project** API key: `Authorization: Bearer hitly_...`
 
-The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origin may retry the suspend POST.
+The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origin may retry the suspend POST. A matching **open** item (`pending` or `failed_resume`) is replayed. After reject, cancel, decide, or expiry, the same key creates a new inbox item.
 
 ## Create approval
 
@@ -25,6 +25,29 @@ The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origi
 ```
 
 `mastraBaseUrl` is optional when the project already stores the origin base URL.
+
+HTTP origins send `plugin: "http"`, `resumeUrl`, and optional `metadata`. Hitly echoes `metadata` on the resume POST:
+
+```json
+{
+  "plugin": "http",
+  "projectId": "prj_...",
+  "runId": "execution-or-page-id",
+  "actionName": "http-callback",
+  "metadata": { "pageId": "…" },
+  "resumeUrl": "https://your-callback.example/hitly-resume"
+}
+```
+
+On accept or reject, Hitly POSTs that `metadata` unchanged to `resumeUrl`:
+
+```json
+{
+  "decision": "accept",
+  "id": "apr_...",
+  "metadata": { "pageId": "…" }
+}
+```
 
 ## Decide
 
@@ -54,7 +77,9 @@ Query: `scope=all|open|closed`, `q`, `projectId`. `open` is pending + failed res
 
 `GET /api/v1/inbox/summary` returns `{ pending, failedResume, decidedToday, projectCount }`.
 
-`GET /api/v1/approvals/:id` returns envelope, origin, `originFields`, decisions, and `canAct`.
+`GET /api/v1/approvals/:id` returns envelope, origin, `originFields`, decisions, and `canAct` (session cookie or reviewer Bearer token).
+
+A **project** API key on the same route returns a slim origin-poll payload: `{ id, status, decision?, response? }`. Hermes uses this while `present()` waits and while the gateway kanban poller applies comment + unblock.
 
 ## Workspaces and devices
 

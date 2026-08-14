@@ -10,11 +10,25 @@ const plugins = [
     body: 'createHitlyApprovalStep() wraps suspend() and resume(). First-class plugin.',
   },
   {
+    id: 'hermes',
+    name: 'Hermes',
+    status: 'Available',
+    href: '/integrations/hermes',
+    body: 'Python approval transport for CLI/gateway commands; kanban block/review cards for autonomous profiles.',
+  },
+  {
+    id: 'http',
+    name: 'HTTP',
+    status: 'Available',
+    href: '/integrations/http',
+    body: 'POST ingest with a resumeUrl. Hitly POSTs { decision, id, metadata }. n8n, Notion, Make, custom callbacks.',
+  },
+  {
     id: 'n8n',
     name: 'n8n',
-    status: 'Coming soon',
+    status: 'HTTP today',
     href: '/integrations/n8n',
-    body: 'HTTP Request to Hitly, then Wait on webhook. Hitly POSTs $execution.resumeUrl.',
+    body: 'Create an HTTP project. HTTP Request to Hitly, then Wait on webhook. Hitly POSTs to $execution.resumeUrl.',
   },
   {
     id: 'langgraph',
@@ -37,7 +51,7 @@ export function PluginGrid() {
     <section className="mx-auto max-w-6xl px-6 py-20">
       <h2 className="text-2xl font-semibold">Plugins</h2>
       <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-400">
-        We start with four frameworks. We will support any framework that has demand.
+        We start with a handful of origins. HTTP covers n8n, Notion, and custom callbacks. We will support any framework that has demand.
       </p>
       <div className="mt-10 grid gap-4 md:grid-cols-2">
         {plugins.map((plugin) => (
@@ -48,7 +62,7 @@ export function PluginGrid() {
           >
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold">{plugin.name}</h3>
-              <Badge variant={plugin.status === 'Available' ? 'success' : 'warning'}>{plugin.status}</Badge>
+              <Badge variant={plugin.status === 'Coming soon' ? 'warning' : 'success'}>{plugin.status}</Badge>
             </div>
             <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-400">{plugin.body}</p>
           </Link>

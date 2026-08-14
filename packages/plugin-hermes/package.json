@@ -1,0 +1,34 @@
+{
+  "name": "@hitly/plugin-hermes",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "homepage": "https://hitly.net/integrations/hermes",
+  "bugs": {
+    "url": "https://github.com/hitly-net/hitly/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hitly-net/hitly.git",
+    "directory": "packages/plugin-hermes"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "hitly": {
+    "role": "sdk"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hitly/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

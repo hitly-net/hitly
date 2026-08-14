@@ -6,13 +6,14 @@ description: Canonical ApprovalEnvelope and Decision types.
 Every plugin maps in and out of one shape owned by `@hitly/core`.
 
 ```ts
-type PluginId = 'mastra' | 'n8n' | 'langgraph' | 'temporal'
+type PluginId = 'mastra' | 'http' | 'langgraph' | 'temporal' | 'hermes'
 type Decision = 'accept' | 'reject' | 'edit' | 'respond' | 'ignore' | 'cancel'
 
 interface ApprovalEnvelope {
   action: { name: string; args: Record<string, unknown> }
   allowedActions: Record<Decision, boolean>
   contextMarkdown?: string
+  metadata?: Record<string, unknown>
   externalUrls?: string[]
   attachments?: { name: string; url?: string; contentType?: string }[]
   resumeSchema?: Record<string, unknown>
@@ -28,6 +29,8 @@ interface OriginRef {
 }
 ```
 
-`resumeHandle` is opaque per plugin (Mastra base URL + run/step ids, n8n resume URL, LangGraph thread id, Temporal workflow id). Origin credentials live on the **project**.
+`resumeHandle` is opaque per plugin (Mastra base URL + run/step ids, Hermes request/task ids, HTTP `resumeUrl` + optional `metadata`, LangGraph thread id, Temporal workflow id). Origin credentials live on the **project**.
+
+HTTP ingest may include `metadata` (a JSON object). It is stored on the envelope and echoed unchanged on the resume POST for both accept and reject, next to `decision` and the Hitly `id`.
 
 See [Projects](/docs/projects) and the [API](/docs/api).

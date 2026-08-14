@@ -10,7 +10,7 @@ import { ContextMarkdown } from '@/components/context-markdown'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
 import { getAppContext } from '@/lib/context'
-import { originFields } from '@/lib/origin'
+import { originFields, envelopeMetadata } from '@/lib/origin'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { requireDb } from '@/lib/require-db'
 import { approvalHasExpired } from '@/lib/approval-expiry'
@@ -72,6 +72,7 @@ export async function WorkItemDetail({
   const envelope = approval.envelope as unknown as ApprovalEnvelope
   const origin = approval.origin as unknown as OriginRef
   const originRows = originFields(origin)
+  const metadata = envelopeMetadata(envelope, origin)
   const allowed = envelope.allowedActions
   const canAct = canDecide(access) && isOpenApprovalStatus(approval.status)
   const expired = approvalHasExpired(approval)
@@ -103,7 +104,10 @@ export async function WorkItemDetail({
           {approval.status}
         </Badge>
       </div>
-      <h1 className="mt-4 text-2xl font-semibold">{approval.actionName}</h1>
+      <div className="mt-4 flex max-w-2xl items-start justify-between gap-3">
+        <h1 className="text-2xl font-semibold">{approval.actionName}</h1>
+        {canCancel ? <ForceCancelButton approvalId={approval.id} /> : null}
+      </div>
       {originRows.length > 0 ? (
         <section className="mt-6 max-w-2xl rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
           <h2 className="text-sm font-semibold">Origin</h2>
@@ -202,6 +206,7 @@ export async function WorkItemDetail({
           action: envelope.action,
           allowedActions: envelope.allowedActions,
           contextMarkdown: envelope.contextMarkdown,
+          metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
           externalUrls: envelope.externalUrls,
           attachments: envelope.attachments,
           resumeSchema: envelope.resumeSchema,
@@ -268,11 +273,6 @@ export async function WorkItemDetail({
             Retry resume
           </button>
         </form>
-      ) : null}
-      {canCancel ? (
-        <div className="mt-4">
-          <ForceCancelButton approvalId={approval.id} />
-        </div>
       ) : null}
     </AppShell>
   )

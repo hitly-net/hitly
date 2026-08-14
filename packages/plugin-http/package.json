@@ -1,16 +1,16 @@
 {
-  "name": "@hitly/plugin-n8n",
+  "name": "@hitly/plugin-http",
   "version": "0.0.1",
   "private": true,
   "license": "Apache-2.0",
-  "homepage": "https://hitly.net/integrations/n8n",
+  "homepage": "https://hitly.net/integrations/http",
   "bugs": {
     "url": "https://github.com/hitly-net/hitly/issues"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hitly-net/hitly.git",
-    "directory": "packages/plugin-n8n"
+    "directory": "packages/plugin-http"
   },
   "publishConfig": {
     "access": "public"

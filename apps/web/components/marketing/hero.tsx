@@ -11,7 +11,7 @@ export function Hero() {
         Pause the agent. Review the action. Resume the run.
       </h1>
       <p className="mt-6 max-w-2xl text-lg text-zinc-600 dark:text-zinc-400">
-        <HitlyWordmark className="font-semibold" /> is an approval inbox for Mastra, n8n, LangGraph, and Temporal —
+        <HitlyWordmark className="font-semibold" /> is an approval inbox for Mastra, Hermes, HTTP, LangGraph, and Temporal —
         self-host it or use hitly.net. Frameworks pause; your team decides; HITLy resumes the origin workflow.
       </p>
       <div className="mt-8 flex gap-3">

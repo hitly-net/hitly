@@ -4,12 +4,12 @@ const features = [
   {
     title: 'Unified review and approval',
     href: '/docs/inbox',
-    body: 'Agents and workflows pause in their own runtime. Reviewers decide in Hitly — same inbox, same decisions, web or mobile. You never approve inside Mastra Studio, n8n, or LangGraph.',
+    body: 'Agents and workflows pause in their own runtime. Reviewers decide in Hitly — same inbox, same decisions, web or mobile. You never approve inside Mastra Studio, Hermes CLI, n8n, or LangGraph.',
   },
   {
     title: 'Every agent and workflow platform',
     href: '/integrations',
-    body: 'Mastra is available today. n8n, LangGraph, and Temporal mappings are documented. Pause primitives stay native; Hitly owns the envelope and the resume.',
+    body: 'Mastra, Hermes, and HTTP callbacks are available today. n8n Wait is an HTTP recipe. LangGraph and Temporal mappings are documented. Pause primitives stay native; Hitly owns the envelope and the resume.',
   },
   {
     title: 'Governance and org chart',

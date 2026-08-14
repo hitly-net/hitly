@@ -8,7 +8,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
     }
 
-    const body = (await request.json()) as Record<string, unknown>
+    const raw = await request.text()
+    if (!raw.trim()) {
+      return NextResponse.json(
+        {
+          error:
+            'JSON body required. Put plugin, projectId, runId, and resumeUrl in the POST body (n8n: Send Body), not query parameters.',
+        },
+        { status: 400 },
+      )
+    }
+    let body: Record<string, unknown>
+    try {
+      body = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 })
+    }
     const result = await ingestApproval({
       apiKey,
       body,

@@ -1,4 +1,4 @@
-export const PLUGIN_IDS = ['mastra', 'n8n', 'langgraph', 'temporal'] as const
+export const PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes'] as const
 
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
@@ -60,6 +60,8 @@ export interface ApprovalEnvelope {
   action: ActionRequest
   allowedActions: AllowedActions
   contextMarkdown?: string
+  /** Opaque origin bag. HTTP echoes this unchanged on accept and reject. */
+  metadata?: Record<string, unknown>
   /** Reviewer links from the origin (tickets, orders, policies). */
   externalUrls?: string[]
   /** Declared files for the reviewer. Fetch/upload is not implemented yet. */

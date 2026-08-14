@@ -1,7 +1,7 @@
 const steps = [
   {
     title: 'Pause',
-    body: 'Your workflow hits a Hitly step. Mastra suspends, n8n waits, LangGraph interrupts, Temporal signals.',
+    body: 'Your workflow hits a Hitly step. Mastra suspends, Hermes prompts or blocks a kanban card, HTTP waits on a resume URL, LangGraph interrupts, Temporal signals.',
   },
   {
     title: 'Review',

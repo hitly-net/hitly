@@ -20,29 +20,34 @@ export function AuthForm({
     setError(null)
     const form = new FormData(event.currentTarget)
     const body = Object.fromEntries(form.entries())
-    const response = await fetch(action, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as { message?: string }
-      setError(data.message ?? 'Something went wrong')
+    try {
+      const response = await fetch(action, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { message?: string }
+        setError(data.message ?? 'Something went wrong')
+        setPending(false)
+        return
+      }
+      window.location.href = extraFields === 'token' || action.includes('forget') ? '/login' : '/'
+    } catch {
+      setError('Something went wrong')
       setPending(false)
-      return
     }
-    window.location.href = extraFields === 'token' || action.includes('forget') ? '/login' : '/'
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-3">
+    <form method="post" action={action} onSubmit={onSubmit} className="flex flex-col gap-3">
       {extraFields === 'name' ? (
-        <input name="name" required placeholder="Name" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
+        <input name="name" required placeholder="Name" autoComplete="name" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
       ) : null}
       {action.includes('reset-password') ? (
         <input name="token" required placeholder="Reset token" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
       ) : (
-        <input name="email" type="email" required placeholder="Email" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
+        <input name="email" type="email" required placeholder="Email" autoComplete="username" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
       )}
       {action.includes('forget-password') ? null : (
         <input
@@ -51,6 +56,7 @@ export function AuthForm({
           required
           minLength={8}
           placeholder="Password"
+          autoComplete={action.includes('sign-up') || action.includes('reset-password') ? 'new-password' : 'current-password'}
           className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
         />
       )}

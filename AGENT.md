@@ -2,9 +2,9 @@
 
 Use this file when the user asks you to add Hitly human-in-the-loop approvals to an **existing** agent, workflow, or automation project.
 
-Hitly is the reviewer inbox. The origin framework (Mastra, n8n, LangGraph, Temporal) keeps the pause/resume primitive. You do not rebuild Hitly, and you do not approve inside the origin UI if Hitly should own the decision.
+Hitly is the reviewer inbox. The origin framework (Mastra, Hermes, HTTP callbacks, LangGraph, Temporal) keeps the pause/resume primitive. You do not rebuild Hitly, and you do not approve inside the origin UI if Hitly should own the decision.
 
-Docs: [hitly.net/docs](https://hitly.net/docs). Runnable Mastra sample: `examples/mastra` in this repo.
+Docs: [hitly.net/docs](https://hitly.net/docs). Runnable Mastra sample: `examples/mastra` in this repo. Hermes drop-in plugin: `examples/hermes`. HTTP recipes: `examples/n8n`, `examples/notion`.
 
 ## What you are building
 
@@ -24,7 +24,7 @@ Do not resume the run yourself after the POST. Hitly does that.
 Confirm all of this exists. If it does not, stop and tell the user what to create.
 
 1. A running Hitly app (self-host `yarn dev:app` on http://localhost:3001, or Cloud at https://app.hitly.net).
-2. A **project** whose plugin matches the origin (`mastra`, `n8n`, `langgraph`, `temporal`).
+2. A **project** whose plugin matches the origin (`mastra`, `hermes`, `http`, `langgraph`, `temporal`).
 3. A project API key and `HITLY_PROJECT_ID` (Config tab → Origin `.env`).
 4. Origin **base URL** stored on the project (or sent as `mastraBaseUrl` / equivalent on ingest). Hitly must be able to reach that URL to resume. `localhost` only works when Hitly and the origin run on the same machine.
 
@@ -45,7 +45,8 @@ Apply this in any existing codebase:
 1. Find the irreversible or gated action (refund, send, delete, deploy).
 2. Pause **before** it executes, using that framework’s primitive.
 3. POST to `{HITLY_API_URL}/api/v1/approvals` with `plugin`, `projectId`, `runId`, `action`, and enough `resumeHandle` fields for the plugin to resume (see [API](https://hitly.net/docs/api) and [envelope](https://hitly.net/docs/envelope)).
-4. On resume, branch on the decision. Hitly maps:
+4. On resume, branch on the decision. Mastra maps:
+
    | Hitly decision | Resume payload |
    | --- | --- |
    | accept | `{ approved: true }` |
@@ -53,10 +54,12 @@ Apply this in any existing codebase:
    | reject | `{ approved: false }` |
    | respond | `{ approved: true, response }` |
    | ignore | no resume |
+
+   HTTP / n8n resume is `{ decision, id, metadata }` (not `{ approved }`). See [API](https://hitly.net/docs/api).
 5. Persist run snapshots so a pause survives process restart (Mastra: storage on the `Mastra` instance).
 6. Keep origin credentials on the Hitly project. Do not put Hitly secrets in git.
 
-Prefer `@hitly/plugin-*` helpers (`notifyHitlyApproval` for Mastra) when the package is available. Until npm publish, copy the helper from `packages/plugin-mastra/src/index.ts` or POST the JSON yourself.
+Prefer `@hitly/plugin-*` helpers (`notifyHitlyApproval` for Mastra; copy `examples/hermes` for Hermes Agent) when the package is available. Until npm publish, copy the helper from `packages/plugin-mastra/src/index.ts` or POST the JSON yourself.
 
 ## Mastra
 
@@ -192,7 +195,9 @@ Full wiring (storage, Studio, local model): `examples/mastra`. Integration notes
 
 | Origin | Pause | What to send Hitly | Resume (plugin) |
 | --- | --- | --- | --- |
-| n8n | Wait node (webhook) | `resumeUrl` (`$execution.resumeUrl`), `projectId`, action | POST the resume URL |
+| HTTP | caller `resumeUrl` | `resumeUrl`, `projectId`, action, optional `metadata` | POST `{ decision, id, metadata }` to `resumeUrl` |
+| n8n | Wait node (webhook) | same as HTTP; `resumeUrl` is `$execution.resumeUrl`; create an **HTTP** project | POST `{ decision, id, metadata }` to `$execution.resumeUrl` |
+| Hermes | approval transport / `kanban_block` | command or `taskId` + `kind: kanban` | origin polls GET `/api/v1/approvals/:id`; kanban comment + unblock |
 | LangGraph | `interrupt()` | thread/run ids | `HumanResponse` |
 | Temporal | `condition()` + signal | workflow id / run id | signal `hitly.decision` |
 
@@ -200,7 +205,7 @@ Guides: `apps/web/content/integrations/`. Plugins: `packages/plugin-*`.
 
 ## Verify
 
-1. Trigger the pause (Studio chat, workflow run, n8n execution, …).
+1. Trigger the pause (Studio chat, workflow run, HTTP callback, n8n execution, …).
 2. Confirm a pending item in Hitly inbox (`{HITLY_API_URL}/inbox`).
 3. Accept: origin continues and the side effect runs.
 4. Reject: origin does **not** run the side effect (`bail()` / rejection result).

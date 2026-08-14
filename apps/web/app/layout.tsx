@@ -18,7 +18,7 @@ export const metadata = {
     default: 'HITLy',
     template: '%s — HITLy',
   },
-  description: 'Human-in-the-loop approvals for Mastra, n8n, LangGraph, and Temporal.',
+  description: 'Human-in-the-loop approvals for Mastra, Hermes, HTTP, LangGraph, and Temporal.',
 }
 
 export default function Layout({ children }: { children: ReactNode }) {

@@ -52,6 +52,7 @@ export function CreateProjectModal() {
               {PLUGIN_IDS.map((plugin) => (
                 <option key={plugin} value={plugin}>
                   {PLUGIN_BRANDS[plugin].label}
+                  {plugin === 'http' ? ' — n8n, webhooks, custom callbacks' : ''}
                 </option>
               ))}
             </select>
