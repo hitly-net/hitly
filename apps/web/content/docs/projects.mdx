@@ -1,0 +1,30 @@
+---
+title: Projects
+description: Collector for origin credentials, people, rules, channels, and logs.
+---
+
+A **project** is the integration collector under a workspace. One project maps to one origin (Mastra, n8n, LangGraph, or Temporal).
+
+Create projects at `app.hitly.net/projects`. The project home (`/projects/:id`) lists that project's work items. Open an item at `/projects/:id/item/:itemId`. Copy the `.env` snippet from Config:
+
+```bash
+HITLY_API_URL=http://localhost:3001
+HITLY_PROJECT_ID=prj_...
+HITLY_API_KEY=hitly_...
+HITLY_RESUME_SECRET=hitly_resume_...
+```
+
+Reveal, copy, or regenerate the resume secret on Config. It is not the ingest API key.
+
+| Tab | Purpose |
+| --- | --- |
+| Items | Work items for this project |
+| Config | Name, origin credentials, default assignee, API keys, resume secret |
+| People | Project roles: `admin`, `user`, `reader` |
+| Rules | First-match routing for SLA and channels |
+| Channels | How assignees are notified (email now; Slack/Telegram later) |
+| Logs | Ingest, notify, decide, and resume events |
+
+Workspace owner/admin can open every project. Members only see projects they are added to. Project admin cannot invite people to the workspace.
+
+Home and Inbox list work items from **all visible projects** in the current workspace. Opening a work item from Inbox stays on `/inbox/:id`; opening it from a project stays on `/projects/:id/item/:itemId`.

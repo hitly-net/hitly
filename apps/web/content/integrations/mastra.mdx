@@ -1,18 +1,21 @@
 ---
 title: Mastra
-description: Suspend a Mastra workflow, review it in Hitly, resume or bail.
+description: Suspend a Mastra agent tool or workflow step, review it in Hitly, resume or bail.
 ---
 
-[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses a workflow with `suspend()` and continues with `resume()` / `bail()`. Hitly owns the reviewer UI.
+[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses with `suspend()` and continues with `resume()` / `bail()`. Hitly owns the reviewer UI. Chat with the demo agent in [Mastra Studio](https://mastra.ai/docs/studio/overview) (`mastra dev`, http://localhost:4111).
 
 ## How it works with Hitly
 
-1. A step calls `suspend()` and POSTs the payload to Hitly.
+1. An agent tool or workflow step calls `suspend()` and POSTs the payload to Hitly.
 2. Hitly stores an [envelope](/docs/envelope) and shows it in the [inbox](/docs/inbox).
 3. A reviewer accepts, edits, or rejects.
-4. Hitly calls Mastra `resume()` with `resumeData`. Reject maps to `approved: false` so the step can `bail()`.
+4. Hitly resumes the origin:
+   - **Workflow** — `POST /api/workflows/:workflowId/resume`
+   - **Agent** — `POST /api/agents/:agentId/resume-stream`
+5. Reject maps to `resumeData.approved: false`. Workflows should `bail()`; agent tools should return a rejection result to the model.
 
-See the runnable example in `examples/mastra`.
+See the runnable project in `examples/mastra` (agent + workflow).
 
 ## Setup
 
@@ -21,11 +24,11 @@ Create a workspace, [API key](/docs/api), and Mastra [connection](/docs/connecti
 Install `@hitly/plugin-mastra`:
 
 ```bash
-npm i @hitly/plugin-mastra
+yarn add @hitly/plugin-mastra
 ```
 
 ```bash
-yarn add @hitly/plugin-mastra
+npm i @hitly/plugin-mastra
 ```
 
 ```bash
@@ -41,30 +44,34 @@ Set env:
 ```bash
 HITLY_API_URL=http://localhost:3001
 HITLY_API_KEY=hitly_...
-HITLY_CONNECTION_ID=conn_...
+HITLY_PROJECT_ID=prj_...
+HITLY_RESUME_SECRET=hitly_resume_...
 MASTRA_BASE_URL=http://localhost:4111
 ```
 
 ## Integration guide
 
-1. Scaffold a Mastra project (`npx create-mastra@latest`) or open `examples/mastra`.
-2. Add a Hitly approval step that notifies Hitly, then `suspend()`.
-3. On resume, read `resumeData.approved`. If `false`, `bail()`.
+1. Scaffold a Mastra project (`yarn create mastra`) or open `examples/mastra`.
+2. In the tool or step `execute`, call `notifyHitlyApproval()`, then `suspend()`.
+3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the Hitly `hitly` proof survives.
 4. Run `mastra dev` (default `http://localhost:4111`) and Hitly app (`http://localhost:3001`).
-5. Start the workflow. Open `app.hitly.net/inbox`, accept, watch the run resume.
+5. Chat with the agent or start the workflow in Studio. Open `app.hitly.net/inbox`, accept, watch the run resume.
+
+### Workflow step
 
 ```ts
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { notifyHitlyApproval } from '@hitly/plugin-mastra'
+import { notifyHitlyApproval, verifyHitlyResume } from '@hitly/plugin-mastra'
 
 const approval = createStep({
   id: 'hitly-approval',
   inputSchema: z.object({ orderId: z.string(), amount: z.number() }),
   outputSchema: z.object({ approved: z.boolean() }),
-  resumeSchema: z.object({ approved: z.boolean() }),
+  resumeSchema: z.object({ approved: z.boolean() }).passthrough(),
   suspendSchema: z.object({ reason: z.string() }),
   execute: async ({ inputData, resumeData, suspend, bail, runId }) => {
+    if (resumeData) verifyHitlyResume(resumeData, { runId, required: true })
     if (resumeData?.approved === false) {
       return bail({ reason: 'Reviewer rejected the refund.' })
     }
@@ -73,7 +80,7 @@ const approval = createStep({
         {
           apiUrl: process.env.HITLY_API_URL!,
           apiKey: process.env.HITLY_API_KEY!,
-          connectionId: process.env.HITLY_CONNECTION_ID!,
+          projectId: process.env.HITLY_PROJECT_ID!,
           mastraBaseUrl: process.env.MASTRA_BASE_URL!,
           workflowId: 'refund-workflow',
           action: { name: 'send-refund', args: inputData },
@@ -90,15 +97,59 @@ const approval = createStep({
 })
 ```
 
+### Agent tool
+
+Do not set `requireApproval: true` if Hitly should see the request. That flag pauses *before* `execute`, so `notifyHitlyApproval` never runs. Suspend inside the tool instead:
+
+```ts
+import { createTool } from '@mastra/core/tools'
+import { z } from 'zod'
+import { notifyHitlyApproval, verifyHitlyResume } from '@hitly/plugin-mastra'
+
+export const sendRefundTool = createTool({
+  id: 'send-refund',
+  description: 'Issue a customer refund after Hitly approval.',
+  inputSchema: z.object({ orderId: z.string(), amount: z.number() }),
+  resumeSchema: z.object({ approved: z.boolean() }).passthrough(),
+  suspendSchema: z.object({ reason: z.string() }),
+  execute: async (inputData, context) => {
+    const runId = (context as { runId?: string }).runId
+    const resumeData = context.agent?.resumeData as { approved?: boolean } | undefined
+    if (resumeData) verifyHitlyResume(resumeData, { runId, required: true })
+    if (resumeData?.approved === false) {
+      return { sent: false, message: 'Reviewer rejected the refund.' }
+    }
+    if (!resumeData?.approved) {
+      await notifyHitlyApproval(
+        {
+          apiUrl: process.env.HITLY_API_URL!,
+          apiKey: process.env.HITLY_API_KEY!,
+          projectId: process.env.HITLY_PROJECT_ID!,
+          mastraBaseUrl: process.env.MASTRA_BASE_URL!,
+          kind: 'agent',
+          agentId: 'refund-agent',
+          toolCallId: context.agent?.toolCallId,
+          action: { name: 'send-refund', args: inputData },
+        },
+        { runId: String(runId), suspendPayload: { reason: `Refund ${inputData.amount}` } },
+      )
+      await context.agent?.suspend?.({ reason: 'Human approval required.' })
+      return { sent: false, message: 'Waiting for Hitly approval.' }
+    }
+    return { sent: true, message: 'Refund issued.' }
+  },
+})
+```
+
 ## Running locally
 
 1. `yarn workspace @hitly/app dev` — Hitly on port 3001.
-2. `yarn workspace @hitly/example-mastra dev` — Mastra on 4111.
-3. Trigger the refund workflow. Approve in the inbox.
+2. `yarn workspace @hitly/example-mastra dev` (or `yarn dev:mastra`) — Studio on 4111.
+3. Chat with **Refund Agent** or run **refund-workflow**. Approve in the inbox.
 
 ## Production
 
-Hitly must reach `mastraBaseUrl` to call `resume()`. Do not point a hosted Hitly workspace at `localhost`. Restrict Mastra CORS and use a token with workflow resume access.
+Hitly must reach `mastraBaseUrl` to call `resume()`. Do not point a hosted Hitly workspace at `localhost`. Restrict Mastra CORS and use a token with workflow/agent resume access.
 
 ## Configuration options
 
@@ -106,9 +157,11 @@ Hitly must reach `mastraBaseUrl` to call `resume()`. Do not point a hosted Hitly
 | --- | --- |
 | `apiUrl` | Hitly app origin, such as `https://app.hitly.net` |
 | `apiKey` | Workspace ingest key |
-| `connectionId` | Connection that stores the Mastra base URL/token |
+| `projectId` | Project that owns the API key |
 | `mastraBaseUrl` | Origin Mastra server Hitly will call on resume |
-| `workflowId` / `stepId` | Resume target |
+| `kind` | `workflow` (default) or `agent` |
+| `workflowId` / `stepId` | Workflow resume target |
+| `agentId` / `toolCallId` | Agent resume target |
 
 ## Decision mapping
 
@@ -116,9 +169,10 @@ Hitly must reach `mastraBaseUrl` to call `resume()`. Do not point a hosted Hitly
 | --- | --- |
 | `accept` | `resume({ resumeData: { approved: true } })` |
 | `edit` | `resume({ resumeData: { approved: true, ...editedArgs } })` |
-| `reject` | `resume({ resumeData: { approved: false } })` then `bail()` |
+| `reject` | `resume({ resumeData: { approved: false } })` then `bail()` (workflow) or a rejection tool result (agent) |
 | `respond` | `resume({ resumeData: { approved: true, response } })` |
 | `ignore` | no resume (approval closed) |
+| `cancel` | no resume (Force cancel — origin is no longer suspended) |
 
 ## Related
 

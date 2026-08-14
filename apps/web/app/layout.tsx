@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 
 export const metadata = {
   title: {
-    default: 'Hitly',
-    template: '%s — Hitly',
+    default: 'HITLy',
+    template: '%s — HITLy',
   },
   description: 'Human-in-the-loop approvals for Mastra, n8n, LangGraph, and Temporal.',
 }

@@ -7,23 +7,27 @@ Every plugin maps in and out of one shape owned by `@hitly/core`.
 
 ```ts
 type PluginId = 'mastra' | 'n8n' | 'langgraph' | 'temporal'
-type Decision = 'accept' | 'reject' | 'edit' | 'respond' | 'ignore'
+type Decision = 'accept' | 'reject' | 'edit' | 'respond' | 'ignore' | 'cancel'
 
 interface ApprovalEnvelope {
   action: { name: string; args: Record<string, unknown> }
   allowedActions: Record<Decision, boolean>
   contextMarkdown?: string
+  externalUrls?: string[]
+  attachments?: { name: string; url?: string; contentType?: string }[]
   resumeSchema?: Record<string, unknown>
   expiresAt?: string
 }
 
 interface OriginRef {
   plugin: PluginId
-  connectionId: string
+  projectId: string
   runId: string
   stepId?: string
   resumeHandle: Record<string, unknown>
 }
 ```
 
-`resumeHandle` is opaque per plugin (Mastra base URL + run/step ids, n8n resume URL, LangGraph thread id, Temporal workflow id).
+`resumeHandle` is opaque per plugin (Mastra base URL + run/step ids, n8n resume URL, LangGraph thread id, Temporal workflow id). Origin credentials live on the **project**.
+
+See [Projects](/docs/projects) and the [API](/docs/api).

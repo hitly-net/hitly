@@ -2,6 +2,22 @@
   "name": "@hitly/plugin-n8n",
   "version": "0.0.1",
   "private": true,
+  "license": "Apache-2.0",
+  "homepage": "https://hitly.net/integrations/n8n",
+  "bugs": {
+    "url": "https://github.com/hitly-net/hitly/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hitly-net/hitly.git",
+    "directory": "packages/plugin-n8n"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "hitly": {
+    "role": "sdk"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

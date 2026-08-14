@@ -7,20 +7,27 @@ The inbox is Hitly's product surface — the equivalent of a Studio observabilit
 
 ## Pending list
 
-`/inbox` lists approvals for the current workspace. Filter by status (`pending`, `decided`, `expired`, `failed_resume`) and plugin.
+`/inbox` lists work items for **all visible projects** in the current workspace, newest first. Filter with **All**, **Open** (`pending` and `failed_resume`), or **Closed** (`decided`, `expired`, and `cancelled`), and by topic text (action or project name). A project's **Items** tab (`/projects/:id`) lists only that project's work items.
 
 Each row shows plugin, action name, age, SLA, and status.
 
 ## Decision actions
 
-Open `/inbox/[id]` to see:
+Open `/inbox/[id]` or `/projects/[id]/item/[itemId]` to see:
 
-- markdown context from the origin suspend payload
+- project name, description, plugin, SLA, assignee, and people (collapsed)
+- origin context as rendered markdown in a card
 - action args (JSON / schema form when `edit` is allowed)
 - a decision bar gated by `allowedActions`: Accept, Reject, Edit, Respond, Ignore
 
+If the project has more than one person who can decide, **Delegate** reassigns the open work item and emails the new assignee. Readers cannot receive a delegated item.
+
 ## Resume status
 
-A recorded decision is durable even if the origin resume fails. Status becomes `failed_resume`. Use **Retry resume** on the approval.
+A recorded decision is durable even if the origin resume fails. Status becomes `failed_resume`. Use **Retry resume** on the approval. If the origin can no longer accept a resume (for example Mastra `This workflow run was not suspended`), **Force cancel** closes the item without calling the origin. Status becomes `cancelled` (Closed filter).
 
-Expired approvals (`expiresAt`) stop accepting decisions.
+After a successful resume, the work item stores the full origin response (`resumeData` sent to the caller, HTTP status, and body — for Mastra workflows, the completed run result).
+
+Expired approvals (`expiresAt`) stop accepting decisions. An hourly housekeeping job also flips overdue pending items to `expired`.
+
+Closed items (`decided`, `expired`, `cancelled`) are kept according to the workspace plan: solo 10 days, pro 30, team 365, enterprise 1000. Self-hosted keeps them forever. Daily housekeeping deletes items past that window.

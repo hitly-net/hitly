@@ -26,7 +26,7 @@ export const temporalPlugin: HitlyPlugin = {
       contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : undefined,
       origin: {
         plugin: 'temporal',
-        connectionId: String(body.connectionId ?? ''),
+        projectId: String(body.projectId ?? ''),
         runId: String(body.workflowId ?? body.runId ?? ''),
         resumeHandle: {
           address: String(body.address ?? ''),
@@ -34,10 +34,17 @@ export const temporalPlugin: HitlyPlugin = {
           workflowId: String(body.workflowId ?? ''),
           signal: HITLY_TEMPORAL_SIGNAL,
         },
+        details: Object.fromEntries(
+          Object.entries({
+            workflowId: String(body.workflowId ?? body.runId ?? '') || undefined,
+            workflowName: typeof body.workflowName === 'string' ? body.workflowName : undefined,
+            namespace: typeof body.namespace === 'string' ? body.namespace : 'default',
+          }).filter((entry): entry is [string, string] => Boolean(entry[1])),
+        ),
       },
     }
   },
-  async resume(_origin: OriginRef, _payload: DecisionPayload): Promise<void> {
+  async resume(_origin: OriginRef, _payload: DecisionPayload, _credentials?: ConnectionCredentials): Promise<void> {
     throw new Error('Temporal resume adapter is not implemented yet')
   },
   async healthcheck(_credentials: ConnectionCredentials): Promise<'ok' | 'error'> {

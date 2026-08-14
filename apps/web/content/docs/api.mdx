@@ -3,7 +3,9 @@ title: API
 description: Ingest and decide HTTP endpoints.
 ---
 
-Authenticate ingest with a workspace API key: `Authorization: Bearer hitly_...`
+Authenticate ingest with a **project** API key: `Authorization: Bearer hitly_...`
+
+The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origin may retry the suspend POST.
 
 ## Create approval
 
@@ -12,8 +14,8 @@ Authenticate ingest with a workspace API key: `Authorization: Bearer hitly_...`
 ```json
 {
   "plugin": "mastra",
-  "connectionId": "conn_...",
-  "mastraBaseUrl": "http://localhost:4111",
+  "projectId": "prj_...",
+  "kind": "workflow",
   "workflowId": "refund-workflow",
   "runId": "run_...",
   "stepId": "hitly-approval",
@@ -22,7 +24,7 @@ Authenticate ingest with a workspace API key: `Authorization: Bearer hitly_...`
 }
 ```
 
-Idempotency: send `Idempotency-Key` when the origin may retry the suspend POST.
+`mastraBaseUrl` is optional when the project already stores the origin base URL.
 
 ## Decide
 
@@ -34,6 +36,38 @@ Idempotency: send `Idempotency-Key` when the origin may retry the suspend POST.
 
 or `{ "decision": "edit", "editedArgs": { "amount": 2000 } }`.
 
+The JSON response includes `resumeResponse`: the payload sent to the origin (`resumeData`) plus the origin HTTP status and body. For Mastra workflows that body is the completed run result.
+
 ## Retry resume
 
 `POST /api/v1/approvals/:id/retry-resume` when status is `failed_resume`.
+
+## Force cancel
+
+`POST /api/v1/approvals/:id/cancel` (session) when status is `pending` or `failed_resume`. Closes the item as `cancelled` without calling the origin. Use when the origin run is no longer suspended.
+
+## Inbox
+
+`GET /api/v1/inbox` (session cookie or `Authorization: Bearer <session token>`)
+
+Query: `scope=all|open|closed`, `q`, `projectId`. `open` is pending + failed resume. `closed` is decided + expired + cancelled.
+
+`GET /api/v1/inbox/summary` returns `{ pending, failedResume, decidedToday, projectCount }`.
+
+`GET /api/v1/approvals/:id` returns envelope, origin, `originFields`, decisions, and `canAct`.
+
+## Workspaces and devices
+
+`GET /api/v1/workspaces` lists memberships. `POST /api/v1/workspaces/current` with `{ "workspaceId" }` selects one. Mobile also sends `x-hitly-workspace-id`.
+
+`GET /api/v1/workspace` returns the current workspace (name, timezone, default SLA, `canManage`). `PATCH /api/v1/workspace` with `{ "name", "timezone", "sla" }` updates it (workspace admins).
+
+`GET /api/v1/projects` lists visible projects. `GET /api/v1/projects/:id` is the summary. `GET`/`PATCH /api/v1/projects/:id/config` is project config for admins (name, SLA, assignee, origin URL; token is write-only). Ingest API keys stay on the web app.
+
+`POST /api/v1/devices` registers an Expo push token (`{ "token", "platform": "ios"|"android" }`). `DELETE /api/v1/devices` unregisters `{ "token" }`. Project API keys are ingest-only — never use them from the reviewer app.
+
+`GET /api/v1/health` is public: `{ "ok": true, "product": "hitly", "edition": "oss"|"cloud" }`.
+
+`POST /api/v1/housekeeping` runs due jobs (`Authorization: Bearer $HITLY_CRON_SECRET`, or unauthenticated in development when the secret is unset). Body is optional: `{ "job": "expire-overdue-approvals", "force": true }`.
+
+See [Mobile](/docs/mobile) for the Expo app, deep links, and push payload.

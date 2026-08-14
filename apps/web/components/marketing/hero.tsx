@@ -1,16 +1,18 @@
 import Link from 'next/link'
+import { HitlyMark, HitlyWordmark } from '@hitly/ui'
 import { APP_URL } from '@/lib/layout.shared'
 
 export function Hero() {
   return (
     <section className="mx-auto max-w-6xl px-6 py-24">
-      <p className="text-sm font-medium uppercase tracking-widest text-zinc-500">Human in the loop</p>
+      <HitlyMark className="h-24 w-24" />
+      <p className="mt-6 text-sm font-medium uppercase tracking-widest text-zinc-500">Human in the loop</p>
       <h1 className="mt-4 max-w-3xl text-5xl font-semibold tracking-tight text-balance">
         Pause the agent. Review the action. Resume the run.
       </h1>
       <p className="mt-6 max-w-2xl text-lg text-zinc-600 dark:text-zinc-400">
-        Hitly is an approval inbox for Mastra, n8n, LangGraph, and Temporal — self-host it or use
-        hitly.net. Frameworks pause; your team decides; Hitly resumes the origin workflow.
+        <HitlyWordmark className="font-semibold" /> is an approval inbox for Mastra, n8n, LangGraph, and Temporal —
+        self-host it or use hitly.net. Frameworks pause; your team decides; HITLy resumes the origin workflow.
       </p>
       <div className="mt-8 flex gap-3">
         <Link

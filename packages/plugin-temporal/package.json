@@ -2,6 +2,22 @@
   "name": "@hitly/plugin-temporal",
   "version": "0.0.1",
   "private": true,
+  "license": "Apache-2.0",
+  "homepage": "https://hitly.net/integrations/temporal",
+  "bugs": {
+    "url": "https://github.com/hitly-net/hitly/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hitly-net/hitly.git",
+    "directory": "packages/plugin-temporal"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "hitly": {
+    "role": "sdk"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

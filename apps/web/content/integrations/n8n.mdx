@@ -16,7 +16,7 @@ Status: **coming soon** (mapping is stable; a custom n8n node is not in v1).
 
 ## Setup (hand-roll today)
 
-You do not need `@hitly/plugin-n8n` yet. Point an HTTP Request node at `POST /api/v1/approvals` with `plugin: "n8n"` and `resumeUrl`.
+You do not need `@hitly/plugin-n8n` yet. Point an HTTP Request node at `POST /api/v1/approvals` with a project API key, `plugin: "n8n"`, `projectId`, and `resumeUrl`.
 
 Set `WEBHOOK_URL` on self-hosted n8n so resume URLs are not `localhost`.
 

@@ -1,0 +1,47 @@
+---
+title: Mobile
+description: Reviewer app for iOS and Android — Cloud or hosted login, push, and deep links into a work item.
+---
+
+The Hitly mobile app is an Expo (React Native) client in `apps/mobile`. It signs into **Hitly Cloud** (`https://app.hitly.net`) or a **self-hosted** instance URL, receives device notifications, and opens the approval that needs a decision.
+
+Web stays the admin surface for team, rules, people, logs, and API keys. Mobile also has workspace settings, a project list, project inbox, and project config (no key minting).
+
+## Login
+
+1. Choose **Cloud** or **Hosted**.
+2. Hosted: enter the instance origin. The app probes `GET /api/v1/health` (`product` must be `hitly`).
+3. Email and password against that origin’s Better Auth endpoints. The session token is stored on device and sent as `Authorization: Bearer`.
+
+Do not put a project API key (`hitly_…`) in the mobile app. Those keys are ingest-only.
+
+## Deep links
+
+- Universal link (Cloud): `https://app.hitly.net/inbox/{approvalId}`
+- Custom scheme: `hitly://inbox/{approvalId}?host={instanceUrl}`
+- Push tap: `data.approvalId` + `data.instanceUrl`
+
+A mismatch between the signed-in instance and the link’s host prompts a switch.
+
+## Push
+
+Assignees with a registered Expo token are pushed on ingest, in addition to email. Payload:
+
+```json
+{
+  "title": "Hitly: send-refund needs a decision",
+  "body": "Acme refunds · expires in 15m",
+  "data": { "type": "approval", "approvalId": "apr_…", "instanceUrl": "https://app.hitly.net" }
+}
+```
+
+Self-hosted instances send through Expo Push using tokens from the official app — no APNs/FCM certs on the operator side. `ntfy` is a later air-gap option.
+
+## Run
+
+```bash
+yarn dev:app
+yarn dev:mobile
+```
+
+Reviewer HTTP contracts: [API](/docs/api). Full component design: `docs/mobile.md` in the repo.

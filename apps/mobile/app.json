@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "HITLy",
+    "slug": "hitly",
+    "scheme": "hitly",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-notifications"
+    ],
+    "ios": {
+      "bundleIdentifier": "net.hitly.app",
+      "supportsTablet": true,
+      "associatedDomains": ["applinks:app.hitly.net"]
+    },
+    "android": {
+      "package": "net.hitly.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "app.hitly.net",
+              "pathPrefix": "/inbox"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

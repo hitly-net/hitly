@@ -3,24 +3,35 @@
   "private": true,
   "license": "Apache-2.0",
   "packageManager": "yarn@1.22.22",
-  "workspaces": [
-    "apps/*",
-    "packages/*",
-    "examples/*"
-  ],
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "packages/*",
+      "examples/*"
+    ],
+    "nohoist": [
+      "@hitly/mobile",
+      "@hitly/mobile/**"
+    ]
+  },
   "scripts": {
     "dev": "turbo dev",
     "dev:web": "yarn workspace @hitly/web dev",
     "dev:app": "yarn workspace @hitly/app dev",
+    "dev:mobile": "yarn workspace @hitly/mobile start",
+    "dev:mastra": "yarn workspace @hitly/example-mastra dev",
     "db:up": "docker compose -f docker-compose.yml up -d --wait",
     "db:down": "docker compose -f docker-compose.yml down",
     "db:generate": "yarn workspace @hitly/db db:generate",
     "db:migrate": "yarn workspace @hitly/db db:migrate",
     "build": "turbo build",
     "lint": "turbo lint",
-    "typecheck": "turbo typecheck"
+    "typecheck": "turbo typecheck",
+    "changeset": "changeset",
+    "version-packages": "changeset version"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.0",
     "turbo": "^2.5.8",
     "typescript": "^5.9.2"
   }

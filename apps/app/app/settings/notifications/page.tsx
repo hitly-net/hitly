@@ -6,9 +6,9 @@ export default function NotificationsPage() {
   return (
     <AppShell>
       <h1 className="text-2xl font-semibold">Notifications</h1>
-      <label className="mt-6 flex items-center gap-2 text-sm">
-        <input type="checkbox" defaultChecked /> Email me when an approval is waiting
-      </label>
+      <p className="mt-2 text-sm text-zinc-500">
+        Per-project channels live on each project. Email is the OSS default; Slack and Telegram come later.
+      </p>
     </AppShell>
   )
 }

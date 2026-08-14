@@ -1,1 +1,64 @@
 @import 'tailwindcss';
+@source '../../../packages/ui/src';
+
+.markdown {
+  @apply text-sm leading-6 text-zinc-700 dark:text-zinc-300;
+}
+.markdown :where(p, ul, ol, pre, blockquote, table) {
+  @apply my-3 first:mt-0 last:mb-0;
+}
+.markdown :where(h1, h2, h3, h4) {
+  @apply mt-4 mb-2 font-semibold text-zinc-950 first:mt-0 dark:text-zinc-50;
+}
+.markdown h1 {
+  @apply text-lg;
+}
+.markdown h2 {
+  @apply text-base;
+}
+.markdown h3,
+.markdown h4 {
+  @apply text-sm;
+}
+.markdown :where(ul, ol) {
+  @apply pl-5;
+}
+.markdown ul {
+  @apply list-disc;
+}
+.markdown ol {
+  @apply list-decimal;
+}
+.markdown li {
+  @apply my-1;
+}
+.markdown a {
+  @apply text-zinc-950 underline dark:text-zinc-50;
+}
+.markdown blockquote {
+  @apply border-l-2 border-zinc-300 pl-3 text-zinc-500 dark:border-zinc-600;
+}
+.markdown code {
+  @apply rounded bg-zinc-100 px-1 py-0.5 font-mono text-xs dark:bg-zinc-800;
+}
+.markdown pre {
+  @apply overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900;
+}
+.markdown pre code {
+  @apply bg-transparent p-0;
+}
+.markdown table {
+  @apply w-full border-collapse text-xs;
+}
+.markdown :where(th, td) {
+  @apply border border-zinc-200 px-2 py-1 text-left dark:border-zinc-700;
+}
+.markdown th {
+  @apply bg-zinc-50 font-medium dark:bg-zinc-900;
+}
+.markdown hr {
+  @apply my-4 border-zinc-200 dark:border-zinc-800;
+}
+.markdown img {
+  @apply max-w-full rounded-md;
+}

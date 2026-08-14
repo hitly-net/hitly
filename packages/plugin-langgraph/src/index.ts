@@ -32,16 +32,23 @@ export const langgraphPlugin: HitlyPlugin = {
       contextMarkdown: typeof body.description === 'string' ? body.description : undefined,
       origin: {
         plugin: 'langgraph',
-        connectionId: String(body.connectionId ?? ''),
+        projectId: String(body.projectId ?? ''),
         runId: String(body.threadId ?? body.runId ?? ''),
         resumeHandle: {
           deploymentUrl: String(body.deploymentUrl ?? ''),
           threadId: String(body.threadId ?? ''),
         },
+        details: Object.fromEntries(
+          Object.entries({
+            threadId: String(body.threadId ?? body.runId ?? '') || undefined,
+            graphId: typeof body.graphId === 'string' ? body.graphId : undefined,
+            assistantId: typeof body.assistantId === 'string' ? body.assistantId : undefined,
+          }).filter((entry): entry is [string, string] => Boolean(entry[1])),
+        ),
       },
     }
   },
-  async resume(_origin: OriginRef, _payload: DecisionPayload): Promise<void> {
+  async resume(_origin: OriginRef, _payload: DecisionPayload, _credentials?: ConnectionCredentials): Promise<void> {
     throw new Error('LangGraph resume adapter is not implemented yet')
   },
   async healthcheck(_credentials: ConnectionCredentials): Promise<'ok' | 'error'> {

@@ -3,7 +3,7 @@ title: Self-host
 description: Run the Apache-2.0 Hitly server yourself.
 ---
 
-This repository is the open-source Hitly server. Self-hosting includes the inbox, plugins, audit log, API keys, and team membership. There are no usage caps.
+This repository is the open-source Hitly server. Self-hosting includes the inbox, projects, plugins, audit log, API keys, and team membership. There are no usage caps.
 
 ## Run locally
 
@@ -15,10 +15,24 @@ yarn db:migrate
 yarn dev:app
 ```
 
-The marketing/docs site is optional (`yarn dev:web`).
+The marketing/docs site is optional (`yarn dev:web`). The Expo reviewer app is `yarn dev:mobile` — see [Mobile](/docs/mobile).
 
 ## What is not in this repo
 
 Stripe billing, hosted plan limits, and SSO ship in a private `@hitly/cloud` overlay used by [hitly.net](https://hitly.net). The `@hitly/cloud` package here is a stub: billing API routes return 404, and the nav hides Cloud-only items.
 
 Do not set an env var to "enable Cloud." Cloud features exist only when that private package replaces the stub.
+
+## Housekeeping
+
+The app process runs due jobs about once a minute:
+
+| Job | Schedule | What it does |
+| --- | --- | --- |
+| `expire-overdue-approvals` | hourly | Marks pending items past `expiresAt` as `expired` |
+| `purge-completed-approvals` | daily | Deletes closed items older than the workspace plan retention |
+| `purge-expired-audit-events` | weekly | Deletes project events older than `auditRetentionDays` |
+
+Self-hosted workspaces keep completed items forever. Hosted plans: solo 10 days, pro 30, team 365, enterprise 1000.
+
+Set `HITLY_HOUSEKEEPING=0` to disable the in-process timer (for example when a process manager or cron should own it). Then `POST /api/v1/housekeeping` with `Authorization: Bearer $HITLY_CRON_SECRET`. Optional JSON `{ "job": "purge-completed-approvals", "force": true }` runs one job immediately.

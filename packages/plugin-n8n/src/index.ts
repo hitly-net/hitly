@@ -5,6 +5,7 @@ import {
   type DecisionPayload,
   type HitlyPlugin,
   type OriginRef,
+  type ResumeResponse,
 } from '@hitly/core'
 
 /**
@@ -26,22 +27,46 @@ export const n8nPlugin: HitlyPlugin = {
       contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : undefined,
       origin: {
         plugin: 'n8n',
-        connectionId: String(body.connectionId ?? ''),
+        projectId: String(body.projectId ?? ''),
         runId: String(body.executionId ?? body.runId ?? ''),
         resumeHandle: { resumeUrl },
+        details: Object.fromEntries(
+          Object.entries({
+            executionId: String(body.executionId ?? body.runId ?? '') || undefined,
+            workflowId: typeof body.workflowId === 'string' ? body.workflowId : undefined,
+            workflowName: typeof body.workflowName === 'string' ? body.workflowName : undefined,
+          }).filter((entry): entry is [string, string] => Boolean(entry[1])),
+        ),
       },
     }
   },
-  async resume(origin: OriginRef, payload: DecisionPayload): Promise<void> {
+  async resume(origin: OriginRef, payload: DecisionPayload, _credentials?: ConnectionCredentials): Promise<ResumeResponse> {
     const resumeUrl = String(origin.resumeHandle.resumeUrl ?? '')
+    const resumeData = payload as unknown as Record<string, unknown>
     const response = await fetch(resumeUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    if (!response.ok) {
-      throw new Error(`n8n resume failed (${response.status}): ${await response.text()}`)
+    const text = await response.text()
+    let body: unknown = text || null
+    if (text) {
+      try {
+        body = JSON.parse(text) as unknown
+      } catch {
+        body = text
+      }
     }
+    if (!response.ok) {
+      const snippet = text.length > 500 ? `${text.slice(0, 500)}…` : text
+      return {
+        resumeData,
+        status: response.status,
+        body,
+        error: `n8n resume failed (${response.status}): ${snippet}`,
+      }
+    }
+    return { resumeData, status: response.status, body }
   },
   async healthcheck(_credentials: ConnectionCredentials): Promise<'ok' | 'error'> {
     return 'ok'

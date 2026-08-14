@@ -2,6 +2,22 @@
   "name": "@hitly/plugin-mastra",
   "version": "0.0.1",
   "private": true,
+  "license": "Apache-2.0",
+  "homepage": "https://hitly.net/integrations/mastra",
+  "bugs": {
+    "url": "https://github.com/hitly-net/hitly/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hitly-net/hitly.git",
+    "directory": "packages/plugin-mastra"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "hitly": {
+    "role": "sdk"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

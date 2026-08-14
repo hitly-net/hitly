@@ -2,6 +2,9 @@
   "name": "@hitly/cloud",
   "version": "0.0.1",
   "private": true,
+  "hitly": {
+    "role": "edition-stub"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts",

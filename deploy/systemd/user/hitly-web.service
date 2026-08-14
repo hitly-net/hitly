@@ -1,0 +1,17 @@
+[Unit]
+Description=Hitly web (Next.js production, :3000)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hitly
+Environment=NODE_ENV=production
+ExecStart=/bin/bash -lc 'source "$HOME/.nvm/nvm.sh" && exec yarn workspace @hitly/web start --hostname 0.0.0.0'
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

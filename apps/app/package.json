@@ -2,6 +2,9 @@
   "name": "@hitly/app",
   "version": "0.0.1",
   "private": true,
+  "hitly": {
+    "role": "app"
+  },
   "scripts": {
     "dev": "next dev --port 3001",
     "build": "next build",
@@ -24,7 +27,9 @@
     "mysql2": "^3.23.3",
     "next": "^16.3.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.13",

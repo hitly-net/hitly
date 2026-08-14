@@ -1,9 +1,9 @@
-import { OSS_ENTITLEMENTS, OSS_NAV_ITEMS, type HitlyEdition } from '@hitly/core'
+import { entitlementsForPlan, OSS_NAV_ITEMS, type HitlyEdition } from '@hitly/core'
 
 export const edition: HitlyEdition = {
   id: 'oss',
-  entitlementsFor() {
-    return OSS_ENTITLEMENTS
+  entitlementsFor(workspace) {
+    return entitlementsForPlan(workspace.plan)
   },
   navItems: OSS_NAV_ITEMS,
 }

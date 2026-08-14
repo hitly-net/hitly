@@ -1,0 +1,17 @@
+[Unit]
+Description=Hitly app (Next.js production, :3001)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hitly
+Environment=NODE_ENV=production
+ExecStart=/bin/bash -lc 'source "$HOME/.nvm/nvm.sh" && exec yarn workspace @hitly/app start --hostname 0.0.0.0'
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
