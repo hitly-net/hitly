@@ -3,7 +3,15 @@ title: Inbox
 description: Pending approvals, decisions, SLA, resume status, and retry.
 ---
 
-The inbox is Hitly's product surface — the equivalent of a Studio observability view, for human decisions.
+The inbox is Hitly's unified review and approval surface. Origins pause with their own primitives — Mastra `suspend()`, n8n Wait, LangGraph `interrupt()`, Temporal `condition()` — but they do not decide. Reviewers open one queue for **every visible project and plugin** in the workspace, on web or [mobile](/docs/mobile), and post a `Decision`. The plugin adapter resumes the run.
+
+Who sees which projects, who can decide, and who only watches is [governance](/docs/governance).
+
+<PhoneShot
+  src="/images/iPhone-inbox.png"
+  alt="Mobile inbox with Open, All, and Closed filters and send-refund rows"
+  caption="Inbox — Open, All, Closed, and search"
+/>
 
 ## Pending list
 
@@ -19,6 +27,12 @@ Open `/inbox/[id]` or `/projects/[id]/item/[itemId]` to see:
 - origin context as rendered markdown in a card
 - action args (JSON / schema form when `edit` is allowed)
 - a decision bar gated by `allowedActions`: Accept, Reject, Edit, Respond, Ignore
+
+<PhoneShot
+  src="/images/iPhone-send-refund.png"
+  alt="send-refund work item showing origin metadata, context, JSON data, and an Accept decision"
+  caption="Work item — origin, context, data, and decision"
+/>
 
 If the project has more than one person who can decide, **Delegate** reassigns the open work item and emails the new assignee. Readers cannot receive a delegated item.
 

@@ -1,22 +1,31 @@
-import { HitlyMark, HitlyWordmark } from '@hitly/ui'
+import { HitlyMark } from '@hitly/ui'
+import { HeroChat } from './hero-chat'
 import { WaitlistForm } from './waitlist-form'
 
 export function ComingSoon() {
   return (
-    <section className="mx-auto grid max-w-6xl items-start gap-16 px-6 py-20 lg:grid-cols-2 lg:py-28">
+    <section className="mx-auto grid max-w-6xl items-start gap-16 px-6 py-8 lg:grid-cols-2 lg:py-10">
       <div>
         <HitlyMark className="h-20 w-20" />
-        <p className="mt-6 text-sm font-medium uppercase tracking-widest text-zinc-500">Coming soon</p>
-        <h1 className="mt-4 max-w-xl text-5xl font-semibold tracking-tight text-balance">
-          Pause the agent. Review the action. Resume the run.
-        </h1>
-        <p className="mt-6 max-w-lg text-lg text-zinc-600 dark:text-zinc-400">
-          <HitlyWordmark className="font-semibold" /> is an approval inbox for Mastra, n8n, LangGraph, and Temporal.
-          Frameworks pause; your team decides; HITLy resumes the origin workflow.
-        </p>
-        <p className="mt-4 max-w-lg text-sm text-zinc-500">
-          Hosted hitly.net is not open yet. Join the waitlist and we will email you when it is.
-        </p>
+        <h1 className="sr-only">Pause the agent. Review the action. Resume the run.</h1>
+        <div className="mt-6">
+          <HeroChat />
+        </div>
+        <div className="mt-6 max-w-lg space-y-1 text-sm text-zinc-500">
+          <p>Cloud — Join the waitlist</p>
+          <p>
+            Local — open source (alpha) is available on{' '}
+            <a
+              href="https://github.com/hitly-net/hitly"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:text-zinc-800 dark:hover:text-zinc-300"
+            >
+              GitHub
+            </a>
+            .
+          </p>
+        </div>
       </div>
       <WaitlistForm />
     </section>

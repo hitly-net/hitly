@@ -3,11 +3,13 @@ title: Integrations
 description: Wire Mastra, n8n, LangGraph, or Temporal to the Hitly inbox.
 ---
 
+Hitly supports the agents and workflow platforms you already run. Each origin keeps its native pause primitive. Reviewers still only use Hitly — the [inbox](/docs/inbox) is the same card whether the run came from Mastra, n8n, LangGraph, or Temporal.
+
+Add a framework by writing one adapter against the [envelope](/docs/envelope). You do not build a second reviewer UI.
+
 | Plugin | Status | Pause primitive | Resume |
 | --- | --- | --- | --- |
 | [Mastra](/integrations/mastra) | Available | `suspend()` | `run.resume()` / `bail()` |
 | [n8n](/integrations/n8n) | Coming soon | Wait webhook | POST `$execution.resumeUrl` |
 | [LangGraph](/integrations/langgraph) | Coming soon | `interrupt()` | `HumanResponse` |
 | [Temporal](/integrations/temporal) | Coming soon | `condition()` | signal `hitly.decision` |
-
-The [envelope](/docs/envelope) is shared. Adding a framework means writing one adapter.

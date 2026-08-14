@@ -32,7 +32,12 @@ export function PricingTable() {
           </div>
         ))}
       </div>
-      <Link href={`${APP_URL}/signup`} className="mt-8 inline-block text-sm font-medium underline">
+      <Link
+        href={`${APP_URL}/signup`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-8 inline-block text-sm font-medium underline"
+      >
         Start on Free →
       </Link>
       <p className="mt-4 text-sm text-zinc-500">
@@ -50,7 +55,12 @@ export function CtaBanner() {
           <h2 className="text-2xl font-semibold">Put a human on the risky step.</h2>
           <p className="mt-2 text-zinc-300">Create a workspace and wire Mastra in about ten minutes.</p>
         </div>
-        <Link href={`${APP_URL}/signup`} className="rounded-md bg-white px-5 py-2.5 text-sm font-medium text-zinc-900">
+        <Link
+          href={`${APP_URL}/signup`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-md bg-white px-5 py-2.5 text-sm font-medium text-zinc-900"
+        >
           Get started
         </Link>
       </div>

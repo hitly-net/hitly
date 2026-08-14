@@ -5,7 +5,7 @@ const withMDX = createMDX()
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  transpilePackages: ['@hitly/core', '@hitly/ui'],
+  transpilePackages: ['@hitly/core', '@hitly/ui', 'mermaid'],
   agentRules: false,
 }
 

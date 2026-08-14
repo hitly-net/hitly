@@ -1,16 +1,14 @@
 import Link from 'next/link'
 import { HitlyLockup, HitlyWordmark } from '@hitly/ui'
-import { APP_URL } from '@/lib/layout.shared'
 
 const links = [
   { href: '/docs', label: 'Docs' },
   { href: '/integrations', label: 'Integrations' },
-  { href: '/pricing', label: 'Pricing' },
 ]
 
 export function SiteHeader() {
   return (
-    <header className="border-b border-zinc-200 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80">
+    <header className="border-b border-zinc-200 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80 md:sticky md:top-0 md:z-50">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
         <Link href="/" className="inline-flex">
           <HitlyLockup markClassName="h-8 w-8" wordmarkClassName="text-lg" />
@@ -21,9 +19,6 @@ export function SiteHeader() {
               {link.label}
             </Link>
           ))}
-          <Link href={`${APP_URL}/login`} className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50">
-            Log in
-          </Link>
           <Link
             href="/#waitlist"
             className="rounded-md bg-zinc-900 px-3 py-1.5 font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900"

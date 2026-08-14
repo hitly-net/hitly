@@ -17,6 +17,8 @@ export function Hero() {
       <div className="mt-8 flex gap-3">
         <Link
           href={`${APP_URL}/signup`}
+          target="_blank"
+          rel="noopener noreferrer"
           className="rounded-md bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900"
         >
           Open the inbox

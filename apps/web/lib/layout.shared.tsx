@@ -8,11 +8,5 @@ export function baseOptions(): BaseLayoutProps {
     nav: {
       title: <HitlyLockup markClassName="h-7 w-7" wordmarkClassName="text-base" />,
     },
-    links: [
-      { text: 'Docs', url: '/docs' },
-      { text: 'Integrations', url: '/integrations' },
-      { text: 'Pricing', url: '/pricing' },
-      { text: 'Open app', url: APP_URL },
-    ],
   }
 }

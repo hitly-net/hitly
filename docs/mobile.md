@@ -52,6 +52,18 @@ inbox/[id]
 
 Deep-link target is always one approval, matching email URLs `{APP_URL}/inbox/{approvalId}`.
 
+## Screenshots
+
+Home (inbox summary), Inbox, Projects, and a decided `send-refund` work item:
+
+![Home — inbox summary](images/iPhone-home.png)
+
+![Inbox — send-refund items](images/iPhone-inbox.png)
+
+![Projects — origin list](images/iPhone-projects.png)
+
+![Work item — send-refund](images/iPhone-send-refund.png)
+
 ## Auth: Cloud or hosted
 
 There is no in-app edition toggle on the web — Cloud vs OSS is package presence. The **mobile client** is where the human chooses the server.

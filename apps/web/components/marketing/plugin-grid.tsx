@@ -37,7 +37,7 @@ export function PluginGrid() {
     <section className="mx-auto max-w-6xl px-6 py-20">
       <h2 className="text-2xl font-semibold">Plugins</h2>
       <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-400">
-        One inbox. Four pause primitives. Add a framework by writing an adapter, not a new UI.
+        We start with four frameworks. We will support any framework that has demand.
       </p>
       <div className="mt-10 grid gap-4 md:grid-cols-2">
         {plugins.map((plugin) => (

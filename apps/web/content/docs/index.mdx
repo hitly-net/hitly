@@ -5,23 +5,23 @@ description: Pause the agent, review the action, resume the run.
 
 Hitly is a human-in-the-loop inbox you can self-host (Apache-2.0) or use as a hosted service at [hitly.net](https://hitly.net). Origin frameworks pause; reviewers decide in Hitly; plugins resume the origin run.
 
-Pause primitives stay framework-specific:
+## What Hitly is
+
+**A unified review and approval surface.** Mastra, n8n, LangGraph, and Temporal each have their own pause primitive. Reviewers do not approve in those UIs. They open the [inbox](/docs/inbox) — one queue across every visible project, web or mobile — and post a `Decision`. The plugin adapter resumes the origin.
+
+**Support for all your agents and workflow platforms.** Pause primitives stay framework-specific. The [envelope](/docs/envelope) does not. Add a framework by writing one adapter, not a new reviewer UI. See [Integrations](/integrations).
 
 - **Mastra** — `suspend()` / `resume()` / `bail()`
 - **n8n** — Wait node `$execution.resumeUrl`
 - **LangGraph** — `interrupt(HumanInterrupt)`
 - **Temporal** — `condition()` + signal `hitly.decision`
 
-The reviewer UI does not talk to those frameworks. It posts a `Decision`. The plugin adapter translates it.
+**Governance that matches the org.** A workspace is the org. Team roles, project people (`admin` / `user` / `reader`), SLA rules, delegate, and audit logs are the org chart. See [Governance](/docs/governance).
 
 ## Start here
 
-**Cloud**
+**Cloud** — [Join the waitlist](/#waitlist).
 
-1. Create a workspace at the app (`app.hitly.net`).
-2. Create a project, copy `HITLY_PROJECT_ID` and an API key.
-3. Follow the [Mastra integration](/integrations/mastra).
-
-**Self-host** — see [Self-host](/docs/self-host).
+**Self-host** — see [Self-host](/docs/self-host). Create a project, copy `HITLY_PROJECT_ID` and an API key, then follow the [Mastra integration](/integrations/mastra).
 
 n8n, LangGraph, and Temporal guides document the mapping today; SDKs ship next.
