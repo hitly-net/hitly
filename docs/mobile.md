@@ -70,7 +70,7 @@ There is no in-app edition toggle on the web — Cloud vs OSS is package presenc
 
 ### InstanceGate
 
-- **Hitly Cloud** — lock `baseUrl` to `https://app.hitly.net`.
+- **Hitly Cloud** — lock `baseUrl` to `https://cloud.hitly.net`.
 - **Hosted** — user enters origin (normalize `https://`, strip trailing slash). Probe `GET /api/v1/health`. Persist `{ baseUrl, label }` in SecureStore.
 
 ### Login
@@ -276,7 +276,7 @@ On ingest, `notifyAssignee` also POSTs to `https://exp.host/--/api/v2/push/send`
   "data": {
     "type": "approval",
     "approvalId": "apr_…",
-    "instanceUrl": "https://app.hitly.net"
+    "instanceUrl": "https://cloud.hitly.net"
   }
 }
 ```
@@ -295,7 +295,7 @@ Three entry points, one resolver `resolveAttentionLink({ approvalId, instanceUrl
 
 | Source | Payload |
 | --- | --- |
-| Universal / App Link | `https://app.hitly.net/inbox/:id` (Cloud). Hosted: Next serves `.well-known` association files when `HITLY_MOBILE_APP_ID` is set. |
+| Universal / App Link | `https://cloud.hitly.net/inbox/:id` (Cloud). Hosted: Next serves `.well-known` association files when `HITLY_MOBILE_APP_ID` is set. |
 | Custom scheme | `hitly://inbox/:id?host=<urlencoded-baseUrl>` |
 | Push tap | `data.approvalId` + `data.instanceUrl` |
 
@@ -307,7 +307,7 @@ Cold start: `getLastNotificationResponseAsync` + `Linking.getInitialURL` in the 
 
 ## Associated domains
 
-Cloud (`app.hitly.net`) should publish:
+Cloud (`cloud.hitly.net`) should publish:
 
 - `/.well-known/apple-app-site-association`
 - `/.well-known/assetlinks.json`

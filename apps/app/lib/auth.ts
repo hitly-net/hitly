@@ -7,6 +7,7 @@ import * as schema from '@hitly/db/schema'
 import { db } from './db'
 import { isTrustedAppOrigin } from './cors'
 import { bootstrapUserWorkspaces } from './workspace'
+import { sendMail } from './mail'
 
 const appUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
@@ -31,8 +32,14 @@ export const auth = db
       }),
       emailAndPassword: {
         enabled: true,
-        sendResetPassword: async () => {
-          // Wire a mailer before launch.
+        sendResetPassword: async ({ user, url }) => {
+          void sendMail({
+            to: user.email,
+            subject: 'Hitly: Reset your password',
+            text: `Click the link to reset your password:\n\n${url}\n\nIf you did not request a password reset, please ignore this email.`,
+          }).catch((error) => {
+            console.error('[hitly password-reset] Failed to send reset email:', error)
+          })
         },
       },
       socialProviders,
