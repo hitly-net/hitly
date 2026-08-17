@@ -2,6 +2,7 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { nextCookies } from 'better-auth/next-js'
 import { bearer } from 'better-auth/plugins'
+import { socialProviders } from '@hitly/cloud/auth/providers'
 import * as schema from '@hitly/db/schema'
 import { db } from './db'
 import { isTrustedAppOrigin } from './cors'
@@ -34,6 +35,7 @@ export const auth = db
           // Wire a mailer before launch.
         },
       },
+      socialProviders,
       databaseHooks: {
         user: {
           create: {

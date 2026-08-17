@@ -8,6 +8,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./auth/providers": "./src/auth/providers.ts",
+    "./auth/buttons": "./src/auth/buttons.tsx",
     "./stripe/checkout": "./src/stripe/checkout.ts",
     "./stripe/portal": "./src/stripe/portal.ts",
     "./stripe/webhook": "./src/stripe/webhook.ts",

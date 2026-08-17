@@ -6,9 +6,6 @@ import { listVisibleProjects } from '@/lib/rbac'
 import { AppSidebar } from './app-sidebar'
 import { AppToolbar } from './app-toolbar'
 
-const entitlements = edition.entitlementsFor({ plan: 'self-hosted' })
-const nav = edition.navItems.filter((item) => !item.feature || hasFeature(entitlements, item.feature))
-
 export async function AppShell({
   children,
   project,
@@ -17,6 +14,8 @@ export async function AppShell({
   project?: { id: string; name: string } | null
 }) {
   const { user, workspaces, workspace, role } = await getAppContext()
+  const entitlements = edition.entitlementsFor({ plan: workspace.plan })
+  const nav = edition.navItems.filter((item) => !item.feature || hasFeature(entitlements, item.feature))
   const projects = await listVisibleProjects({
     workspaceId: workspace.id,
     userId: user.id,

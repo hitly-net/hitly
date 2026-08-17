@@ -1,4 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm'
+import { defaultWorkspacePlan } from '@hitly/cloud/auth/providers'
 import { invites, memberships, users, workspaces } from '@hitly/db/schema'
 import { newId, slugify } from './ids'
 import { requireDb } from './require-db'
@@ -16,6 +17,7 @@ export async function bootstrapUserWorkspaces(user: { id: string; name: string; 
       id: workspaceId,
       name: `${user.name}'s workspace`,
       slug: `${slugify(user.name)}-${workspaceId.slice(-8)}`,
+      plan: defaultWorkspacePlan,
     })
     await database.insert(memberships).values({
       id: newId('mem').slice(0, 36),

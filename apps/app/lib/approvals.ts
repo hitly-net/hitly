@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm'
 import {
   isDecision,
   isOpenApprovalStatus,
@@ -405,4 +405,16 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
     decision,
     response: typeof payload.response === 'string' ? payload.response : undefined,
   }
+}
+
+export async function countApprovalsThisMonth(workspaceId: string) {
+  const start = new Date()
+  start.setUTCDate(1)
+  start.setUTCHours(0, 0, 0, 0)
+  const database = requireDb()
+  const rows = await database
+    .select({ n: sql<number>`count(*)` })
+    .from(approvals)
+    .where(and(eq(approvals.workspaceId, workspaceId), gte(approvals.createdAt, start)))
+  return Number(rows[0]?.n ?? 0)
 }

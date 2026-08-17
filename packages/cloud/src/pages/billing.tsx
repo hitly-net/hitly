@@ -1,4 +1,11 @@
-export function BillingSettings() {
+export type BillingSettingsProps = {
+  workspaceId: string
+  plan: string
+  usedApprovals: number
+  stripeCustomerId?: string | null
+}
+
+export function BillingSettings(_props: BillingSettingsProps) {
   return (
     <>
       <h1 className="text-2xl font-semibold">Billing</h1>
