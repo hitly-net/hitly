@@ -1,0 +1,22 @@
+{
+  "name": "Hitly",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "web",
+      "command": "yarn dev:web",
+      "description": "Marketing + docs site (@hitly/web) on http://localhost:3000"
+    },
+    {
+      "name": "app",
+      "command": "yarn dev:app",
+      "description": "Product app (@hitly/app) on http://localhost:3001"
+    }
+  ],
+  "ports": [
+    { "name": "web", "port": 3000 },
+    { "name": "app", "port": 3001 },
+    { "name": "mariadb", "port": 3306 }
+  ]
+}
