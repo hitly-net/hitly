@@ -14,7 +14,7 @@
     "ios": {
       "bundleIdentifier": "net.hitly.app",
       "supportsTablet": true,
-      "associatedDomains": ["applinks:app.hitly.net"]
+      "associatedDomains": ["applinks:cloud.hitly.net"]
     },
     "android": {
       "package": "net.hitly.app",
@@ -25,7 +25,7 @@
           "data": [
             {
               "scheme": "https",
-              "host": "app.hitly.net",
+              "host": "cloud.hitly.net",
               "pathPrefix": "/inbox"
             }
           ],

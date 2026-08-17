@@ -23,7 +23,7 @@ Do not resume the run yourself after the POST. Hitly does that.
 
 Confirm all of this exists. If it does not, stop and tell the user what to create.
 
-1. A running Hitly app (self-host `yarn dev:app` on http://localhost:3001, or Cloud at https://app.hitly.net).
+1. A running Hitly app (self-host `yarn dev:app` on http://localhost:3001, or Cloud at https://cloud.hitly.net).
 2. A **project** whose plugin matches the origin (`mastra`, `hermes`, `http`, `langgraph`, `temporal`).
 3. A project API key and `HITLY_PROJECT_ID` (Config tab → Origin `.env`).
 4. Origin **base URL** stored on the project (or sent as `mastraBaseUrl` / equivalent on ingest). Hitly must be able to reach that URL to resume. `localhost` only works when Hitly and the origin run on the same machine.

@@ -61,7 +61,7 @@ MASTRA_BASE_URL=http://localhost:4111
 2. In the tool or step `execute`, call `notifyHitlyApproval()`, then `suspend()`.
 3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the Hitly `hitly` proof survives.
 4. Run `mastra dev` (default `http://localhost:4111`) and Hitly app (`http://localhost:3001`).
-5. Chat with the agent or start the workflow in Studio. Open `app.hitly.net/inbox`, accept, watch the run resume.
+5. Chat with the agent or start the workflow in Studio. Open `cloud.hitly.net/inbox`, accept, watch the run resume.
 
 ### Workflow step
 
@@ -161,7 +161,7 @@ Hitly must reach `mastraBaseUrl` to call `resume()`. Do not point a hosted Hitly
 
 | Option | Use it to |
 | --- | --- |
-| `apiUrl` | Hitly app origin, such as `https://app.hitly.net` |
+| `apiUrl` | Hitly app origin, such as `https://cloud.hitly.net` |
 | `apiKey` | Workspace ingest key |
 | `projectId` | Project that owns the API key |
 | `mastraBaseUrl` | Origin Mastra server Hitly will call on resume |

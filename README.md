@@ -1,11 +1,11 @@
 # Hitly
 
-Apache-2.0 human-in-the-loop inbox for Mastra, Hermes, HTTP, LangGraph, and Temporal.
+Apache-2.0 human-in-the-loop inbox for Mastra, Hermes, HTTP, n8n. LangGraph and Temporal coming soon.
 
 Self-host this repo, or use the hosted product at [hitly.net](https://hitly.net). Cloud-only features (Stripe billing, usage metering, SSO) live in a private overlay package — they are not env-var flags in this tree.
 
 - `hitly.net` — marketing + docs (`apps/web`, port 3000)
-- `app.hitly.net` — product (`apps/app`, port 3001)
+- `cloud.hitly.net` — hosted product (`apps/app`, port 3001)
 - iOS / Android reviewer — Expo app (`apps/mobile`, `yarn dev:mobile`)
 
 ```bash

@@ -1,4 +1,4 @@
-export const CLOUD_BASE_URL = 'https://app.hitly.net'
+export const CLOUD_BASE_URL = 'https://cloud.hitly.net'
 
 export const SCHEME = 'hitly'
 
