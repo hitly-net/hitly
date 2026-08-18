@@ -3,6 +3,7 @@ import {
   hashActionArgs,
   hashEvidenceContent,
   type ApprovalEnvelope,
+  type DecisionPayload,
   type EvidenceEvent,
   type OriginRef,
 } from '@hitly/core'

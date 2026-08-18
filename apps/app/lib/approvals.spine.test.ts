@@ -40,7 +40,8 @@ async function inTenant<T>(workspaceId: string, fn: () => Promise<T>): Promise<T
 // Test fixtures
 let client: pg.Client
 let db: ReturnType<typeof drizzle>
-let testServer: ReturnType<typeof import('node:http').createServer> | null = null
+let testServerA: ReturnType<typeof import('node:http').createServer> | null = null
+let testServerB: ReturnType<typeof import('node:http').createServer> | null = null
 let hangingServer: ReturnType<typeof import('node:http').createServer> | null = null
 
 let workspaceA: { id: string; name: string; slug: string }
@@ -52,16 +53,33 @@ let projectB: { id: string; workspaceId: string; name: string }
 let apiKeyA: { raw: string; hashed: string; id: string }
 let apiKeyB: { raw: string; hashed: string; id: string }
 
+// Track events received by each listener for isolation tests
+const eventsReceivedByA: string[] = []
+const eventsReceivedByB: string[] = []
+
 before(async () => {
-  // Start a simple HTTP server for evidence sink tests
+  // Only start servers if not already running
+  if (testServerA || testServerB || hangingServer) {
+    console.log('[test] Servers already started, skipping')
+    return
+  }
+
+  // Start HTTP server A for Project A evidence sink (port 19999)
   const http = await import('node:http')
-  testServer = http.createServer((req, res) => {
+  testServerA = http.createServer((req, res) => {
     if (req.method === 'POST' && req.url?.includes('/evidence')) {
       let body = ''
       req.on('data', chunk => { body += chunk })
       req.on('end', () => {
         try {
           const event = JSON.parse(body)
+          // Handle ping specially: return 200 but don't track as an event
+          if (event.event_type === 'ping' || req.headers['x-hitly-ping'] === 'true') {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: true, message: 'Ping received' }))
+            return
+          }
+          eventsReceivedByA.push(event.event_id)
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({
             event_id: event.event_id,
@@ -80,8 +98,47 @@ before(async () => {
     }
   })
   await new Promise<void>((resolve) => {
-    testServer!.listen(19999, () => {
-      console.log('[test] HTTP evidence sink server listening on port 19999')
+    testServerA!.listen(19999, () => {
+      console.log('[test] HTTP evidence sink server A listening on port 19999')
+      resolve()
+    })
+  })
+
+  // Start HTTP server B for Project B evidence sink (port 19998)
+  testServerB = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.includes('/evidence')) {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        try {
+          const event = JSON.parse(body)
+          // Handle ping specially: return 200 but don't track as an event
+          if (event.event_type === 'ping' || req.headers['x-hitly-ping'] === 'true') {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: true, message: 'Ping received' }))
+            return
+          }
+          eventsReceivedByB.push(event.event_id)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            event_id: event.event_id,
+            content_sha256: event.integrity.content_sha256,
+            store_uri: `http://localhost:19998/evidence/${event.event_id}`,
+            stored_at: new Date().toISOString(),
+          }))
+        } catch {
+          res.writeHead(400)
+          res.end()
+        }
+      })
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  await new Promise<void>((resolve) => {
+    testServerB!.listen(19998, () => {
+      console.log('[test] HTTP evidence sink server B listening on port 19998')
       resolve()
     })
   })
@@ -99,10 +156,16 @@ before(async () => {
     })
   })
 
-  client = new pg.Client({ connectionString: DATABASE_URL })
-  await client.connect()
-  // @ts-expect-error - Client vs Pool type mismatch, works at runtime
-  db = drizzle(client)
+  try {
+    client = new pg.Client({ connectionString: DATABASE_URL })
+    await client.connect()
+    console.log('[test] Database connected')
+    // @ts-expect-error - Client vs Pool type mismatch, works at runtime
+    db = drizzle(client)
+  } catch (error) {
+    console.error('[test] Failed to connect to database:', error)
+    throw error
+  }
 
   // Create test fixtures
   // Workspace A
@@ -201,8 +264,8 @@ before(async () => {
     credentials: {},
     evidenceSinkType: 'http',
     evidenceSinkConfig: { 
-      url: 'http://localhost:19999/evidence', 
-      authHeader: 'Bearer test-token' 
+      url: 'http://localhost:19998/evidence', 
+      authHeader: 'Bearer test-token-b' 
     },
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -244,10 +307,18 @@ before(async () => {
 
 after(async () => {
   // Stop test servers
-  if (testServer) {
+  if (testServerA) {
     await new Promise<void>((resolve) => {
-      testServer!.close(() => {
-        console.log('[test] HTTP server closed')
+      testServerA!.close(() => {
+        console.log('[test] Test server A closed')
+        resolve()
+      })
+    })
+  }
+  if (testServerB) {
+    await new Promise<void>((resolve) => {
+      testServerB!.close(() => {
+        console.log('[test] Test server B closed')
         resolve()
       })
     })
@@ -502,12 +573,14 @@ test('HTTP sink fail-closed: append failure prevents origin resume', { timeout: 
 
   // Check if decision was blocked due to evidence sink failure
   assert.ok('error' in decideResult, 'Decide should fail when sink hangs (fail-closed)')
-  assert.ok(
-    decideResult.error.includes('Evidence sink') || 
-    decideResult.error.includes('aborted') || 
-    decideResult.error.includes('timeout'),
-    `Error should mention evidence sink/abort/timeout, got: ${decideResult.error}`
-  )
+  if ('error' in decideResult && decideResult.error) {
+    assert.ok(
+      decideResult.error.includes('Evidence sink') || 
+      decideResult.error.includes('aborted') || 
+      decideResult.error.includes('timeout'),
+      `Error should mention evidence sink/abort/timeout, got: ${decideResult.error}`
+    )
+  }
 
   // Approval should still be pending (not decided, not resumed)
   const approval = await db
@@ -842,13 +915,39 @@ test('sink auth header never in settings / test-button / logs / receipts', async
 
 test('test ping does not append decided event', async () => {
   await inTenant(workspaceA.id, async () => {
-  // The test button sends a ping event (event_type: 'ping')
-  // This should NOT create an approval or append a decided event
-  // The receiver should handle ping specially and return 2xx without saving
-
-  // This test verifies that the ping is a special case and doesn't interfere
-  // with the regular evidence chain
-  assert.ok(true, 'Ping event is handled specially by receiver, does not create approval')
+  // The test button POSTs a ping event to the configured sink URL
+  // This should NOT create files in the receiver or append to the evidence chain
+  
+  const initialEventCount = eventsReceivedByA.length
+  
+  // Simulate the test button ping (same as the API route does)
+  const pingPayload = {
+    spec: 'hitly.evidence.v1',
+    event_type: 'ping',
+  }
+  
+  const response = await fetch('http://localhost:19999/evidence', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(pingPayload),
+  })
+  
+  assert.equal(response.status, 200, 'Ping should return 200')
+  const body = await response.json()
+  assert.ok(body.ok || body.message, 'Ping should return success response')
+  
+  // Verify the mock listener did NOT track this as an event
+  // Mock handler checks event_type === 'ping' and returns early without pushing to array
+  const finalEventCount = eventsReceivedByA.length
+  assert.equal(finalEventCount, initialEventCount, 'Ping should not be tracked as an event')
+  
+  // Verify no evidence receipts with event_type 'ping' exist
+  const receipts = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(eq(evidenceReceipts.eventType, 'ping'))
+    .limit(1)
+  assert.equal(receipts.length, 0, 'Ping should not create evidence receipts')
   })
 })
 
@@ -868,4 +967,66 @@ test('non-admin cannot change sink URL', async () => {
   })
 })
 
-console.log('✓ All GRC P0 spine tests passed')
+test('two projects, two sink URLs: A events only to A listener, B sees zero', async () => {
+  // Clear event tracking
+  eventsReceivedByA.length = 0
+  eventsReceivedByB.length = 0
+  
+  // Ingest and decide on Project A
+  await inTenant(workspaceA.id, async () => {
+    const mastraPayloadA = buildMastraPayload({ projectId: projectA.id })
+    
+    const ingestResultA = await ingestApproval({
+      apiKey: apiKeyA.raw,
+      body: mastraPayloadA,
+    })
+    assert.ok(ingestResultA.ok, 'Project A ingest should succeed')
+    
+    const payload = parseDecisionBody({ decision: 'accept' })
+    assert.ok(payload)
+    
+    await decideApproval({
+      approvalId: ingestResultA.approval.id,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+    })
+    
+    // Project A should have posted to listener A (port 19999)
+    assert.ok(eventsReceivedByA.length >= 2, `Project A should have sent events to listener A, got ${eventsReceivedByA.length}`)
+    
+    // Project B's listener (port 19998) should see zero events
+    assert.equal(eventsReceivedByB.length, 0, 'Project B listener should not receive Project A events')
+  })
+  
+  // Clear A's events, now test Project B
+  eventsReceivedByA.length = 0
+  eventsReceivedByB.length = 0
+  
+  // Ingest and decide on Project B
+  await inTenant(workspaceB.id, async () => {
+    const mastraPayloadB = buildMastraPayload({ projectId: projectB.id })
+    
+    const ingestResultB = await ingestApproval({
+      apiKey: apiKeyB.raw,
+      body: mastraPayloadB,
+    })
+    assert.ok(ingestResultB.ok, 'Project B ingest should succeed')
+    
+    const payload = parseDecisionBody({ decision: 'accept' })
+    assert.ok(payload)
+    
+    await decideApproval({
+      approvalId: ingestResultB.approval.id,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceB.id,
+    })
+    
+    // Project B should have posted to listener B (port 19998)
+    assert.ok(eventsReceivedByB.length >= 2, `Project B should have sent events to listener B, got ${eventsReceivedByB.length}`)
+    
+    // Project A's listener (port 19999) should see zero events from B
+    assert.equal(eventsReceivedByA.length, 0, 'Project A listener should not receive Project B events')
+  })
+})
