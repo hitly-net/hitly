@@ -16,7 +16,7 @@ export default function SignupScreen() {
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>Create account</Text>
-      <Text style={styles.sub}>{instance?.label ?? 'Hitly'}</Text>
+      <Text style={styles.sub}>{instance?.label ?? 'HITLy'}</Text>
       <TextInput value={name} onChangeText={setName} placeholder="Name" placeholderTextColor={colors.muted} style={styles.input} />
       <TextInput
         value={email}

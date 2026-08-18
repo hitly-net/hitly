@@ -15,12 +15,12 @@ export default function BillingTermsPage() {
           {' / '}
           Billing
         </p>
-        <h1 className="mt-2 text-3xl font-semibold">Hitly Cloud Billing Terms</h1>
+        <h1 className="mt-2 text-3xl font-semibold">HITLy Cloud Billing Terms</h1>
         <p className="mt-4 text-sm text-zinc-500">Last updated 17 August 2026.</p>
 
         <div className="mt-8 space-y-6 text-zinc-600 dark:text-zinc-400">
           <p>
-            Hitly Cloud is a paid hosted service billed in USD through Stripe. Solo is free. Pro and
+            HITLy Cloud is a paid hosted service billed in USD through Stripe. Solo is free. Pro and
             Team are monthly subscriptions that renew until cancelled. Enterprise is sold by
             arrangement, not self-serve checkout.
           </p>

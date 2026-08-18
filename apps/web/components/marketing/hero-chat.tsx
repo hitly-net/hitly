@@ -1,6 +1,6 @@
 const messages = [
   { side: 'left', text: 'Pause the agent.' },
-  { side: 'right', text: 'HITLy is an approval inbox' },
+  { side: 'right', text: 'HITLy is the inbox agents wait on' },
   { side: 'right', text: 'for Mastra, Hermes, HTTP, LangGraph, and Temporal.' },
   { side: 'right', text: 'Frameworks pause' },
   { side: 'left', text: 'Review the action.' },

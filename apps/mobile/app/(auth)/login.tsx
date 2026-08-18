@@ -15,7 +15,7 @@ export default function LoginScreen() {
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>Sign in</Text>
-      <Text style={styles.sub}>{instance?.label ?? 'Hitly'}</Text>
+      <Text style={styles.sub}>{instance?.label ?? 'HITLy'}</Text>
       <TextInput
         value={email}
         onChangeText={setEmail}

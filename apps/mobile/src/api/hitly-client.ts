@@ -142,7 +142,7 @@ export async function probeInstance(baseUrl: string): Promise<InstanceConfig> {
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(
-        'Could not reach that origin. Confirm the Hitly server is running and allows this browser origin (CORS).',
+        'Could not reach that origin. Confirm the HITLy server is running and allows this browser origin (CORS).',
       )
     }
     throw error

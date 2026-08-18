@@ -10,7 +10,7 @@ export default function TermsPage() {
       <main className="mx-auto max-w-3xl flex-1 px-6 py-16">
         <h1 className="text-3xl font-semibold">Terms</h1>
         <p className="mt-4 text-zinc-600 dark:text-zinc-400">
-          Hitly Cloud is a hosted approval inbox. You can also self-host the Apache-2.0 server with no
+          HITLy Cloud is the hosted inbox agents wait on. You can also self-host the Apache-2.0 server with no
           usage caps. You are responsible for the workflows you connect and the decisions your
           reviewers make.
         </p>

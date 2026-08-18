@@ -127,7 +127,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [client, ready, refreshWorkspaces, token])
 
   const chooseCloud = useCallback(async () => {
-    await persistInstance({ baseUrl: CLOUD_BASE_URL, label: 'Hitly Cloud' })
+    await persistInstance({ baseUrl: CLOUD_BASE_URL, label: 'HITLy Cloud' })
   }, [persistInstance])
 
   const chooseHosted = useCallback(

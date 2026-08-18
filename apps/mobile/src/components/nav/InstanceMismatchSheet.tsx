@@ -11,7 +11,7 @@ export function InstanceMismatchSheet() {
         <View style={styles.card}>
           <Text style={styles.title}>Different instance</Text>
           <Text style={styles.body}>
-            This link is for {mismatch.instanceUrl ?? 'another Hitly server'}. You are signed into{' '}
+            This link is for {mismatch.instanceUrl ?? 'another HITLy server'}. You are signed into{' '}
             {instance?.label ?? instance?.baseUrl}.
           </Text>
           <Pressable onPress={clearMismatch} style={styles.button}>
