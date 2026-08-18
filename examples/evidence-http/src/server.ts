@@ -142,7 +142,7 @@ function renderEventHtml(event: EvidenceEvent, baseUrl: string): string {
 </head>
 <body>
   <div class="header">
-    <div class="wordmark">HITL<span class="sub">y</span></div>
+    <div class="wordmark">HITL<sub class="sub">y</sub></div>
     <p class="label">Evidence Event</p>
   </div>
 
@@ -356,7 +356,7 @@ function renderApprovalChainHtml(events: EvidenceEvent[], approvalId: string, ba
 </head>
 <body>
   <div class="header">
-    <div class="wordmark">HITL<span class="sub">y</span></div>
+    <div class="wordmark">HITL<sub class="sub">y</sub></div>
     <p class="label">Evidence Chain</p>
     <h1 style="margin: 0.5rem 0 0; font-size: 1.25rem;" class="mono">${escapeHtml(approvalId)}</h1>
   </div>
@@ -447,7 +447,7 @@ function renderEventsListHtml(events: EvidenceEvent[], filters: Record<string, s
 </head>
 <body>
   <div class="header">
-    <div class="wordmark">HITL<span class="sub">y</span></div>
+    <div class="wordmark">HITL<sub class="sub">y</sub></div>
     <p class="label">Evidence Store</p>
   </div>
 
