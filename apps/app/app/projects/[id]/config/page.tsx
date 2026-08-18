@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { projectApiKeys, projectMemberships, users } from '@hitly/db/schema'
+import { HitlyWordmark } from '@hitly/ui'
 import { updateProjectConfig } from '@/actions/projects'
 import { AppShell } from '@/components/app-shell'
 import { ProjectApiKeys } from '@/components/project-api-keys'
@@ -117,7 +118,7 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
 
         <h3 className="mt-4 text-sm font-semibold">Evidence Storage</h3>
         <p className="text-xs text-zinc-500">
-          Evidence is written to your URL. Hitly keeps a receipt only. Decide will not resume the origin if this URL fails.
+          Evidence is written to your URL. <HitlyWordmark className="text-xs font-normal" /> keeps a receipt only. Decide will not resume the origin if this URL fails.
         </p>
         <select
           name="evidenceSinkType"
