@@ -314,6 +314,11 @@ export async function retryWorkItem(approvalId: string) {
     if (!canDecide(access)) throw new Error('You cannot retry this work item')
     const { retryResume } = await import('@/lib/approvals')
     const result = await retryResume({ approvalId, workspaceId: workspace.id })
+    if (result.error && result.status === 500) {
+      const returnPath = `/inbox/${approvalId}`
+      const errorParam = encodeURIComponent(result.error)
+      redirect(`${returnPath}?error=${errorParam}`)
+    }
     throwUnlessConflict(result)
     revalidateWorkItem(approvalId, approval.projectId)
   })
@@ -429,6 +434,11 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     const payload = parseDecisionBody({ decision, response: response || undefined, editedArgs })
     if (!payload) throw new Error('Invalid decision')
     const result = await decideApproval({ approvalId, actorUserId: user.id, payload, workspaceId: workspace.id })
+    if (result.error && result.status === 500) {
+      const returnPath = workItemReturnPath(formData, approval)
+      const errorParam = encodeURIComponent(result.error)
+      redirect(`${returnPath}?error=${errorParam}`)
+    }
     throwUnlessConflict(result)
     revalidateWorkItem(approvalId, approval.projectId)
     redirect(workItemReturnPath(formData, approval))

@@ -25,9 +25,11 @@ function personLabel(person: { name: string | null; email: string }) {
 export async function WorkItemDetail({
   approvalId,
   projectId,
+  errorMessage,
 }: {
   approvalId: string
   projectId?: string
+  errorMessage?: string
 }) {
   return withAppTenant(async ({ user, role, workspace }) => {
   const database = requireDb()
@@ -133,6 +135,13 @@ export async function WorkItemDetail({
         <h1 className="text-2xl font-semibold">{approval.actionName}</h1>
         {canCancel ? <ForceCancelButton approvalId={approval.id} /> : null}
       </div>
+      {errorMessage ? (
+        <div className="mt-4 max-w-2xl rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950">
+          <p className="text-sm font-semibold text-red-900 dark:text-red-200">Decision failed</p>
+          <p className="mt-1 text-sm text-red-700 dark:text-red-300">{errorMessage}</p>
+          <p className="mt-2 text-sm text-red-600 dark:text-red-400">The work item is still pending. Please try again or contact support.</p>
+        </div>
+      ) : null}
       {originRows.length > 0 ? (
         <section className="mt-6 max-w-2xl rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
           <h2 className="text-sm font-semibold">Origin</h2>
