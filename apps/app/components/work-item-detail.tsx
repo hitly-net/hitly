@@ -16,6 +16,7 @@ import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { requireDb } from '@/lib/tenant'
 import { decodeTenantJson } from '@/lib/tenant-crypto'
 import { approvalHasExpired } from '@/lib/approval-expiry'
+import { loadEvidenceReceiptForDisplay } from '@/lib/evidence'
 
 function personLabel(person: { name: string | null; email: string }) {
   return person.name ? `${person.name} (${person.email})` : person.email
@@ -88,6 +89,9 @@ export async function WorkItemDetail({
     })),
   )
   const latestDecision = decodedDecisions[0]
+
+  const evidenceReceipt = await loadEvidenceReceiptForDisplay(approval.id, workspace.id)
+  const showEvidenceLink = evidenceReceipt && (evidenceReceipt.storeUri.startsWith('http://') || evidenceReceipt.storeUri.startsWith('https://'))
 
   const envelope = approval.envelope as unknown as ApprovalEnvelope
   const origin = approval.origin as unknown as OriginRef
@@ -250,6 +254,21 @@ export async function WorkItemDetail({
           <pre className="mt-2 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
             {JSON.stringify(latestDecision.resumeResponse ?? latestDecision.payload, null, 2)}
           </pre>
+        </section>
+      ) : null}
+      {showEvidenceLink ? (
+        <section className="mt-8 max-w-2xl">
+          <h2 className="text-sm font-semibold">Evidence</h2>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            <a 
+              href={evidenceReceipt.storeUri} 
+              target="_blank" 
+              rel="noreferrer"
+              className="underline"
+            >
+              View evidence receipt
+            </a>
+          </p>
         </section>
       ) : null}
       {expired && approval.status === 'pending' ? (

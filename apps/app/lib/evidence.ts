@@ -320,3 +320,28 @@ export async function loadLatestReceipt(approvalId: string, workspaceId: string)
     prevContentSha256: latest.contentSha256,
   }
 }
+
+export async function loadEvidenceReceiptForDisplay(approvalId: string, workspaceId: string) {
+  const database = requireDb()
+  const rows = await database
+    .select()
+    .from(evidenceReceipts)
+    .where(and(eq(evidenceReceipts.approvalId, approvalId), eq(evidenceReceipts.workspaceId, workspaceId)))
+    .orderBy(evidenceReceipts.seq)
+    .limit(100)
+
+  if (rows.length === 0) return null
+
+  const decidedReceipt = rows.find(r => r.eventType === 'decided')
+  const receipt = decidedReceipt || rows[rows.length - 1]
+  
+  if (!receipt) return null
+
+  return {
+    eventId: receipt.eventId,
+    eventType: receipt.eventType,
+    seq: receipt.seq,
+    storeUri: receipt.storeUri,
+    storedAt: receipt.storedAt,
+  }
+}
