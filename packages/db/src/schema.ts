@@ -159,6 +159,8 @@ export const projects = pgTable(
       onDelete: 'set null',
     }),
     defaultSlaMinutes: varchar('default_sla_minutes', { length: 16 }).notNull().default('60'),
+    evidenceSinkType: varchar('evidence_sink_type', { length: 16 }).notNull().default('none'),
+    evidenceSinkConfig: jsonb('evidence_sink_config').$type<Record<string, unknown>>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -357,6 +359,32 @@ export const decisionRecords = pgTable(
   ],
 )
 
+export const evidenceReceipts = pgTable(
+  'evidence_receipts',
+  {
+    id: id().primaryKey(),
+    workspaceId: id('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    approvalId: id('approval_id')
+      .notNull()
+      .references(() => approvals.id, { onDelete: 'cascade' }),
+    eventId: varchar('event_id', { length: 255 }).notNull(),
+    eventType: varchar('event_type', { length: 32 }).notNull(),
+    seq: integer('seq').notNull(),
+    contentSha256: varchar('content_sha256', { length: 64 }).notNull(),
+    storeUri: text('store_uri').notNull(),
+    storedAt: timestamp('stored_at', { precision: 3, withTimezone: true }).notNull(),
+    evidenceDurable: boolean('evidence_durable').notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index('evidence_receipts_approval_idx').on(table.approvalId),
+    index('evidence_receipts_event_id_idx').on(table.eventId),
+    index('evidence_receipts_workspace_idx').on(table.workspaceId),
+  ],
+)
+
 /** Tables Cloud RLS pins to `app.workspace_id`. Control-plane identity tables are not listed. */
 export const TENANT_TABLES = [
   'projects',
@@ -367,4 +395,5 @@ export const TENANT_TABLES = [
   'project_events',
   'approvals',
   'decision_records',
+  'evidence_receipts',
 ] as const

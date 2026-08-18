@@ -31,6 +31,16 @@ export interface MastraIngestPayload {
   resumeSchema?: Record<string, unknown>
   expiresAt?: string
   mastraBaseUrl?: string
+  traceId?: string
+  spanId?: string
+  systemId?: string
+  inventoryId?: string
+  policyId?: string
+  policyRationale?: string
+  riskTier?: string
+  toolName?: string
+  sensitivity?: string[]
+  dataCategories?: string[]
 }
 
 export interface MastraWorkflowResumeHandle {
@@ -194,6 +204,17 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
           stepId,
         }
 
+  const traceId = optionalString(body.traceId)
+  const spanId = optionalString(body.spanId)
+  const systemId = optionalString(body.systemId)
+  const inventoryId = optionalString(body.inventoryId)
+  const policyId = optionalString(body.policyId)
+  const policyRationale = optionalString(body.policyRationale)
+  const riskTier = optionalString(body.riskTier)
+  const toolName = optionalString(body.toolName)
+  const sensitivity = stringList(body.sensitivity)
+  const dataCategories = stringList(body.dataCategories)
+
   return {
     action: {
       name: String(action.name ?? stepId),
@@ -212,6 +233,17 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
     attachments: attachmentList(suspendPayload.attachments) ?? attachmentList(body.attachments),
     resumeSchema: asRecord(body.resumeSchema),
     expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : undefined,
+    traceId,
+    spanId,
+    agentId: kind === 'agent' ? agentId : undefined,
+    systemId,
+    inventoryId,
+    policyId,
+    policyRationale,
+    riskTier,
+    toolName,
+    sensitivity,
+    dataCategories,
     origin: {
       plugin: 'mastra',
       projectId,
@@ -231,6 +263,15 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
         resourceId: optionalString(body.resourceId),
         threadId: optionalString(body.threadId),
       }),
+      traceId,
+      spanId,
+      agentId: kind === 'agent' ? agentId : undefined,
+      systemId,
+      inventoryId,
+      policyId,
+      policyRationale,
+      riskTier,
+      toolName,
     },
   }
 }
@@ -330,6 +371,16 @@ export interface HitlyApprovalStepConfig {
   toolCallId?: string
   resourceId?: string
   threadId?: string
+  traceId?: string
+  spanId?: string
+  systemId?: string
+  inventoryId?: string
+  policyId?: string
+  policyRationale?: string
+  riskTier?: string
+  toolName?: string
+  sensitivity?: string[]
+  dataCategories?: string[]
 }
 
 /**
@@ -372,6 +423,16 @@ export async function notifyHitlyApproval(
       action: config.action,
       suspendPayload: input.suspendPayload,
       resumeSchema: input.resumeSchema,
+      traceId: config.traceId,
+      spanId: config.spanId,
+      systemId: config.systemId,
+      inventoryId: config.inventoryId,
+      policyId: config.policyId,
+      policyRationale: config.policyRationale,
+      riskTier: config.riskTier,
+      toolName: config.toolName,
+      sensitivity: config.sensitivity,
+      dataCategories: config.dataCategories,
     } satisfies MastraIngestPayload),
   })
 

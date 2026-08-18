@@ -12,6 +12,7 @@ import { ensureProjectResumeSecret } from '@/lib/resume-secret'
 import { resumeSecretPrefix } from '@/lib/keys'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
 import { withAppTenant } from '@/lib/context'
+import { decodeTenantJson } from '@/lib/tenant-crypto'
 
 export const metadata = { title: 'Config' }
 
@@ -39,6 +40,7 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
     .where(and(eq(projectMemberships.projectId, id), eq(projectMemberships.workspaceId, workspaceId)))
 
   const credentials = project.credentials as Record<string, unknown>
+  const sinkConfig = project.evidenceSinkConfig ? await decodeTenantJson(project.workspaceId, project.evidenceSinkConfig as Record<string, unknown>) : {}
   const appUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
   return (
@@ -111,6 +113,33 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
             className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
           />
         )}
+
+        <h3 className="mt-4 text-sm font-semibold">Evidence Storage</h3>
+        <p className="text-xs text-zinc-500">
+          Evidence is written to your URL. Hitly keeps a receipt only. Decide will not resume the origin if this URL fails.
+        </p>
+        <select
+          name="evidenceSinkType"
+          defaultValue={project.evidenceSinkType}
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        >
+          <option value="none">None</option>
+          <option value="http">HTTP</option>
+        </select>
+        <input
+          name="evidenceSinkUrl"
+          defaultValue={String(sinkConfig.url ?? '')}
+          placeholder="Evidence sink URL"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <input
+          name="evidenceSinkAuthHeader"
+          type="password"
+          defaultValue=""
+          placeholder="Authorization header (leave blank to keep)"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+
         <button
           type="submit"
           className="h-10 rounded-md bg-zinc-900 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"

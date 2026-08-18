@@ -14,6 +14,9 @@ export type ProjectConfigInput = {
   taskQueue: string
   address: string
   defaultAssigneeUserId: string | null
+  evidenceSinkType: 'none' | 'http'
+  evidenceSinkUrl: string
+  evidenceSinkAuthHeader: string
 }
 
 export function parseProjectConfig(input: Record<string, unknown>): ProjectConfigInput | { error: string } {
@@ -27,6 +30,9 @@ export function parseProjectConfig(input: Record<string, unknown>): ProjectConfi
   const taskQueue = typeof input.taskQueue === 'string' ? input.taskQueue.trim() : ''
   const address = typeof input.address === 'string' ? input.address.trim() : ''
   const assignee = typeof input.defaultAssigneeUserId === 'string' ? input.defaultAssigneeUserId.trim() : ''
+  const evidenceSinkType = typeof input.evidenceSinkType === 'string' ? input.evidenceSinkType.trim() : 'none'
+  const evidenceSinkUrl = typeof input.evidenceSinkUrl === 'string' ? input.evidenceSinkUrl.trim() : ''
+  const evidenceSinkAuthHeader = typeof input.evidenceSinkAuthHeader === 'string' ? input.evidenceSinkAuthHeader.trim() : ''
   return {
     name,
     description,
@@ -37,6 +43,9 @@ export function parseProjectConfig(input: Record<string, unknown>): ProjectConfi
     taskQueue,
     address,
     defaultAssigneeUserId: assignee || null,
+    evidenceSinkType: evidenceSinkType === 'http' ? 'http' : 'none',
+    evidenceSinkUrl,
+    evidenceSinkAuthHeader,
   }
 }
 
@@ -72,6 +81,10 @@ export async function saveProjectConfig(projectId: string, input: ProjectConfigI
     credentials.resumeSecret = generateResumeSecret()
   }
 
+  const sinkConfig: Record<string, unknown> = {}
+  if (input.evidenceSinkUrl) sinkConfig.url = input.evidenceSinkUrl
+  if (input.evidenceSinkAuthHeader) sinkConfig.authHeader = input.evidenceSinkAuthHeader
+
   await database
     .update(projects)
     .set({
@@ -80,6 +93,8 @@ export async function saveProjectConfig(projectId: string, input: ProjectConfigI
       defaultSlaMinutes: input.sla,
       defaultAssigneeUserId: input.defaultAssigneeUserId,
       credentials: await encodeTenantJson(workspaceId, credentials),
+      evidenceSinkType: input.evidenceSinkType,
+      evidenceSinkConfig: Object.keys(sinkConfig).length > 0 ? await encodeTenantJson(workspaceId, sinkConfig) : null,
       updatedAt: new Date(),
     })
     .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)))

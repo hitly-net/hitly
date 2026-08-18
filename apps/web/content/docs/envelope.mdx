@@ -18,6 +18,19 @@ interface ApprovalEnvelope {
   attachments?: { name: string; url?: string; contentType?: string }[]
   resumeSchema?: Record<string, unknown>
   expiresAt?: string
+
+  // Evidence fields (optional, persisted when present)
+  traceId?: string
+  spanId?: string
+  agentId?: string
+  systemId?: string
+  inventoryId?: string
+  policyId?: string
+  policyRationale?: string
+  riskTier?: string
+  toolName?: string
+  sensitivity?: string[]
+  dataCategories?: string[]
 }
 
 interface OriginRef {
@@ -26,11 +39,98 @@ interface OriginRef {
   runId: string
   stepId?: string
   resumeHandle: Record<string, unknown>
+
+  // Evidence fields from origin (optional, persisted when present)
+  traceId?: string
+  spanId?: string
+  agentId?: string
+  systemId?: string
+  inventoryId?: string
+  policyId?: string
+  policyRationale?: string
+  riskTier?: string
+  toolName?: string
 }
 ```
 
 `resumeHandle` is opaque per plugin (Mastra base URL + run/step ids, Hermes request/task ids, HTTP `resumeUrl` + optional `metadata`, LangGraph thread id, Temporal workflow id). Origin credentials live on the **project**.
 
 HTTP ingest may include `metadata` (a JSON object). It is stored on the envelope and echoed unchanged on the resume POST for both accept and reject, next to `decision` and the HITL<sub><i>y</i></sub> `id`.
+
+## Evidence Fields
+
+Evidence fields provide audit context for compliance and governance. All are optional at ingest; HITLy persists them when present.
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `traceId` | OTel/Mastra context | Distributed trace ID |
+| `spanId` | OTel/Mastra context | Current span ID |
+| `agentId` | Mastra/implementor | Agent/workflow identifier (Mastra fills for agents) |
+| `systemId` | Implementor | External system identifier (e.g. order service, payment gateway) |
+| `inventoryId` | Implementor | Asset/resource identifier in the external system |
+| `policyId` | Implementor | Policy or rule that triggered this approval |
+| `policyRationale` | Implementor | Why this action requires approval |
+| `riskTier` | Implementor | Risk classification (e.g. "high", "medium", "low") |
+| `toolName` | Implementor/Mastra | Tool or action name in the origin framework |
+| `sensitivity` | Implementor | Sensitivity flags (not raw PII) |
+| `dataCategories` | Implementor | Data category flags for GDPR/compliance |
+
+**HITLy is deployer tooling, not the high-risk system.** `systemId` refers to *your* system (the one being governed), not HITLy itself.
+
+### What Mastra Fills Automatically
+
+The Mastra plugin automatically captures:
+- `traceId`, `spanId` (from OTel context, if present)
+- `agentId` (for agent approvals)
+- `runId`, `stepId`, `toolCallId` (always)
+
+Everything else must be passed by the implementor via `createHitlyApprovalStep()` config.
+
+### Example: Mastra with Evidence
+
+```ts
+import { createHitlyApprovalStep } from '@hitly/plugin-mastra'
+
+const approvalStep = createHitlyApprovalStep({
+  apiUrl: process.env.HITLY_API_URL,
+  apiKey: process.env.HITLY_API_KEY,
+  projectId: process.env.HITLY_PROJECT_ID,
+  agentId: 'refund-agent',
+  action: { name: 'send_refund', args: { orderId, amount } },
+
+  // Evidence fields the implementor must provide
+  systemId: 'order-service',
+  inventoryId: orderId,
+  policyId: 'refund-over-100',
+  policyRationale: 'Refunds over $100 require manager approval',
+  riskTier: 'medium',
+  toolName: 'send_refund',
+})
+```
+
+Evidence events are written to the configured HTTP sink (see [Evidence Storage](#evidence-storage) below) as `hitly.evidence.v1` JSON.
+
+## Evidence Storage
+
+Configure an HTTP evidence sink in project settings:
+
+1. **Sink Type**: `None` (default) or `HTTP`
+2. **Sink URL**: POST destination for evidence events
+3. **Authorization Header**: Optional auth token
+
+Evidence events are POSTed to your URL with:
+- `Content-Type: application/json`
+- `Idempotency-Key: <event_id>`
+- Full event JSON body (see `packages/core/src/evidence.ts`)
+
+HITLy stores a **receipt index only**, not the payload as system of record. Evidence lifecycle:
+
+- `requested` - Approval ingested (fail-open: continues on sink error)
+- `decided` - Reviewer decided (**fail-closed**: origin NOT resumed if sink fails)
+- `resumed` / `resume_failed` - Origin resume outcome (fail-open)
+
+Each event includes integrity fields (`prev_event_id`, `prev_content_sha256`, `content_sha256`) for tamper detection.
+
+See `examples/evidence-http` for a reference receiver that writes events to disk.
 
 See [Projects](/docs/projects) and the [API](/docs/api).
