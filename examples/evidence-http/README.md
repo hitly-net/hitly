@@ -1,12 +1,12 @@
 # Evidence HTTP Reference Receiver
 
-A simple HTTP server that receives `hitly.evidence.v1` events from Hitly and writes them to disk as JSON files.
+A simple HTTP server that receives `hitly.evidence.v1` events from HITLy and writes them to disk as JSON files.
 
 ## Purpose
 
-This example demonstrates how to implement an HTTP evidence sink endpoint for Hitly. It writes evidence events to a local directory as JSON files for demonstration and development.
+This example demonstrates how to implement an HTTP evidence sink endpoint for HITLy. It writes evidence events to a local directory as JSON files and provides a browser UI to view events, approval chains, and integrity proofs.
 
-In production, you would implement your own receiver that POSTs evidence events to your durable storage system (S3, database, audit log service, etc.).
+In production, you would implement your own receiver that POSTs evidence events to your durable storage system (database, audit log service, etc.) and serves them via HTTP(S) deep links.
 
 ## Running
 
@@ -18,16 +18,19 @@ yarn start
 
 The server listens on port 3100 by default (configurable via `PORT` env var).
 
+Open `http://localhost:3100` in your browser to see all approvals stored in this evidence sink.
+
 ## Configuration
 
 ### Environment Variables
 
 - `PORT` - Server port (default: 3100)
 - `EVENTS_DIR` - Directory to write evidence files (default: `./events`)
+- `PUBLIC_BASE_URL` - Base URL for store_uri (e.g., `https://evidence.example.com`). If not set, derives from request headers.
 
-### Hitly Project Settings
+### HITLy Project Settings
 
-In your Hitly project config, set:
+In your HITLy project config, set:
 
 - **Evidence Sink Type**: `HTTP`
 - **Evidence Sink URL**: `http://localhost:3100/events`
@@ -35,16 +38,18 @@ In your Hitly project config, set:
 
 ## How It Works
 
-1. Hitly POSTs evidence events to `/events` with:
+1. HITLy POSTs evidence events to `/events` with:
    - `Content-Type: application/json`
    - `Idempotency-Key: <event_id>`
    - Full evidence event JSON body
 
 2. This receiver:
    - Writes the event to `./events/<event_id>.json`
-   - Returns an `AppendReceipt` with `store_uri` as `file://...`
+   - Returns an `AppendReceipt` with `store_uri` as an HTTP(S) deep link (e.g., `http://localhost:3100/events/<event_id>`)
 
-3. Hitly stores the receipt (not the full event) in its database.
+3. HITLy stores the receipt (not the full event) in its database.
+
+4. Users can open the `store_uri` in their browser to view the evidence event, the full approval chain, and integrity proofs.
 
 ## Evidence Events
 
@@ -96,13 +101,26 @@ Append an evidence event.
 {
   "event_id": "evt_...",
   "content_sha256": "...",
-  "store_uri": "file:///.../events/evt_....json",
+  "store_uri": "http://localhost:3100/events/evt_...",
   "stored_at": "2024-01-01T00:00:00.000Z"
 }
 ```
 
 ### GET /events/:event_id
 Retrieve a stored evidence event.
+
+- **Accept: application/json** - Returns the raw event JSON
+- **Accept: text/html** (browser) - Returns an HTML page showing the event details, including origin, action, oversight decision, integrity hashes, and retention policy
+
+### GET /a/:approval_id
+View the complete evidence chain for an approval.
+
+Returns an HTML page showing all events for the specified approval ID in sequence, with prev_event_id and prev_content_sha256 matching the previous event. Ping events are excluded from the chain.
+
+### GET /
+View recent approvals stored in this evidence sink.
+
+Returns an HTML page listing all approvals (grouped by approval_id) with their latest event. Ping events are excluded from the list.
 
 ## Testing
 
@@ -116,10 +134,21 @@ yarn test
 
 For production use:
 
-1. **Durable Storage**: Replace local file writes with your storage system (S3, database, audit log service)
-2. **Authentication**: Validate `Authorization` header
-3. **Idempotency**: Check `event_id` to prevent duplicate writes (this example implements basic idempotency)
-4. **Integrity**: Verify `content_sha256` matches the received event
-5. **Retention**: Honor `retention.min_days` and `retention.expires_at`
-6. **Monitoring**: Log all append operations for audit
-7. **Fail-closed**: Return 5xx errors when storage is unavailable (Hitly will NOT resume the origin on decided events if the sink fails)
+1. **Durable Storage**: Replace local file writes with your storage system (database, audit log service)
+2. **HTTP(S) Deep Links**: Ensure `store_uri` is a publicly accessible HTTP(S) URL that returns the event in both JSON and HTML formats
+3. **Authentication**: Validate `Authorization` header for POST requests; consider read-only public access for GET requests with event_id
+4. **Idempotency**: Check `event_id` to prevent duplicate writes (this example implements basic idempotency)
+5. **Integrity**: Verify `content_sha256` matches the received event
+6. **Retention**: Honor `retention.min_days` and `retention.expires_at`; return 404 after expiration
+7. **Monitoring**: Log all append operations for audit
+8. **Fail-closed**: Return 5xx errors when storage is unavailable (HITLy will NOT resume the origin on decided events if the sink fails)
+
+## Browser UI
+
+This example includes a simple browser interface:
+
+- **Event page** (`/events/:event_id`) - Shows event details, action, oversight decision, integrity chain, and retention policy
+- **Approval chain** (`/a/:approval_id`) - Shows the complete event sequence for one approval with hash chain verification
+- **Recent approvals** (`/`) - Lists all approvals stored in this sink
+
+Open the `store_uri` link from the HITLy approval detail page to view the evidence receipt in your browser.
