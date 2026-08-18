@@ -257,11 +257,15 @@ export async function appendEvidence(args: {
 }) {
   const sinkConfig = await loadProjectSinkConfig(args.projectId, args.workspaceId)
   if (!sinkConfig) {
+    console.log(`[evidence] No sink config found for project ${args.projectId} workspace ${args.workspaceId}`)
     return null
   }
 
+  console.log(`[evidence] Sink config loaded: type=${sinkConfig.type}, url=${sinkConfig.url}`)
   const sink = createEvidenceSink(sinkConfig)
+  console.log(`[evidence] Calling sink.append for event ${args.event.event_id} type ${args.event.event_type}`)
   const receipt = await sink.append(args.event)
+  console.log(`[evidence] Receipt received: ${JSON.stringify(receipt)}`)
 
   const database = requireDb()
   await database.insert(evidenceReceipts).values({
