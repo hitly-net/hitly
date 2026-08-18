@@ -25,6 +25,7 @@ import { newId } from './ids'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 import { approvalHasExpired } from './approval-expiry'
+import { appendEvidence, buildDecidedEvent, buildRequestedEvent, buildResumedEvent, loadLatestReceipt } from './evidence'
 
 export async function authenticateProjectKey(rawKey: string, projectId?: string) {
   const hashed = hashApiKey(rawKey)
@@ -259,6 +260,32 @@ export async function ingestApproval(args: {
     channelTypes: routed.channelTypes,
   })
 
+    try {
+      const latest = await loadLatestReceipt(approvalId, project.workspaceId)
+      const requestedEvent = await buildRequestedEvent({
+        approvalId,
+        envelope: ingested,
+        origin: ingested.origin,
+        seq: latest.seq + 1,
+        prevEventId: latest.prevEventId,
+        prevContentSha256: latest.prevContentSha256,
+      })
+      await appendEvidence({
+        event: requestedEvent,
+        projectId: project.id,
+        workspaceId: project.workspaceId,
+        evidenceDurable: false,
+      })
+    } catch (error) {
+      await logProjectEvent({
+        projectId: project.id,
+        approvalId,
+        level: 'warn',
+        type: 'evidence',
+        message: `Evidence sink append failed (requested): ${error instanceof Error ? error.message : 'unknown'}`,
+      })
+    }
+
   const created = await database
     .select()
     .from(approvals)
@@ -319,6 +346,44 @@ export async function decideApproval(args: {
       origin.resumeHandle.mastraBaseUrl = project.credentials.baseUrl
     }
 
+    const latest = await loadLatestReceipt(approval.id, workspaceId)
+    let decidedEventId: string | undefined
+    let decidedContentSha256: string | undefined
+    try {
+      const decidedEvent = await buildDecidedEvent({
+        approvalId: approval.id,
+        envelope,
+        origin,
+        payload: args.payload,
+        reviewerId: args.actorUserId,
+        seq: latest.seq + 1,
+        prevEventId: latest.prevEventId ?? '',
+        prevContentSha256: latest.prevContentSha256 ?? '',
+      })
+      decidedEventId = decidedEvent.event_id
+      decidedContentSha256 = decidedEvent.integrity.content_sha256
+      await appendEvidence({
+        event: decidedEvent,
+        projectId: approval.projectId,
+        workspaceId,
+        evidenceDurable: true,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Evidence sink append failed'
+      await logProjectEvent({
+        workspaceId,
+        projectId: approval.projectId,
+        approvalId: approval.id,
+        level: 'error',
+        type: 'evidence',
+        message: `Evidence sink append failed (decided, fail-closed): ${message}`,
+      })
+      return {
+        error: `Evidence sink append failed (fail-closed): ${message}`,
+        status: 500 as const,
+      }
+    }
+
     let resumeError: string | null = null
     let resumeResponse: ResumeResponse | null = null
     let status: 'decided' | 'failed_resume' = 'decided'
@@ -343,9 +408,63 @@ export async function decideApproval(args: {
           resumeError = failed
           status = 'failed_resume'
         }
+
+        try {
+          const resumedEvent = await buildResumedEvent({
+            approvalId: approval.id,
+            envelope,
+            origin,
+            seq: latest.seq + 2,
+            prevEventId: decidedEventId ?? '',
+            prevContentSha256: decidedContentSha256 ?? '',
+            success: !failed,
+          })
+          await appendEvidence({
+            event: resumedEvent,
+            projectId: approval.projectId,
+            workspaceId,
+            evidenceDurable: false,
+          })
+        } catch (error) {
+          await logProjectEvent({
+            workspaceId,
+            projectId: approval.projectId,
+            approvalId: approval.id,
+            level: 'warn',
+            type: 'evidence',
+            message: `Evidence sink append failed (resumed): ${error instanceof Error ? error.message : 'unknown'}`,
+          })
+        }
       } catch (error) {
         resumeError = error instanceof Error ? error.message : 'Resume failed'
         status = 'failed_resume'
+
+        try {
+          const resumedEvent = await buildResumedEvent({
+            approvalId: approval.id,
+            envelope,
+            origin,
+            seq: latest.seq + 2,
+            prevEventId: decidedEventId ?? '',
+            prevContentSha256: decidedContentSha256 ?? '',
+            success: false,
+          })
+          await appendEvidence({
+            event: resumedEvent,
+            projectId: approval.projectId,
+            workspaceId,
+            evidenceDurable: false,
+          })
+        } catch (error) {
+          await logProjectEvent({
+            workspaceId,
+            projectId: approval.projectId,
+            approvalId: approval.id,
+            level: 'warn',
+            type: 'evidence',
+            message: `Evidence sink append failed (resume_failed): ${error instanceof Error ? error.message : 'unknown'}`,
+          })
+        }
       }
     }
 
@@ -449,6 +568,14 @@ export async function retryResume(args: { approvalId: string; workspaceId?: stri
 export function parseDecisionBody(body: Record<string, unknown>): DecisionPayload | null {
   if (!isDecision(body.decision)) return null
   const decision = body.decision as Decision
+  
+  // Edit requires both editedArgs (delta) and final_sha256
+  if (decision === 'edit') {
+    const hasEditedArgs = body.editedArgs && typeof body.editedArgs === 'object'
+    const hasFinalSha = typeof body.final_sha256 === 'string' && body.final_sha256.length > 0
+    if (!hasEditedArgs || !hasFinalSha) return null
+  }
+  
   return {
     decision,
     editedArgs:

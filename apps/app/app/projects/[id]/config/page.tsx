@@ -6,12 +6,14 @@ import { AppShell } from '@/components/app-shell'
 import { ProjectApiKeys } from '@/components/project-api-keys'
 import { ProjectResumeSecret } from '@/components/project-resume-secret'
 import { ProjectTabs } from '@/components/project-tabs'
+import { TestEvidenceSink } from '@/components/test-evidence-sink'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
 import { ensureProjectResumeSecret } from '@/lib/resume-secret'
 import { resumeSecretPrefix } from '@/lib/keys'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
 import { withAppTenant } from '@/lib/context'
+import { decodeTenantJson } from '@/lib/tenant-crypto'
 
 export const metadata = { title: 'Config' }
 
@@ -39,6 +41,7 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
     .where(and(eq(projectMemberships.projectId, id), eq(projectMemberships.workspaceId, workspaceId)))
 
   const credentials = project.credentials as Record<string, unknown>
+  const sinkConfig = project.evidenceSinkConfig ? await decodeTenantJson(project.workspaceId, project.evidenceSinkConfig as Record<string, unknown>) : {}
   const appUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
   return (
@@ -111,6 +114,33 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
             className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
           />
         )}
+
+        <h3 className="mt-4 text-sm font-semibold">Evidence Storage</h3>
+        <p className="text-xs text-zinc-500">
+          Evidence is written to your URL. Hitly keeps a receipt only. Decide will not resume the origin if this URL fails.
+        </p>
+        <select
+          name="evidenceSinkType"
+          defaultValue={project.evidenceSinkType}
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        >
+          <option value="none">None</option>
+          <option value="http">HTTP</option>
+        </select>
+        <input
+          name="evidenceSinkUrl"
+          defaultValue={String(sinkConfig.url ?? '')}
+          placeholder="Evidence sink URL"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <input
+          name="evidenceSinkAuthHeader"
+          type="password"
+          defaultValue=""
+          placeholder="Authorization header (leave blank to keep)"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+
         <button
           type="submit"
           className="h-10 rounded-md bg-zinc-900 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
@@ -118,6 +148,12 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
           Save
         </button>
       </form>
+
+      {project.evidenceSinkType === 'http' && typeof sinkConfig.url === 'string' && sinkConfig.url && (
+        <div className="mt-3 max-w-xl">
+          <TestEvidenceSink projectId={id} />
+        </div>
+      )}
 
       <h2 className="mt-10 text-lg font-semibold">API keys</h2>
       <p className="mt-1 text-sm text-zinc-500">Authenticate ingest. The secret is shown once when you create or regenerate a key.</p>

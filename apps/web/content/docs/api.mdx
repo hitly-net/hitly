@@ -20,11 +20,24 @@ The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origi
   "runId": "run_...",
   "stepId": "hitly-approval",
   "action": { "name": "send-refund", "args": { "orderId": "1842" } },
-  "suspendPayload": { "reason": "Human approval required." }
+  "suspendPayload": { "reason": "Human approval required." },
+
+  // Evidence fields (all optional)
+  "traceId": "trace_...",
+  "spanId": "span_...",
+  "agentId": "refund-agent",
+  "systemId": "refund-agent-prod",
+  "inventoryId": "ai-inv-refund-agent-v2",
+  "policyId": "refund-over-100",
+  "policyRationale": "Refunds over $100 require approval",
+  "riskTier": "medium",
+  "toolName": "send_refund"
 }
 ```
 
 `mastraBaseUrl` is optional when the project already stores the origin base URL.
+
+Evidence fields are optional; HITLy persists them when present and writes them to the configured HTTP evidence sink. See [Envelope](/docs/envelope#evidence-fields) for field descriptions.
 
 HTTP origins send `plugin: "http"`, `resumeUrl`, and optional `metadata`. HITL<sub><i>y</i></sub> echoes `metadata` on the resume POST:
 

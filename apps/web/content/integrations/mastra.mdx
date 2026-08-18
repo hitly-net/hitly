@@ -169,6 +169,50 @@ HITL<sub><i>y</i></sub> must reach `mastraBaseUrl` to call `resume()`. Do not po
 | `workflowId` / `stepId` | Workflow resume target |
 | `agentId` / `toolCallId` | Agent resume target |
 
+### Evidence Fields (Optional)
+
+For audit and compliance, pass evidence context to `notifyHitlyApproval()`:
+
+| Field | Mastra Fills | Implementor Provides | Description |
+| --- | --- | --- | --- |
+| `traceId` | From OTel context | If no OTel | Distributed trace ID |
+| `spanId` | From OTel context | If no OTel | Current span ID |
+| `agentId` | For agents | For workflows | Agent/workflow identifier |
+| `systemId` | No | Yes | AI system being governed (e.g. "refund-agent-prod") |
+| `inventoryId` | No | Yes | This AI system's record in your inventory/registry (Layer 1) |
+| `policyId` | No | Yes | Policy that triggered approval |
+| `policyRationale` | No | Yes | Why approval is required |
+| `riskTier` | No | Yes | Risk level (e.g. "high", "medium", "low") |
+| `toolName` | No | Yes | Tool or action name |
+| `sensitivity` | No | Yes | Sensitivity flags (not raw PII) |
+| `dataCategories` | No | Yes | Data category flags (GDPR/compliance) |
+
+**Example with evidence:**
+
+```ts
+await notifyHitlyApproval(
+  {
+    apiUrl: process.env.HITLY_API_URL!,
+    apiKey: process.env.HITLY_API_KEY!,
+    projectId: process.env.HITLY_PROJECT_ID!,
+    mastraBaseUrl: process.env.MASTRA_BASE_URL!,
+    agentId: 'refund-agent',
+    action: { name: 'send-refund', args: inputData },
+
+    // Evidence fields
+    systemId: 'refund-agent-prod',
+    inventoryId: 'ai-inv-refund-agent-v2',  // Your AI inventory record, not orderId
+    policyId: 'refund-over-100',
+    policyRationale: 'Refunds over $100 require manager approval',
+    riskTier: 'medium',
+    toolName: 'send_refund',
+  },
+  { runId: String(runId), suspendPayload: { reason: 'Approval required' } },
+)
+```
+
+Evidence events are written to the configured HTTP sink (project settings → Evidence Storage). See [Envelope](/docs/envelope#evidence-fields) for full details.
+
 ## Decision mapping
 
 | HITLy | Mastra |

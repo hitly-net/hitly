@@ -1,0 +1,17 @@
+{
+  "name": "@hitly/example-evidence-http",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "hitly": {
+    "role": "example"
+  },
+  "scripts": {
+    "dev": "node --watch --import tsx/esm src/server.ts",
+    "start": "node --import tsx/esm src/server.ts",
+    "test": "tsx --test src/server.test.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.23.12"
+  }
+}

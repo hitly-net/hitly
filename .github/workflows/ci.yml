@@ -8,6 +8,21 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: hitly
+          POSTGRES_USER: hitly
+          POSTGRES_PASSWORD: hitly
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hitly -d hitly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 10s
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,13 +30,25 @@ jobs:
           node-version: 22
           cache: yarn
       - run: yarn install --frozen-lockfile
+      - run: yarn db:migrate
+        env:
+          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
       - run: yarn lint
-      - run: yarn workspace @hitly/mail test
+      - run: yarn test
+        env:
+          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          BETTER_AUTH_SECRET: ci-only-change-me-please-32ch
+          BETTER_AUTH_URL: http://localhost:3001
+          HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
+          NEXT_PUBLIC_WEB_URL: http://localhost:3000
+          WEB_URL: http://localhost:3000
       - run: yarn typecheck
       - run: yarn build
         env:
           BETTER_AUTH_SECRET: ci-only-change-me-please-32ch
           BETTER_AUTH_URL: http://localhost:3001
           DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
           WEB_URL: http://localhost:3000

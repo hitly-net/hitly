@@ -68,6 +68,20 @@ export interface ApprovalEnvelope {
   attachments?: ApprovalAttachment[]
   resumeSchema?: Record<string, unknown>
   expiresAt?: string
+  /** Evidence fields for audit trail (optional at ingest) */
+  traceId?: string
+  spanId?: string
+  agentId?: string
+  /** AI system identifier being governed (e.g. "refund-agent-prod") */
+  systemId?: string
+  /** This AI system's record in your AI inventory/registry (Layer 1), not a business object ID */
+  inventoryId?: string
+  policyId?: string
+  policyRationale?: string
+  riskTier?: string
+  toolName?: string
+  sensitivity?: string[]
+  dataCategories?: string[]
 }
 
 export interface OriginRef {
@@ -78,6 +92,18 @@ export interface OriginRef {
   resumeHandle: Record<string, unknown>
   /** Human-facing origin labels (agent/workflow names, ids, kind). */
   details?: Record<string, string>
+  /** Evidence fields from origin (optional, persisted when present) */
+  traceId?: string
+  spanId?: string
+  agentId?: string
+  /** AI system identifier being governed (e.g. "refund-agent-prod") */
+  systemId?: string
+  /** This AI system's record in your AI inventory/registry (Layer 1), not a business object ID */
+  inventoryId?: string
+  policyId?: string
+  policyRationale?: string
+  riskTier?: string
+  toolName?: string
 }
 
 export interface DecisionPayload {
@@ -187,3 +213,25 @@ export type {
   TenantDocument,
   WorkspacePlan,
 } from './edition'
+export {
+  EVIDENCE_SPEC_VERSION,
+  canonicalJson,
+  hashActionArgs,
+  hashEvidenceContent,
+  sha256Hex,
+} from './evidence'
+export type {
+  AppendReceipt,
+  EvidenceActionFinal,
+  EvidenceActionProposal,
+  EvidenceAgentContext,
+  EvidenceEvent,
+  EvidenceEventType,
+  EvidenceIntegrity,
+  EvidenceOriginContext,
+  EvidenceOversight,
+  EvidencePolicyContext,
+  EvidenceRetention,
+  EvidenceSink,
+  EvidenceSystemContext,
+} from './evidence'

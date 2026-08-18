@@ -44,9 +44,18 @@ const approvalStep = createStep({
           stepId: 'hitly-approval',
           stepName: 'Pause for a Hitly reviewer',
           action: { name: 'send-refund', args: { orderId, amount } },
+          // Evidence fields for audit trail
+          systemId: 'refund-workflow-prod',
+          inventoryId: 'ai-inv-refund-workflow-v1',
+          policyId: 'refund-over-100',
+          policyRationale: 'Refunds over $100 require manager approval',
+          riskTier: amount > 1000 ? 'high' : amount > 100 ? 'medium' : 'low',
+          toolName: 'send_refund',
+          sensitivity: ['financial'],
+          dataCategories: ['transaction', 'customer'],
         },
         runId,
-        contextMarkdown: `Refund of ${amount} for ${orderId}.`,
+        contextMarkdown: `Refund of ${amount} for ${orderId}. ${amount > 1000 ? 'High-value' : 'Standard'} refund requires approval.`,
       })
       return await suspend({ reason: 'Human approval required in Hitly.' })
     }
