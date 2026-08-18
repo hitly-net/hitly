@@ -24,8 +24,6 @@ import { generateApiKey } from './keys'
 import { newId } from './ids'
 import { getProjectAccess, canDecide } from './rbac'
 import { withTenant } from './tenant'
-import { encodeTenantJson } from './tenant-crypto'
-import type { ApprovalEnvelope, OriginRef } from '@hitly/core'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://hitly:hitly@localhost:5432/hitly'
 const KEK = process.env.HITLY_ENCRYPTION_KEK
@@ -163,12 +161,12 @@ before(async () => {
   await db.insert(projects).values({
     ...projectA,
     plugin: 'mastra',
-    credentials: await encodeTenantJson(workspaceA.id, {}),
+    credentials: {},
     evidenceSinkType: 'http',
-    evidenceSinkConfig: await encodeTenantJson(workspaceA.id, { 
+    evidenceSinkConfig: { 
       url: 'http://localhost:19999/evidence', 
       authHeader: 'Bearer test-token' 
-    }),
+    },
     createdAt: new Date(),
     updatedAt: new Date(),
   })
@@ -181,12 +179,12 @@ before(async () => {
   await db.insert(projects).values({
     ...projectB,
     plugin: 'mastra',
-    credentials: await encodeTenantJson(workspaceB.id, {}),
+    credentials: {},
     evidenceSinkType: 'http',
-    evidenceSinkConfig: await encodeTenantJson(workspaceB.id, { 
+    evidenceSinkConfig: { 
       url: 'http://localhost:19999/evidence', 
       authHeader: 'Bearer test-token' 
-    }),
+    },
     createdAt: new Date(),
     updatedAt: new Date(),
   })
@@ -377,7 +375,7 @@ test('replay decide is not 200', async () => {
     })
     assert.ok(ingestResult.ok)
 
-    const payload = parseDecisionBody({ decision: 'approve' })
+    const payload = parseDecisionBody({ decision: 'accept' })
     assert.ok(payload)
 
     // First decide
@@ -412,12 +410,12 @@ test('HTTP sink fail-closed: append failure prevents origin resume', async () =>
   await db.insert(projects).values({
     ...projectFailSink,
     plugin: 'mastra',
-    credentials: await encodeTenantJson(workspaceA.id, {}),
+    credentials: {},
     evidenceSinkType: 'http',
-    evidenceSinkConfig: await encodeTenantJson(workspaceA.id, { 
+    evidenceSinkConfig: { 
       url: 'http://localhost:9999/nonexistent', 
       authHeader: 'Bearer test' 
-    }),
+    },
     createdAt: new Date(),
     updatedAt: new Date(),
   })
@@ -434,17 +432,16 @@ test('HTTP sink fail-closed: append failure prevents origin resume', async () =>
     createdAt: new Date(),
   })
 
-  const mastraPayload = buildMastraPayload()
-  const origin = buildMastraPayload({ projectId: projectFailSink.id })
+  const mastraPayload = buildMastraPayload({ projectId: projectFailSink.id })
 
   const ingestResult = await ingestApproval({
-    apiKey: apiKeyFail.raw,
+    apiKeyFail.raw,
     body: mastraPayload,
   })
   // Ingest is fail-open for requested event
   assert.ok(ingestResult.ok, 'Ingest should succeed even if sink fails (fail-open for requested)')
 
-  const payload = parseDecisionBody({ decision: 'approve' })
+  const payload = parseDecisionBody({ decision: 'accept' })
   assert.ok(payload)
 
   // Decide should fail-closed if sink fails
@@ -488,7 +485,7 @@ test('decide records session user', async () => {
   })
   assert.ok(ingestResult.ok)
 
-  const payload = parseDecisionBody({ decision: 'approve' })
+  const payload = parseDecisionBody({ decision: 'accept' })
   assert.ok(payload)
 
   await decideApproval({
@@ -531,7 +528,7 @@ test('evidence: canonical hash, sequential prev_*, idempotent event_id', async (
   assert.ok(receipts[0]?.contentSha256, 'Should have content_sha256')
 
   // Decide to create more events
-  const payload = parseDecisionBody({ decision: 'approve' })
+  const payload = parseDecisionBody({ decision: 'accept' })
   assert.ok(payload)
 
   await decideApproval({
@@ -645,7 +642,7 @@ test('evidence fields round-trip through ingest/decide', async () => {
   assert.deepEqual(ingestResult.approval.envelope.dataCategories, ['customer', 'transaction'])
 
   // Decide and check evidence receipt has these fields propagated
-  const payload = parseDecisionBody({ decision: 'approve' })
+  const payload = parseDecisionBody({ decision: 'accept' })
   assert.ok(payload)
 
   await decideApproval({
@@ -678,7 +675,7 @@ test('decided event has min_days default 180 and expires_at', async () => {
   })
   assert.ok(ingestResult.ok)
 
-  const payload = parseDecisionBody({ decision: 'approve' })
+  const payload = parseDecisionBody({ decision: 'accept' })
   assert.ok(payload)
 
   await decideApproval({

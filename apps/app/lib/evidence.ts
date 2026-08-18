@@ -3,27 +3,20 @@ import {
   hashActionArgs,
   hashEvidenceContent,
   type ApprovalEnvelope,
-  type Decision,
-  type DecisionPayload,
   type EvidenceEvent,
   type OriginRef,
 } from '@hitly/core'
 import { evidenceReceipts, projects } from '@hitly/db/schema'
-import { requireDb, requireTenantWorkspaceId } from './tenant'
-import { createEvidenceSink } from './evidence-sink'
-import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
-import { newId } from './ids'
 import { and, eq } from 'drizzle-orm'
+import { requireDb } from './tenant'
+import { createEvidenceSink } from './evidence-sink'
+import { decodeTenantJson } from './tenant-crypto'
+import { newId } from './ids'
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function optionalStringList(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const list = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-  return list.length > 0 ? list : undefined
-}
 
 export async function buildRequestedEvent(args: {
   approvalId: string
