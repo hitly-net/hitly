@@ -99,28 +99,21 @@ function renderEventHtml(event: EvidenceEvent, baseUrl: string): string {
       max-width: 900px; 
       margin: 2rem auto; 
       padding: 0 1rem;
-      background: #fafafa;
-      color: #18181b;
-    }
-    @media (prefers-color-scheme: dark) {
-      body { background: #18181b; color: #fafafa; }
-      .card { background: #27272a; border-color: #3f3f46; }
-      a { color: #60a5fa; }
-      a:hover { color: #93c5fd; }
-      .label { color: #a1a1aa; }
-      code, pre { background: #18181b; border-color: #3f3f46; }
+      background: #18181b;
+      color: #fafafa;
     }
     .header { margin-bottom: 2rem; }
     .wordmark { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
     .wordmark .sub { font-style: italic; font-size: 0.65em; line-height: 1; }
     .card { 
-      background: white; 
-      border: 1px solid #e4e4e7; 
+      background: #27272a; 
+      border: 1px solid #3f3f46; 
       border-radius: 0.5rem; 
       padding: 1.5rem; 
       margin-bottom: 1.5rem;
+      color: inherit;
     }
-    .label { color: #71717a; font-size: 0.875rem; margin-bottom: 0.25rem; }
+    .label { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 0.25rem; }
     .value { font-weight: 500; }
     .mono { font-family: ui-monospace, monospace; font-size: 0.875rem; word-break: break-all; }
     .grid { display: grid; gap: 1rem; }
@@ -128,14 +121,15 @@ function renderEventHtml(event: EvidenceEvent, baseUrl: string): string {
       .grid { grid-template-columns: repeat(2, 1fr); }
       .grid .full { grid-column: 1 / -1; }
     }
-    a { color: #2563eb; text-decoration: none; }
+    a { color: #60a5fa; text-decoration: none; }
     a:hover { text-decoration: underline; }
     code, pre { 
-      background: #f4f4f5; 
-      border: 1px solid #e4e4e7; 
+      background: #18181b; 
+      border: 1px solid #3f3f46; 
       border-radius: 0.25rem; 
       padding: 0.125rem 0.375rem;
       font-size: 0.875rem;
+      color: #fafafa;
     }
     pre { padding: 1rem; overflow: auto; }
   </style>
@@ -304,51 +298,42 @@ function renderApprovalChainHtml(events: EvidenceEvent[], approvalId: string, ba
       max-width: 900px; 
       margin: 2rem auto; 
       padding: 0 1rem;
-      background: #fafafa;
-      color: #18181b;
-    }
-    @media (prefers-color-scheme: dark) {
-      body { background: #18181b; color: #fafafa; }
-      .card { background: #27272a; border-color: #3f3f46; }
-      a { color: #60a5fa; }
-      a:hover { color: #93c5fd; }
-      .label { color: #a1a1aa; }
-      .event-row { border-color: #3f3f46; }
-      .event-row:hover { background: #3f3f46; }
+      background: #18181b;
+      color: #fafafa;
     }
     .header { margin-bottom: 2rem; }
     .wordmark { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
     .wordmark .sub { font-style: italic; font-size: 0.65em; line-height: 1; }
     .card { 
-      background: white; 
-      border: 1px solid #e4e4e7; 
+      background: #27272a; 
+      border: 1px solid #3f3f46; 
       border-radius: 0.5rem; 
       padding: 1.5rem; 
       margin-bottom: 1.5rem;
+      color: inherit;
     }
-    .label { color: #71717a; font-size: 0.875rem; }
+    .label { color: #a1a1aa; font-size: 0.875rem; }
     .mono { font-family: ui-monospace, monospace; font-size: 0.875rem; word-break: break-all; }
-    a { color: #2563eb; text-decoration: none; }
+    a { color: #60a5fa; text-decoration: none; }
     a:hover { text-decoration: underline; }
     .event-row {
-      border: 1px solid #e4e4e7;
+      background: #27272a;
+      border: 1px solid #3f3f46;
       border-radius: 0.375rem;
       padding: 1rem;
       margin-bottom: 0.75rem;
+      color: inherit;
     }
-    .event-row:hover { background: #f9fafb; }
+    .event-row:hover { background: #3f3f46; }
     .event-header { display: flex; gap: 1rem; align-items: baseline; margin-bottom: 0.5rem; }
     .seq { font-weight: 600; font-size: 1.125rem; }
     .event-type { 
-      background: #e0e7ff; 
-      color: #3730a3;
+      background: #3730a3; 
+      color: #e0e7ff;
       padding: 0.125rem 0.5rem; 
       border-radius: 0.25rem; 
       font-size: 0.75rem;
       font-weight: 500;
-    }
-    @media (prefers-color-scheme: dark) {
-      .event-type { background: #3730a3; color: #e0e7ff; }
     }
     .event-details { font-size: 0.875rem; }
     .event-details div { margin-bottom: 0.25rem; }
@@ -405,44 +390,44 @@ function renderEventsListHtml(events: EvidenceEvent[], filters: Record<string, s
       max-width: 900px; 
       margin: 2rem auto; 
       padding: 0 1rem;
-      background: #fafafa;
-      color: #18181b;
-    }
-    @media (prefers-color-scheme: dark) {
-      body { background: #18181b; color: #fafafa; }
-      .card { background: #27272a; border-color: #3f3f46; }
-      a { color: #60a5fa; }
-      a:hover { color: #93c5fd; }
-      .label { color: #a1a1aa; }
-      .event-row { border-color: #3f3f46; }
-      .event-row:hover { background: #3f3f46; }
-      input { background: #27272a; border-color: #3f3f46; color: #fafafa; }
+      background: #18181b;
+      color: #fafafa;
     }
     .header { margin-bottom: 2rem; }
     .wordmark { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
     .wordmark .sub { font-style: italic; font-size: 0.65em; line-height: 1; }
     .card { 
-      background: white; 
-      border: 1px solid #e4e4e7; 
+      background: #27272a; 
+      border: 1px solid #3f3f46; 
       border-radius: 0.5rem; 
       padding: 1.5rem; 
       margin-bottom: 1.5rem;
+      color: inherit;
     }
-    .label { color: #71717a; font-size: 0.875rem; }
+    .label { color: #a1a1aa; font-size: 0.875rem; }
     .mono { font-family: ui-monospace, monospace; font-size: 0.875rem; word-break: break-all; }
-    a { color: #2563eb; text-decoration: none; }
+    a { color: #60a5fa; text-decoration: none; }
     a:hover { text-decoration: underline; }
     .event-row {
-      border: 1px solid #e4e4e7;
+      background: #27272a;
+      border: 1px solid #3f3f46;
       border-radius: 0.375rem;
       padding: 1rem;
       margin-bottom: 0.75rem;
+      color: inherit;
     }
-    .event-row:hover { background: #f9fafb; }
+    .event-row:hover { background: #3f3f46; }
     .event-details { font-size: 0.875rem; }
     .event-details div { margin-bottom: 0.25rem; }
     .filters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    .filters input { padding: 0.25rem 0.5rem; border: 1px solid #e4e4e7; border-radius: 0.25rem; font-size: 0.75rem; }
+    .filters input { 
+      padding: 0.25rem 0.5rem; 
+      background: #27272a; 
+      border: 1px solid #3f3f46; 
+      border-radius: 0.25rem; 
+      font-size: 0.75rem; 
+      color: inherit;
+    }
   </style>
 </head>
 <body>
@@ -458,8 +443,8 @@ function renderEventsListHtml(events: EvidenceEvent[], filters: Record<string, s
       <input type="text" name="event_type" placeholder="event_type" value="${escapeHtml(filters.event_type || '')}">
       <input type="text" name="runId" placeholder="runId" value="${escapeHtml(filters.runId || '')}">
       <input type="text" name="projectId" placeholder="projectId (optional)" value="${escapeHtml(filters.projectId || '')}">
-      <button type="submit" style="padding: 0.25rem 0.75rem; border-radius: 0.25rem; border: 1px solid #e4e4e7; background: white; cursor: pointer;">Filter</button>
-      <a href="${escapeHtml(baseUrl)}/" style="padding: 0.25rem 0.75rem; border-radius: 0.25rem; border: 1px solid #e4e4e7; background: white; font-size: 0.75rem; display: inline-block;">Clear</a>
+      <button type="submit" style="padding: 0.25rem 0.75rem; border-radius: 0.25rem; border: 1px solid #3f3f46; background: #27272a; color: inherit; cursor: pointer;">Filter</button>
+      <a href="${escapeHtml(baseUrl)}/" style="padding: 0.25rem 0.75rem; border-radius: 0.25rem; border: 1px solid #3f3f46; background: #27272a; font-size: 0.75rem; display: inline-block;">Clear</a>
     </form>
     <p class="label" style="margin-bottom: 1rem;">${escapeHtml(filterDisplay)} · ${events.length} event(s)</p>
     ${events.length === 0 ? '<p class="label">No events found.</p>' : events.map(event => `
