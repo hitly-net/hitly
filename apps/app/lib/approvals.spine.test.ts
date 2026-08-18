@@ -24,6 +24,7 @@ import { generateApiKey } from './keys'
 import { newId } from './ids'
 import { getProjectAccess, canDecide } from './rbac'
 import { withTenant } from './tenant'
+import { encodeTenantJson } from './tenant-json'
 import type { ApprovalEnvelope, OriginRef } from '@hitly/core'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://hitly:hitly@localhost:5432/hitly'
@@ -162,9 +163,12 @@ before(async () => {
   await db.insert(projects).values({
     ...projectA,
     plugin: 'mastra',
-    credentials: {},
+    credentials: await encodeTenantJson(workspaceA.id, {}),
     evidenceSinkType: 'http',
-    evidenceSinkConfig: { url: 'http://localhost:19999/evidence', authHeader: 'Bearer test-token' },
+    evidenceSinkConfig: await encodeTenantJson(workspaceA.id, { 
+      url: 'http://localhost:19999/evidence', 
+      authHeader: 'Bearer test-token' 
+    }),
     createdAt: new Date(),
     updatedAt: new Date(),
   })
@@ -177,9 +181,12 @@ before(async () => {
   await db.insert(projects).values({
     ...projectB,
     plugin: 'mastra',
-    credentials: {},
+    credentials: await encodeTenantJson(workspaceB.id, {}),
     evidenceSinkType: 'http',
-    evidenceSinkConfig: { url: 'http://localhost:19999/evidence', authHeader: 'Bearer test-token' },
+    evidenceSinkConfig: await encodeTenantJson(workspaceB.id, { 
+      url: 'http://localhost:19999/evidence', 
+      authHeader: 'Bearer test-token' 
+    }),
     createdAt: new Date(),
     updatedAt: new Date(),
   })
