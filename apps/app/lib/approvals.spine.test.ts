@@ -23,7 +23,8 @@ import { ingestApproval, decideApproval, parseDecisionBody, authenticateProjectK
 import { generateApiKey } from './keys'
 import { newId } from './ids'
 import { getProjectAccess, canDecide } from './rbac'
-import { withTenant, encodeTenantJson } from './tenant'
+import { withTenant } from './tenant'
+import { encodeTenantJson } from './tenant-crypto'
 import type { ApprovalEnvelope, OriginRef } from '@hitly/core'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://hitly:hitly@localhost:5432/hitly'
