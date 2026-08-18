@@ -260,31 +260,31 @@ export async function ingestApproval(args: {
     channelTypes: routed.channelTypes,
   })
 
-  try {
-    const latest = await loadLatestReceipt(approvalId, project.workspaceId)
-    const requestedEvent = await buildRequestedEvent({
-      approvalId,
-      envelope: ingested,
-      origin: ingested.origin,
-      seq: latest.seq + 1,
-      prevEventId: latest.prevEventId,
-      prevContentSha256: latest.prevContentSha256,
-    })
-    await appendEvidence({
-      event: requestedEvent,
-      projectId: project.id,
-      workspaceId: project.workspaceId,
-      evidenceDurable: false,
-    })
-  } catch (error) {
-    await logProjectEvent({
-      projectId: project.id,
-      approvalId,
-      level: 'warning',
-      type: 'evidence',
-      message: `Evidence sink append failed (requested): ${error instanceof Error ? error.message : 'unknown'}`,
-    })
-  }
+    try {
+      const latest = await loadLatestReceipt(approvalId, project.workspaceId)
+      const requestedEvent = await buildRequestedEvent({
+        approvalId,
+        envelope: ingested,
+        origin: ingested.origin,
+        seq: latest.seq + 1,
+        prevEventId: latest.prevEventId,
+        prevContentSha256: latest.prevContentSha256,
+      })
+      await appendEvidence({
+        event: requestedEvent,
+        projectId: project.id,
+        workspaceId: project.workspaceId,
+        evidenceDurable: false,
+      })
+    } catch (error) {
+      await logProjectEvent({
+        projectId: project.id,
+        approvalId,
+        level: 'warn',
+        type: 'evidence',
+        message: `Evidence sink append failed (requested): ${error instanceof Error ? error.message : 'unknown'}`,
+      })
+    }
 
   const created = await database
     .select()
@@ -430,7 +430,7 @@ export async function decideApproval(args: {
             workspaceId,
             projectId: approval.projectId,
             approvalId: approval.id,
-            level: 'warning',
+            level: 'warn',
             type: 'evidence',
             message: `Evidence sink append failed (resumed): ${error instanceof Error ? error.message : 'unknown'}`,
           })
@@ -460,7 +460,7 @@ export async function decideApproval(args: {
             workspaceId,
             projectId: approval.projectId,
             approvalId: approval.id,
-            level: 'warning',
+            level: 'warn',
             type: 'evidence',
             message: `Evidence sink append failed (resume_failed): ${error instanceof Error ? error.message : 'unknown'}`,
           })

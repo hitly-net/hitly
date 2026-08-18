@@ -149,7 +149,7 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
         </button>
       </form>
 
-      {project.evidenceSinkType === 'http' && sinkConfig.url && (
+      {project.evidenceSinkType === 'http' && typeof sinkConfig.url === 'string' && sinkConfig.url && (
         <div className="mt-3 max-w-xl">
           <TestEvidenceSink projectId={id} />
         </div>
