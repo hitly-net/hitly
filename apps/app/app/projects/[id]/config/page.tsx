@@ -140,6 +140,24 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
           placeholder="Authorization header (leave blank to keep)"
           className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
         />
+        <textarea
+          name="evidenceSinkHeaders"
+          defaultValue=""
+          placeholder="Custom headers (one per line: Name: value)"
+          className="min-h-20 rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <p className="text-xs text-zinc-500">
+          Optional custom HTTP headers sent with each evidence POST. One per line like <code>X-Store-Token: abc123</code>. Transport-only, not stored in the evidence event.
+        </p>
+        <textarea
+          name="evidenceSinkMetadata"
+          defaultValue=""
+          placeholder='Metadata JSON object: {"tenant":"acme","bucket":"audit"}'
+          className="min-h-20 rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <p className="text-xs text-zinc-500">
+          Optional metadata JSON object sent as <code>X-Hitly-Metadata</code> header with each evidence POST. Transport-only, not stored in the evidence event.
+        </p>
 
         <button
           type="submit"

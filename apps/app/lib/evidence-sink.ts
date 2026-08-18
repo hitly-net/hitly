@@ -3,6 +3,8 @@ import type { AppendReceipt, EvidenceEvent, EvidenceSink } from '@hitly/core'
 export interface HttpSinkConfig {
   url: string
   authHeader?: string
+  headers?: Record<string, string>
+  metadata?: Record<string, unknown>
 }
 
 export class HttpEvidenceSink implements EvidenceSink {
@@ -19,8 +21,20 @@ export class HttpEvidenceSink implements EvidenceSink {
       'idempotency-key': event.event_id,
     }
 
+    if (this.config.headers) {
+      for (const [name, value] of Object.entries(this.config.headers)) {
+        if (name && name !== 'content-type' && name !== 'idempotency-key') {
+          headers[name] = value
+        }
+      }
+    }
+
     if (this.config.authHeader) {
       headers.authorization = this.config.authHeader
+    }
+
+    if (this.config.metadata && Object.keys(this.config.metadata).length > 0) {
+      headers['X-Hitly-Metadata'] = JSON.stringify(this.config.metadata)
     }
 
     const response = await fetch(this.config.url, {
@@ -80,9 +94,20 @@ export class NoneSink implements EvidenceSink {
   }
 }
 
-export function createEvidenceSink(config: { type: 'none' | 'http'; url?: string; authHeader?: string }): EvidenceSink {
+export function createEvidenceSink(config: {
+  type: 'none' | 'http'
+  url?: string
+  authHeader?: string
+  headers?: Record<string, string>
+  metadata?: Record<string, unknown>
+}): EvidenceSink {
   if (config.type === 'http' && config.url) {
-    return new HttpEvidenceSink({ url: config.url, authHeader: config.authHeader })
+    return new HttpEvidenceSink({
+      url: config.url,
+      authHeader: config.authHeader,
+      headers: config.headers,
+      metadata: config.metadata,
+    })
   }
   return new NoneSink()
 }

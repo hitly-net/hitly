@@ -114,6 +114,8 @@ export async function updateProjectConfig(projectId: string, formData: FormData)
       evidenceSinkType: formData.get('evidenceSinkType'),
       evidenceSinkUrl: formData.get('evidenceSinkUrl'),
       evidenceSinkAuthHeader: formData.get('evidenceSinkAuthHeader'),
+      evidenceSinkHeaders: formData.get('evidenceSinkHeaders'),
+      evidenceSinkMetadata: formData.get('evidenceSinkMetadata'),
     })
     if ('error' in parsed) throw new Error(parsed.error)
     const result = await saveProjectConfig(projectId, parsed)

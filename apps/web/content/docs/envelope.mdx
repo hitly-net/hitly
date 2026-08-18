@@ -117,11 +117,18 @@ Configure an HTTP evidence sink in project settings:
 1. **Sink Type**: `None` (default) or `HTTP`
 2. **Sink URL**: POST destination for evidence events
 3. **Authorization Header**: Optional auth token
+4. **Custom Headers**: Optional HTTP headers (one per line: `Name: value`)
+5. **Metadata**: Optional JSON object sent as transport-only metadata
 
 Evidence events are POSTed to your URL with:
 - `Content-Type: application/json`
 - `Idempotency-Key: <event_id>`
+- `Authorization` header (if configured)
+- Custom HTTP headers (if configured)
+- `X-Hitly-Metadata` header with JSON-encoded metadata (if configured)
 - Full event JSON body (see `packages/core/src/evidence.ts`)
+
+**Important**: Custom headers and metadata are **transport-only**. They are sent with the HTTP request but are **not stored in the evidence event body**. This preserves the `content_sha256` hash. Use them to pass routing information, credentials, or context to your storage backend without affecting the canonical evidence record.
 
 HITLy stores a **receipt index only**, not the payload as system of record. Evidence lifecycle:
 
