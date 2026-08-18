@@ -4,11 +4,12 @@ import { cn } from './cn'
 const SANS = 'var(--font-sans), ui-sans-serif, system-ui, sans-serif'
 const SERIF = 'ui-serif, Georgia, "Times New Roman", serif'
 
-export function HitlyWordmark({ className }: { className?: string }) {
+export function HitlyWordmark({ className, trademark }: { className?: string; trademark?: boolean }) {
   return (
-    <span className={cn('font-semibold tracking-tight', className)} aria-label="HITLy">
+    <span className={cn('font-semibold tracking-tight', className)} aria-label={trademark ? 'HITLy™' : 'HITLy'}>
       <span aria-hidden="true">
         HITL<sub className="italic text-[0.65em] leading-none">y</sub>
+        {trademark && <span>™</span>}
       </span>
     </span>
   )
