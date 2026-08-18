@@ -283,6 +283,10 @@ test('GET /events/:id with Accept text/html returns HTML', async () => {
   assert.ok(html.includes(event.event_type), 'HTML should contain event_type')
   assert.ok(html.includes(event.approval_id), 'HTML should contain approval_id')
   assert.ok(html.includes('HITL'), 'HTML should contain HITLy wordmark')
+  
+  // Smoke test: verify dark theme colors for contrast
+  assert.ok(html.includes('background: #18181b'), 'HTML should use dark background')
+  assert.ok(html.includes('color: #fafafa'), 'HTML should use light text color')
 })
 
 test('GET /events/:id JSON still works', async () => {
