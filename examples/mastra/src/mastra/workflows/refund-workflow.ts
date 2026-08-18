@@ -55,10 +55,7 @@ const approvalStep = createStep({
           dataCategories: ['transaction', 'customer'],
         },
         runId,
-        contextMarkdown: `Refund of ${amount} for ${orderId}.`,
-        suspendPayload: {
-          reason: `Human approval required for ${amount > 1000 ? 'high-value' : 'standard'} refund.`,
-        },
+        contextMarkdown: `Refund of ${amount} for ${orderId}. ${amount > 1000 ? 'High-value' : 'Standard'} refund requires approval.`,
       })
       return await suspend({ reason: 'Human approval required in Hitly.' })
     }
