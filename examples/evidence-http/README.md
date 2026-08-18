@@ -20,6 +20,20 @@ The server listens on port 3100 by default (configurable via `PORT` env var).
 
 Open `http://localhost:3100` in your browser to see all approvals stored in this evidence sink.
 
+### Running Multiple Isolated Stores
+
+Each server instance is isolated by its `EVENTS_DIR` and `PORT`. To run separate evidence stores for different projects:
+
+```bash
+# Store A for Project A
+PORT=3100 EVENTS_DIR=./events-project-a yarn start
+
+# Store B for Project B (in another terminal)
+PORT=3101 EVENTS_DIR=./events-project-b yarn start
+```
+
+Each store only sees events POSTed to it. Project B's event_id on Store A will return 404 and won't appear in Store A's lists or chains.
+
 ## Configuration
 
 ### Environment Variables
