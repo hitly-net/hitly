@@ -17,6 +17,8 @@ export type ProjectConfigInput = {
   evidenceSinkType: 'none' | 'http'
   evidenceSinkUrl: string
   evidenceSinkAuthHeader: string
+  evidenceSinkHeaders: string
+  evidenceSinkMetadata: string
 }
 
 export function parseProjectConfig(input: Record<string, unknown>): ProjectConfigInput | { error: string } {
@@ -33,6 +35,20 @@ export function parseProjectConfig(input: Record<string, unknown>): ProjectConfi
   const evidenceSinkType = typeof input.evidenceSinkType === 'string' ? input.evidenceSinkType.trim() : 'none'
   const evidenceSinkUrl = typeof input.evidenceSinkUrl === 'string' ? input.evidenceSinkUrl.trim() : ''
   const evidenceSinkAuthHeader = typeof input.evidenceSinkAuthHeader === 'string' ? input.evidenceSinkAuthHeader.trim() : ''
+  const evidenceSinkHeaders = typeof input.evidenceSinkHeaders === 'string' ? input.evidenceSinkHeaders.trim() : ''
+  const evidenceSinkMetadata = typeof input.evidenceSinkMetadata === 'string' ? input.evidenceSinkMetadata.trim() : ''
+
+  if (evidenceSinkMetadata) {
+    try {
+      const parsed = JSON.parse(evidenceSinkMetadata)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return { error: 'Metadata must be a JSON object' }
+      }
+    } catch {
+      return { error: 'Metadata must be valid JSON' }
+    }
+  }
+
   return {
     name,
     description,
@@ -46,6 +62,8 @@ export function parseProjectConfig(input: Record<string, unknown>): ProjectConfi
     evidenceSinkType: evidenceSinkType === 'http' ? 'http' : 'none',
     evidenceSinkUrl,
     evidenceSinkAuthHeader,
+    evidenceSinkHeaders,
+    evidenceSinkMetadata,
   }
 }
 
@@ -81,9 +99,32 @@ export async function saveProjectConfig(projectId: string, input: ProjectConfigI
     credentials.resumeSecret = generateResumeSecret()
   }
 
-  const sinkConfig: Record<string, unknown> = {}
+  let sinkConfig: Record<string, unknown> = {}
+  if (project.evidenceSinkConfig) {
+    const existing = await decodeTenantJson(workspaceId, project.evidenceSinkConfig)
+    sinkConfig = existing as Record<string, unknown>
+  }
+
   if (input.evidenceSinkUrl) sinkConfig.url = input.evidenceSinkUrl
   if (input.evidenceSinkAuthHeader) sinkConfig.authHeader = input.evidenceSinkAuthHeader
+  if (input.evidenceSinkHeaders) {
+    const headers: Record<string, string> = {}
+    for (const line of input.evidenceSinkHeaders.split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed) {
+        const colonIndex = trimmed.indexOf(':')
+        if (colonIndex > 0) {
+          const name = trimmed.slice(0, colonIndex).trim()
+          const value = trimmed.slice(colonIndex + 1).trim()
+          if (name) headers[name] = value
+        }
+      }
+    }
+    sinkConfig.headers = headers
+  }
+  if (input.evidenceSinkMetadata) {
+    sinkConfig.metadata = JSON.parse(input.evidenceSinkMetadata)
+  }
 
   await database
     .update(projects)

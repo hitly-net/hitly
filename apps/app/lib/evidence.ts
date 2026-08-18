@@ -243,10 +243,23 @@ async function loadProjectSinkConfig(projectId: string, workspaceId: string) {
   const config = row.evidenceSinkConfig
     ? await decodeTenantJson(workspaceId, row.evidenceSinkConfig as Record<string, unknown>)
     : {}
+
+  const headers =
+    config.headers && typeof config.headers === 'object' && !Array.isArray(config.headers)
+      ? (config.headers as Record<string, string>)
+      : undefined
+
+  const metadata =
+    config.metadata && typeof config.metadata === 'object' && !Array.isArray(config.metadata)
+      ? (config.metadata as Record<string, unknown>)
+      : undefined
+
   return {
     type: row.evidenceSinkType as 'none' | 'http',
     url: optionalString(config.url),
     authHeader: optionalString(config.authHeader),
+    headers,
+    metadata,
   }
 }
 
