@@ -4,4 +4,6 @@
   <path d="M88,56 L168,56 L168,216 L328,216 L328,56 L408,56 L408,456 L328,456 L328,296 L168,296 L168,456 L88,456 Z" fill="#fafafa"/>
   <!-- Slash (the y) from (318,418) to (428,318) -->
   <line x1="318" y1="418" x2="428" y2="318" stroke="#fafafa" stroke-width="48" stroke-linecap="round"/>
+  <!-- Red dot for open approvals -->
+  <circle cx="388" cy="368" r="46" fill="#ef4444"/>
 </svg>

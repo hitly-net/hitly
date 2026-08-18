@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
-  <rect width="800" height="800" fill="#18181b"/>
-  <text x="400" y="475" text-anchor="middle" fill="#fafafa" style="font-family: ui-sans-serif, system-ui, sans-serif; font-size: 280px; font-weight: 700; letter-spacing: -8px;">HITL<tspan baseline-shift="sub" style="font-size: 0.62em; font-style: italic; letter-spacing: 0;">y</tspan></text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#18181b"/>
+  <!-- H glyph (Geist Bold inspired, 400px, centered at 248,256) -->
+  <path d="M88,56 L168,56 L168,216 L328,216 L328,56 L408,56 L408,456 L328,456 L328,296 L168,296 L168,456 L88,456 Z" fill="#fafafa"/>
+  <!-- Slash (the y) from (318,418) to (428,318) -->
+  <line x1="318" y1="418" x2="428" y2="318" stroke="#fafafa" stroke-width="48" stroke-linecap="round"/>
 </svg>
