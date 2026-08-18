@@ -41,6 +41,7 @@ async function inTenant<T>(workspaceId: string, fn: () => Promise<T>): Promise<T
 let client: pg.Client
 let db: ReturnType<typeof drizzle>
 let testServer: ReturnType<typeof import('node:http').createServer> | null = null
+let hangingServer: ReturnType<typeof import('node:http').createServer> | null = null
 
 let workspaceA: { id: string; name: string; slug: string }
 let workspaceB: { id: string; name: string; slug: string }
@@ -81,6 +82,19 @@ before(async () => {
   await new Promise<void>((resolve) => {
     testServer!.listen(19999, () => {
       console.log('[test] HTTP evidence sink server listening on port 19999')
+      resolve()
+    })
+  })
+
+  // Create a hanging server that accepts connections but never responds
+  hangingServer = http.createServer((req, res) => {
+    // Accept connection but never call res.end() - connection hangs
+    console.log('[test] Hanging server received request, will not respond')
+    // Intentionally do nothing - this will hang until AbortSignal timeout
+  })
+  await new Promise<void>((resolve) => {
+    hangingServer!.listen(9999, () => {
+      console.log('[test] Hanging HTTP server listening on port 9999')
       resolve()
     })
   })
@@ -229,11 +243,19 @@ before(async () => {
 })
 
 after(async () => {
-  // Stop test server
+  // Stop test servers
   if (testServer) {
     await new Promise<void>((resolve) => {
       testServer!.close(() => {
         console.log('[test] HTTP server closed')
+        resolve()
+      })
+    })
+  }
+  if (hangingServer) {
+    await new Promise<void>((resolve) => {
+      hangingServer!.close(() => {
+        console.log('[test] Hanging HTTP server closed')
         resolve()
       })
     })
@@ -423,7 +445,7 @@ test('replay decide is not 200', async () => {
   })
 })
 
-test('HTTP sink fail-closed: append failure prevents origin resume', async () => {
+test('HTTP sink fail-closed: append failure prevents origin resume', { timeout: 10000 }, async () => {
   await inTenant(workspaceA.id, async () => {
   // Create project with HTTP sink that will fail
   const projectFailSink = {
@@ -437,7 +459,7 @@ test('HTTP sink fail-closed: append failure prevents origin resume', async () =>
     credentials: {},
     evidenceSinkType: 'http',
     evidenceSinkConfig: { 
-      url: 'http://localhost:9999/nonexistent', 
+      url: 'http://localhost:9999/evidence', 
       authHeader: 'Bearer test' 
     },
     createdAt: new Date(),
