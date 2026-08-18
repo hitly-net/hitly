@@ -1,18 +1,18 @@
 ---
 title: n8n
-description: Pause on a Wait webhook, review in Hitly, POST the resume URL.
+description: Pause on a Wait webhook, review in HITLy, POST the resume URL.
 ---
 
 The [HTTP](/integrations/http) adapter is available today — create an **HTTP** project and hand-roll a Wait node.
 
 [n8n](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.wait/) pauses with a Wait node. Resume happens only via `$execution.resumeUrl` (or form URL).
 
-## How it works with Hitly
+## How it works with HITL<sub><i>y</i></sub>
 
-1. Notion Trigger (or HTTP Request) POSTs context + `$execution.resumeUrl` to Hitly ingest with `plugin: "http"`.
+1. Notion Trigger (or HTTP Request) POSTs context + `$execution.resumeUrl` to HITL<sub><i>y</i></sub> ingest with `plugin: "http"`.
 2. Wait node **On Webhook Call** on the **same chain** (not a second Webhook trigger).
-3. Reviewer decides in Hitly.
-4. Hitly POSTs `{ decision, id, metadata }` to `$execution.resumeUrl` and the Wait node continues.
+3. Reviewer decides in HITL<sub><i>y</i></sub>.
+4. HITL<sub><i>y</i></sub> POSTs `{ decision, id, metadata }` to `$execution.resumeUrl` and the Wait node continues.
 
 A disconnected Webhook node on the same canvas is a separate workflow. Its `/webhook-test/...` URL 404s unless you click Listen; production `/webhook/...` only works when that Webhook is the trigger of an **active** workflow.
 
@@ -25,18 +25,18 @@ A disconnected Webhook node on the same canvas is a separate workflow. Its `/web
 <DocShot
   src="/images/notion-content-database.png"
   alt="Notion Content database with Software licences In review"
-  caption="Notion Status In review creates the Hitly item"
+  caption="Notion Status In review creates the HITLy item"
 />
 
 <DocShot
   src="/images/hitly-notion-approval.png"
-  alt="Hitly work item for notion-approval with Software licences context and Accept or Reject"
-  caption="Reviewer decides in Hitly; Wait then PATCHes Notion"
+  alt="HITLy work item for notion-approval with Software licences context and Accept or Reject"
+  caption="Reviewer decides in HITLy; Wait then PATCHes Notion"
 />
 
 ## Setup (hand-roll today)
 
-Create a Hitly project with plugin **HTTP**. Point an HTTP Request node at `POST /api/v1/approvals` with a project API key, `plugin: "http"`, `projectId`, `resumeUrl` (`$execution.resumeUrl`), and any `metadata` you need echoed on decide.
+Create a HITL<sub><i>y</i></sub> project with plugin **HTTP**. Point an HTTP Request node at `POST /api/v1/approvals` with a project API key, `plugin: "http"`, `projectId`, `resumeUrl` (`$execution.resumeUrl`), and any `metadata` you need echoed on decide.
 
 Set `WEBHOOK_URL` on self-hosted n8n so resume URLs are not `localhost`.
 
@@ -44,7 +44,7 @@ Step-by-step recipe: [`examples/n8n`](https://github.com/hitly-net/hitly/blob/ma
 
 ## Decision mapping
 
-| Hitly | n8n |
+| HITLy | n8n |
 | --- | --- |
 | `accept` | POST `{ "decision": "accept", "id", "metadata" }` |
 | `reject` | POST `{ "decision": "reject", "id", "metadata" }` (branch in the workflow) |

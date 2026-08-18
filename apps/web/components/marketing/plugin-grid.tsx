@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Badge } from '@hitly/ui'
+import { Badge, HitlyWordmark } from '@hitly/ui'
 
 const plugins = [
   {
@@ -21,28 +21,44 @@ const plugins = [
     name: 'HTTP',
     status: 'Available',
     href: '/integrations/http',
-    body: 'POST ingest with a resumeUrl. Hitly POSTs { decision, id, metadata }. n8n, Notion, Make, custom callbacks.',
+    body: (
+      <>
+        POST ingest with a resumeUrl. <HitlyWordmark /> POSTs {'{ decision, id, metadata }'}. n8n, Notion, Make, custom callbacks.
+      </>
+    ),
   },
   {
     id: 'n8n',
     name: 'n8n',
     status: 'HTTP today',
     href: '/integrations/n8n',
-    body: 'Create an HTTP project. HTTP Request to Hitly, then Wait on webhook. Hitly POSTs to $execution.resumeUrl.',
+    body: (
+      <>
+        Create an HTTP project. HTTP Request to <HitlyWordmark />, then Wait on webhook. <HitlyWordmark /> POSTs to $execution.resumeUrl.
+      </>
+    ),
   },
   {
     id: 'langgraph',
     name: 'LangGraph',
     status: 'Coming soon',
     href: '/integrations/langgraph',
-    body: 'Maps HumanInterrupt onto the Hitly envelope and resumes with HumanResponse.',
+    body: (
+      <>
+        Maps HumanInterrupt onto the <HitlyWordmark /> envelope and resumes with HumanResponse.
+      </>
+    ),
   },
   {
     id: 'temporal',
     name: 'Temporal',
     status: 'Coming soon',
     href: '/integrations/temporal',
-    body: 'Activity creates the approval; condition() waits; Hitly sends hitly.decision.',
+    body: (
+      <>
+        Activity creates the approval; condition() waits; <HitlyWordmark /> sends <code className="text-xs">hitly.decision</code>.
+      </>
+    ),
   },
 ]
 

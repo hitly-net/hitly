@@ -1,16 +1,16 @@
 ---
 title: HTTP
-description: Pause on a callback URL, review in Hitly, POST the decision JSON.
+description: Pause on a callback URL, review in HITLy, POST the decision JSON.
 ---
 
-Generic HTTP callback. Create a Hitly project with plugin **HTTP**. Any origin that can POST ingest and expose a `resumeUrl` uses this adapter — n8n Wait, Make, Zapier, Notion automations, or a tiny webhook handler.
+Generic HTTP callback. Create a HITL<sub><i>y</i></sub> project with plugin **HTTP**. Any origin that can POST ingest and expose a `resumeUrl` uses this adapter — n8n Wait, Make, Zapier, Notion automations, or a tiny webhook handler.
 
-## How it works with Hitly
+## How it works with HITL<sub><i>y</i></sub>
 
 1. The origin POSTs context + `resumeUrl` to `POST /api/v1/approvals` (`plugin: "http"`).
 2. Whatever owns `resumeUrl` waits (Wait node, scenario, Worker).
-3. Reviewer decides in Hitly.
-4. Hitly POSTs JSON to `resumeUrl`. Ingest `metadata` is echoed unchanged on accept and reject. `id` is the Hitly approval id (unknown at ingest):
+3. Reviewer decides in HITL<sub><i>y</i></sub>.
+4. HITL<sub><i>y</i></sub> POSTs JSON to `resumeUrl`. Ingest `metadata` is echoed unchanged on accept and reject. `id` is the HITL<sub><i>y</i></sub> approval id (unknown at ingest):
 
 ```json
 {
@@ -20,7 +20,7 @@ Generic HTTP callback. Create a Hitly project with plugin **HTTP**. Any origin t
 }
 ```
 
-Put any correlation keys the callback needs in `metadata`. Hitly does not interpret them.
+Put any correlation keys the callback needs in `metadata`. HITL<sub><i>y</i></sub> does not interpret them.
 
 ## Setup
 
@@ -42,11 +42,11 @@ Create an **HTTP** project and copy the API key. Point the origin at ingest:
 
 n8n-shaped fields (`executionId`, `workflowId`, `workflowName`) are optional details. `runId` falls back to `executionId`.
 
-The resume URL must be reachable from Hitly. `localhost` only works when Hitly and the callback run on the same machine.
+The resume URL must be reachable from HITL<sub><i>y</i></sub>. `localhost` only works when HITL<sub><i>y</i></sub> and the callback run on the same machine.
 
 ## Decision mapping
 
-| Hitly | Callback |
+| HITLy | Callback |
 | --- | --- |
 | `accept` | POST `{ "decision": "accept", "id", "metadata" }` |
 | `reject` | POST `{ "decision": "reject", "id", "metadata" }` (branch in the origin) |

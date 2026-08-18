@@ -26,7 +26,7 @@ The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origi
 
 `mastraBaseUrl` is optional when the project already stores the origin base URL.
 
-HTTP origins send `plugin: "http"`, `resumeUrl`, and optional `metadata`. Hitly echoes `metadata` on the resume POST:
+HTTP origins send `plugin: "http"`, `resumeUrl`, and optional `metadata`. HITL<sub><i>y</i></sub> echoes `metadata` on the resume POST:
 
 ```json
 {
@@ -39,7 +39,7 @@ HTTP origins send `plugin: "http"`, `resumeUrl`, and optional `metadata`. Hitly 
 }
 ```
 
-On accept or reject, Hitly POSTs that `metadata` unchanged to `resumeUrl`:
+On accept or reject, HITL<sub><i>y</i></sub> POSTs that `metadata` unchanged to `resumeUrl`:
 
 ```json
 {

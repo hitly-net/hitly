@@ -35,17 +35,17 @@ export function buildLlmsIndex(): string {
 
   return toAbsoluteMarkdown(
     [
-      '# Hitly',
+      '# HITLy',
       '',
-      '> Hitly is the review inbox for agents and workflows. Origins (Mastra, Hermes, HTTP, LangGraph, Temporal) keep pause/resume; reviewers decide in Hitly. Cloud is waitlist-only; self-host is available now.',
+      '> HITLy is the review inbox for agents and workflows. Origins (Mastra, Hermes, HTTP, LangGraph, Temporal) keep pause/resume; reviewers decide in HITLy. Cloud is waitlist-only; self-host is available now.',
       '',
       ...sections,
       '',
       '## Also',
       '',
       '- [GitHub](https://github.com/hitly-net/hitly): Apache-2.0 source, examples, and plugins',
-      '- [AGENT.md](https://github.com/hitly-net/hitly/blob/main/AGENT.md): drop-in recipe for coding agents implementing Hitly in an existing project',
-      '- [Cloud waitlist](https://hitly.net/#waitlist): hosted Hitly is not generally available yet',
+      '- [AGENT.md](https://github.com/hitly-net/hitly/blob/main/AGENT.md): drop-in recipe for coding agents implementing HITLy in an existing project',
+      '- [Cloud waitlist](https://hitly.net/#waitlist): hosted HITLy is not generally available yet',
       '',
     ].join('\n'),
   )
