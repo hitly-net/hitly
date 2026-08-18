@@ -920,6 +920,12 @@ test('test ping does not append decided event', async () => {
   
   const initialEventCount = eventsReceivedByA.length
   
+  // Count existing receipts before ping
+  const receiptsBefore = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(eq(evidenceReceipts.workspaceId, workspaceA.id))
+  
   // Simulate the test button ping (same as the API route does)
   const pingPayload = {
     spec: 'hitly.evidence.v1',
@@ -936,18 +942,35 @@ test('test ping does not append decided event', async () => {
   const body = await response.json()
   assert.ok(body.ok || body.message, 'Ping should return success response')
   
-  // Verify the mock listener did NOT track this as an event
-  // Mock handler checks event_type === 'ping' and returns early without pushing to array
+  // Assert 1: No file created (mock listener didn't track event_id)
   const finalEventCount = eventsReceivedByA.length
-  assert.equal(finalEventCount, initialEventCount, 'Ping should not be tracked as an event')
+  assert.equal(finalEventCount, initialEventCount, 'Ping should not create file (not tracked by mock listener)')
   
-  // Verify no evidence receipts with event_type 'ping' exist
-  const receipts = await db
+  // Assert 2: No decided event created
+  const decidedReceipts = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(and(
+      eq(evidenceReceipts.workspaceId, workspaceA.id),
+      eq(evidenceReceipts.eventType, 'decided')
+    ))
+  const decidedAfter = decidedReceipts.length
+  const decidedBefore = receiptsBefore.filter(r => r.eventType === 'decided').length
+  assert.equal(decidedAfter, decidedBefore, 'Ping should not create decided event')
+  
+  // Assert 3: No chain event created (no new receipts of any type)
+  const receiptsAfter = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(eq(evidenceReceipts.workspaceId, workspaceA.id))
+  assert.equal(receiptsAfter.length, receiptsBefore.length, 'Ping should not create any evidence receipt (no chain event)')
+  
+  // Extra: verify no 'ping' event type receipts exist
+  const pingReceipts = await db
     .select()
     .from(evidenceReceipts)
     .where(eq(evidenceReceipts.eventType, 'ping'))
-    .limit(1)
-  assert.equal(receipts.length, 0, 'Ping should not create evidence receipts')
+  assert.equal(pingReceipts.length, 0, 'Ping should not create evidence receipts with event_type=ping')
   })
 })
 
