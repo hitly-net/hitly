@@ -41,6 +41,7 @@ async function inTenant<T>(workspaceId: string, fn: () => Promise<T>): Promise<T
 // Test fixtures
 let client: pg.Client
 let db: ReturnType<typeof drizzle>
+let testServer: ReturnType<typeof import('node:http').createServer> | null = null
 
 let workspaceA: { id: string; name: string; slug: string }
 let workspaceB: { id: string; name: string; slug: string }
@@ -52,6 +53,34 @@ let apiKeyA: { raw: string; hashed: string; id: string }
 let apiKeyB: { raw: string; hashed: string; id: string }
 
 before(async () => {
+  // Start a simple HTTP server for evidence sink tests
+  const http = await import('node:http')
+  testServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.includes('/evidence')) {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        try {
+          const event = JSON.parse(body)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            event_id: event.event_id,
+            content_sha256: event.integrity.content_sha256,
+            store_uri: `http://localhost:19999/evidence/${event.event_id}`,
+            stored_at: new Date().toISOString(),
+          }))
+        } catch {
+          res.writeHead(400)
+          res.end()
+        }
+      })
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  testServer.listen(19999)
+
   client = new pg.Client({ connectionString: DATABASE_URL })
   await client.connect()
   // @ts-expect-error - Client vs Pool type mismatch, works at runtime
@@ -190,6 +219,11 @@ before(async () => {
 })
 
 after(async () => {
+  // Stop test server
+  if (testServer) {
+    testServer.close()
+  }
+
   // Clean up test data
   if (db && workspaceA && workspaceB) {
     await db.delete(evidenceReceipts).where(eq(evidenceReceipts.workspaceId, workspaceA.id))
