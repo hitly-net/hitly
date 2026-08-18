@@ -37,3 +37,7 @@ The public `@hitly/cloud` package in this repo is a stub. The hosted product rep
 Yarn 1 workspaces + Turbo. Each package.json has `hitly.role` (`sdk` | `app` | `internal` | `edition-stub` | `example`). Only `sdk` packages (`@hitly/core`, `@hitly/plugin-*`) are future npm libraries; apps and `@hitly/cloud` are not.
 
 Agent skills for this repo: `.cursor/skills/hitly-coding`, `.cursor/skills/hitly-release`, `.cursor/skills/hitly-deployment`.
+
+## Database
+
+Postgres 16 via `yarn db:up` (port **5432**). If you previously ran MariaDB, start a new volume — this schema is not a dump-and-restore from MySQL.

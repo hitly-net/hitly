@@ -8,7 +8,30 @@ import { getAppContext } from '@/lib/context'
 import { newId } from '@/lib/ids'
 import { canManageWorkspace } from '@/lib/rbac'
 import { requireDb } from '@/lib/require-db'
+import { sendMail } from '@/lib/mail'
 import { findUserByEmail } from '@/lib/workspace'
+
+const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
+
+async function sendWorkspaceInviteMail(args: {
+  to: string
+  workspaceName: string
+  existingMember: boolean
+}) {
+  if (args.existingMember) {
+    await sendMail({
+      to: args.to,
+      subject: `You've been added to ${args.workspaceName} on Hitly`,
+      text: `You've been added to ${args.workspaceName}.\n\n${APP_URL}\n`,
+    })
+    return
+  }
+  await sendMail({
+    to: args.to,
+    subject: `You're invited to ${args.workspaceName} on Hitly`,
+    text: `You've been invited to join ${args.workspaceName}.\n\nCreate an account: ${APP_URL}/signup\n\nThis invite expires in 14 days.\n`,
+  })
+}
 
 export async function inviteToWorkspace(formData: FormData) {
   const { user, workspace, role } = await getAppContext()
@@ -39,6 +62,11 @@ export async function inviteToWorkspace(formData: FormData) {
       userId: existingUser.id,
       role: invitedRole,
     })
+    await sendWorkspaceInviteMail({
+      to: email,
+      workspaceName: workspace.name,
+      existingMember: true,
+    })
   } else {
     await database.insert(invites).values({
       id: newId('inv').slice(0, 36),
@@ -47,6 +75,11 @@ export async function inviteToWorkspace(formData: FormData) {
       role: invitedRole,
       invitedByUserId: user.id,
       expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+    })
+    await sendWorkspaceInviteMail({
+      to: email,
+      workspaceName: workspace.name,
+      existingMember: false,
     })
   }
   revalidatePath('/settings/team')

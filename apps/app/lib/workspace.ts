@@ -1,8 +1,9 @@
 import { and, eq, isNull } from 'drizzle-orm'
 import { defaultWorkspacePlan } from '@hitly/cloud/auth/providers'
+import { edition } from '@hitly/cloud'
 import { invites, memberships, users, workspaces } from '@hitly/db/schema'
 import { newId, slugify } from './ids'
-import { requireDb } from './require-db'
+import { requireDb } from './tenant'
 
 export async function bootstrapUserWorkspaces(user: { id: string; name: string; email: string }) {
   const database = requireDb()
@@ -25,6 +26,7 @@ export async function bootstrapUserWorkspaces(user: { id: string; name: string; 
       userId: user.id,
       role: 'owner',
     })
+    await edition.onWorkspaceCreated?.(workspaceId)
   }
 
   const pending = await database

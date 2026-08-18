@@ -47,10 +47,43 @@ export interface EditionNavItem {
   feature?: Feature
 }
 
+export type TenantDocument = Record<string, unknown>
+
+export type ResolvedProjectApiKey = {
+  key: {
+    id: string
+    projectId: string
+    workspaceId: string
+    name: string
+    hashedKey: string
+    prefix: string
+  }
+  project: {
+    id: string
+    workspaceId: string
+    name: string
+    plugin: string
+    credentials: TenantDocument
+    defaultAssigneeUserId: string | null
+    defaultSlaMinutes: string
+  }
+}
+
 export interface HitlyEdition {
   id: EditionId
   entitlementsFor(workspace: { plan: string }): Entitlements
   navItems: EditionNavItem[]
+  /** Cloud: `SET LOCAL app.workspace_id` on the tenant transaction. OSS omits this. */
+  applyTenantContext?(tx: object, workspaceId: string): Promise<void>
+  encryptDocument?(workspaceId: string, value: TenantDocument): Promise<TenantDocument>
+  decryptDocument?(workspaceId: string, value: TenantDocument): Promise<TenantDocument>
+  onWorkspaceCreated?(workspaceId: string): Promise<void>
+  resolveProjectApiKey?(hashedKey: string): Promise<ResolvedProjectApiKey | null>
+  /**
+   * Enterprise dedicated-DB seam. Waitlist always returns null (shared Postgres).
+   * When a tenant pays for isolation, Cloud returns that workspace's connection string.
+   */
+  resolveDatabaseUrl?(workspace: { id: string; plan: string }): string | null
 }
 
 export class FeatureUnavailableError extends Error {

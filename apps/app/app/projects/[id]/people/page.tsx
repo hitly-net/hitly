@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { memberships, projectMemberships, users } from '@hitly/db/schema'
 import { PROJECT_ROLES } from '@hitly/core'
 import { addProjectMember, removeProjectMember, updateProjectMemberRole } from '@/actions/projects'
@@ -6,12 +6,14 @@ import { AppShell } from '@/components/app-shell'
 import { ProjectTabs } from '@/components/project-tabs'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
-import { requireDb } from '@/lib/require-db'
+import { requireDb } from '@/lib/tenant'
+import { withAppTenant } from '@/lib/context'
 import { redirect } from 'next/navigation'
 
 export const metadata = { title: 'People' }
 
 export default async function ProjectPeoplePage({ params }: { params: Promise<{ id: string }> }) {
+  return withAppTenant(async () => {
   const { id } = await params
   const { project, access, workspace } = await requireVisibleProject(id)
   if (!canAdminProject(access)) redirect(`/projects/${id}`)
@@ -27,7 +29,7 @@ export default async function ProjectPeoplePage({ params }: { params: Promise<{ 
     })
     .from(projectMemberships)
     .innerJoin(users, eq(projectMemberships.userId, users.id))
-    .where(eq(projectMemberships.projectId, id))
+    .where(and(eq(projectMemberships.projectId, id), eq(projectMemberships.workspaceId, workspace.id)))
 
   const workspaceMembers = await database
     .select({
@@ -113,4 +115,5 @@ export default async function ProjectPeoplePage({ params }: { params: Promise<{ 
       </ul>
     </AppShell>
   )
+  })
 }

@@ -1,0 +1,37 @@
+{
+  "name": "@hitly/mail",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "homepage": "https://hitly.net",
+  "bugs": {
+    "url": "https://github.com/hitly-net/hitly/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hitly-net/hitly.git",
+    "directory": "packages/mail"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "hitly": {
+    "role": "sdk"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/mail.test.ts"
+  },
+  "dependencies": {
+    "nodemailer": "^7.0.11"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^6.4.21",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.2"
+  }
+}

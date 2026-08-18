@@ -1,61 +1,12 @@
 {
-  "version": "8",
-  "dialect": "mysql",
+  "version": "7",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "5",
-      "when": 1786635250768,
-      "tag": "0000_gigantic_colonel_america",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": 1786639000000,
-      "tag": "0001_project_collector",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "5",
-      "when": 1786643400000,
-      "tag": "0002_resume_response",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "5",
-      "when": 1786650000000,
-      "tag": "0003_user_devices",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "5",
-      "when": 1786657800000,
-      "tag": "0004_cancelled",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "5",
-      "when": 1786662000000,
-      "tag": "0005_housekeeping",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "5",
-      "when": 1786680000000,
-      "tag": "0006_hermes_plugin",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "5",
-      "when": 1786700000000,
-      "tag": "0007_http_plugin",
+      "version": "7",
+      "when": 1786964707615,
+      "tag": "0000_oval_wendell_rand",
       "breakpoints": true
     }
   ]

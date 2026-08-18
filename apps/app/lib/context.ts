@@ -5,7 +5,7 @@ import { memberships, workspaces } from '@hitly/db/schema'
 import type { WorkspaceRole } from '@hitly/core'
 import { auth } from './auth'
 import { bootstrapUserWorkspaces, listUserWorkspaces } from './workspace'
-import { requireDb } from './require-db'
+import { requireDb, withTenant } from './tenant'
 
 export const WORKSPACE_COOKIE = 'hitly-workspace-id'
 
@@ -57,4 +57,9 @@ export async function getMembership(workspaceId: string, userId: string) {
     .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
     .limit(1)
   return rows[0] ?? null
+}
+
+export async function withAppTenant<T>(fn: (ctx: Awaited<ReturnType<typeof getAppContext>>) => Promise<T>) {
+  const ctx = await getAppContext()
+  return withTenant(ctx.workspace.id, () => fn(ctx))
 }

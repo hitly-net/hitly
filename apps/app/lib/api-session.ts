@@ -4,6 +4,7 @@ import type { WorkspaceRole } from '@hitly/core'
 import { auth } from './auth'
 import { WORKSPACE_COOKIE } from './context'
 import { listUserWorkspaces } from './workspace'
+import { withTenant } from './tenant'
 
 export const WORKSPACE_HEADER = 'x-hitly-workspace-id'
 
@@ -56,4 +57,19 @@ export async function requireApiWorkspace() {
     workspace: current,
     role: current.role as WorkspaceRole,
   }
+}
+
+export type ApiWorkspaceOk = Extract<Awaited<ReturnType<typeof requireApiWorkspace>>, { ok: true }>
+export type ApiTenantOk = ApiWorkspaceOk & {
+  workspace: NonNullable<ApiWorkspaceOk['workspace']>
+  role: NonNullable<ApiWorkspaceOk['role']>
+}
+
+export async function withApiTenant<T>(fn: (ctx: ApiTenantOk) => Promise<T>): Promise<T | NextResponse> {
+  const ctx = await requireApiWorkspace()
+  if (!ctx.ok) return ctx.error
+  if (!ctx.workspace || !ctx.role) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+  return withTenant(ctx.workspace.id, () => fn(ctx as ApiTenantOk))
 }

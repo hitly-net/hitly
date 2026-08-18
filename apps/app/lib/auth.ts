@@ -6,8 +6,8 @@ import { socialProviders } from '@hitly/cloud/auth/providers'
 import * as schema from '@hitly/db/schema'
 import { db } from './db'
 import { isTrustedAppOrigin } from './cors'
-import { bootstrapUserWorkspaces } from './workspace'
 import { sendMail } from './mail'
+import { bootstrapUserWorkspaces } from './workspace'
 
 const appUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
@@ -22,7 +22,7 @@ const staticTrustedOrigins = [
 export const auth = db
   ? betterAuth({
       database: drizzleAdapter(db, {
-        provider: 'mysql',
+        provider: 'pg',
         schema: {
           user: schema.users,
           session: schema.sessions,

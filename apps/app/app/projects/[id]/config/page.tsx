@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { projectApiKeys, projectMemberships, users } from '@hitly/db/schema'
 import { updateProjectConfig } from '@/actions/projects'
@@ -10,18 +10,24 @@ import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
 import { ensureProjectResumeSecret } from '@/lib/resume-secret'
 import { resumeSecretPrefix } from '@/lib/keys'
-import { requireDb } from '@/lib/require-db'
+import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
+import { withAppTenant } from '@/lib/context'
 
 export const metadata = { title: 'Config' }
 
 export default async function ProjectConfigPage({ params }: { params: Promise<{ id: string }> }) {
+  return withAppTenant(async () => {
   const { id } = await params
   const { project: loaded, access } = await requireVisibleProject(id)
   if (!canAdminProject(access)) redirect(`/projects/${id}`)
   const { project, resumeSecret } = await ensureProjectResumeSecret(loaded)
 
   const database = requireDb()
-  const keys = await database.select().from(projectApiKeys).where(eq(projectApiKeys.projectId, id))
+  const workspaceId = requireTenantWorkspaceId()
+  const keys = await database
+    .select()
+    .from(projectApiKeys)
+    .where(and(eq(projectApiKeys.projectId, id), eq(projectApiKeys.workspaceId, workspaceId)))
   const people = await database
     .select({
       userId: users.id,
@@ -30,9 +36,9 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
     })
     .from(projectMemberships)
     .innerJoin(users, eq(projectMemberships.userId, users.id))
-    .where(eq(projectMemberships.projectId, id))
+    .where(and(eq(projectMemberships.projectId, id), eq(projectMemberships.workspaceId, workspaceId)))
 
-  const credentials = project.credentials
+  const credentials = project.credentials as Record<string, unknown>
   const appUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
   return (
@@ -142,4 +148,5 @@ HITLY_API_KEY=hitly_…
 HITLY_RESUME_SECRET=${resumeSecretPrefix(resumeSecret)}…`}</pre>
     </AppShell>
   )
+  })
 }

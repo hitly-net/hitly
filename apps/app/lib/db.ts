@@ -1,8 +1,8 @@
-import { drizzle } from 'drizzle-orm/mysql2'
-import mysql from 'mysql2/promise'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
 import * as schema from '@hitly/db/schema'
 
 const url = process.env.DATABASE_URL
-const pool = url ? mysql.createPool(url) : null
+export const pool = url ? new pg.Pool({ connectionString: url }) : null
 
-export const db = pool ? drizzle(pool, { schema, mode: 'default' }) : null
+export const db = pool ? drizzle(pool, { schema }) : null

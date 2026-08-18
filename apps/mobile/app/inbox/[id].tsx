@@ -98,9 +98,19 @@ export default function WorkItemDetailScreen() {
         <DecisionBar
           allowed={allowed}
           onDecide={async (decision, extra) => {
-            await client?.decide(detail.id, { decision, ...extra })
-            await refresh()
-            router.back()
+            try {
+              await client?.decide(detail.id, { decision, ...extra })
+              await refresh()
+              router.back()
+            } catch (err) {
+              const next = await client?.approval(detail.id).catch(() => null)
+              if (next && !next.canAct) {
+                setDetail(next)
+                await refresh()
+                return
+              }
+              throw err
+            }
           }}
         />
       ) : null}

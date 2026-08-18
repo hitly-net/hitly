@@ -17,6 +17,12 @@ yarn dev:app
 
 The marketing/docs site is optional (`yarn dev:web`). The Expo reviewer app is `yarn dev:mobile` — see [Mobile](/docs/mobile).
 
+## Database
+
+Local Compose runs **Postgres 16** (`postgres://hitly:hitly@localhost:5432/hitly`). OSS does not enable row-level security or envelope encryption; those are Cloud overlay concerns.
+
+Older self-host installs used MariaDB. There is no in-place upgrade: stand up Postgres, run `yarn db:migrate` on an empty database, and re-create workspaces. Schema was squashed to a single Postgres migration.
+
 ## What is not in this repo
 
 Stripe billing, hosted plan limits, and SSO ship in a private `@hitly/cloud` overlay used by [hitly.net](https://hitly.net). The `@hitly/cloud` package here is a stub: billing API routes return 404, and the nav hides Cloud-only items.

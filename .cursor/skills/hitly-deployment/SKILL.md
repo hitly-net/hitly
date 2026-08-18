@@ -22,7 +22,7 @@ Project skill for shipping this monorepo to the Ubuntu host. Operator notes: [de
 | Git remote | `https://github.com/hitly-net/hitly.git` (`main`) |
 | Web | `http://192.168.10.176:3000` (`yarn workspace @hitly/web start`) |
 | App | `http://192.168.10.176:3001` (`yarn workspace @hitly/app start`) |
-| Infra | Docker Compose MariaDB in `~/hitly` |
+| Infra | Docker Compose Postgres in `~/hitly` |
 
 ## Runtime model
 
@@ -35,7 +35,7 @@ The host runs **production** Next.js (`yarn turbo build --filter=@hitly/web --fi
 
 Install/refresh on the host: `bash scripts/systemd/install-user-units.sh`. Both units `source ~/.nvm/nvm.sh` then run Yarn from `%h/hitly`.
 
-Docker (MariaDB) is expected to already be up:
+Docker (Postgres) is expected to already be up:
 
 ```bash
 ssh derek@192.168.10.176 'cd ~/hitly && docker compose ps'
@@ -127,7 +127,7 @@ NEXT_PUBLIC_APP_URL=http://192.168.10.176:3001
 WEB_URL=http://192.168.10.176:3000
 BETTER_AUTH_URL=http://192.168.10.176:3001
 BETTER_AUTH_SECRET=<openssl rand -hex 32>
-DATABASE_URL=mysql://hitly:hitly@127.0.0.1:3306/hitly
+DATABASE_URL=postgres://hitly:hitly@127.0.0.1:5432/hitly
 NEXT_PUBLIC_WEB_URL=http://192.168.10.176:3000
 ```
 
@@ -142,7 +142,7 @@ chmod +x ~/hitly/scripts/systemd/ensure-up.sh
 (crontab -l 2>/dev/null | grep -v ensure-up.sh; echo "* * * * * $HOME/hitly/scripts/systemd/ensure-up.sh") | crontab -
 ```
 
-`ensure-up.sh` starts Docker Compose MariaDB if `:3306` is down, and the Next units if `:3000` / `:3001` are down.
+`ensure-up.sh` starts Docker Compose Postgres if `:5432` is down, and the Next units if `:3000` / `:3001` are down.
 
 ## Common operations
 
@@ -152,7 +152,7 @@ chmod +x ~/hitly/scripts/systemd/ensure-up.sh
 ssh derek@192.168.10.176 'systemctl --user restart hitly-web.service hitly-app.service'
 ```
 
-### Restart infra (MariaDB)
+### Restart infra (Postgres)
 
 ```bash
 ssh derek@192.168.10.176 'cd ~/hitly && docker compose up -d'

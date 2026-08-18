@@ -1,7 +1,8 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { projects } from '@hitly/db/schema'
 import { generateResumeSecret } from './keys'
-import { requireDb } from './require-db'
+import { requireDb, requireTenantWorkspaceId } from './tenant'
+import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 
 export type ProjectConfigInput = {
   name: string
@@ -49,12 +50,18 @@ export function publicOriginFields(plugin: string, credentials: Record<string, u
 }
 
 export async function saveProjectConfig(projectId: string, input: ProjectConfigInput) {
+  const workspaceId = requireTenantWorkspaceId()
   const database = requireDb()
-  const rows = await database.select().from(projects).where(eq(projects.id, projectId)).limit(1)
+  const rows = await database
+    .select()
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)))
+    .limit(1)
   const project = rows[0]
   if (!project) return { error: 'Project not found' as const }
+  const current = await decodeTenantJson(workspaceId, project.credentials)
 
-  const credentials: Record<string, unknown> = { plugin: project.plugin, ...project.credentials }
+  const credentials: Record<string, unknown> = { plugin: project.plugin, ...current }
   if (input.baseUrl) credentials.baseUrl = input.baseUrl
   if (input.token) credentials.token = input.token
   if (input.address) credentials.address = input.address
@@ -72,9 +79,10 @@ export async function saveProjectConfig(projectId: string, input: ProjectConfigI
       description: input.description || null,
       defaultSlaMinutes: input.sla,
       defaultAssigneeUserId: input.defaultAssigneeUserId,
-      credentials,
+      credentials: await encodeTenantJson(workspaceId, credentials),
+      updatedAt: new Date(),
     })
-    .where(eq(projects.id, projectId))
+    .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)))
 
   return { ok: true as const }
 }

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { projectChannels } from '@hitly/db/schema'
 import { toggleProjectChannel } from '@/actions/projects'
@@ -6,15 +6,20 @@ import { AppShell } from '@/components/app-shell'
 import { ProjectTabs } from '@/components/project-tabs'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
-import { requireDb } from '@/lib/require-db'
+import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
+import { withAppTenant } from '@/lib/context'
 
 export const metadata = { title: 'Channels' }
 
 export default async function ProjectChannelsPage({ params }: { params: Promise<{ id: string }> }) {
+  return withAppTenant(async () => {
   const { id } = await params
   const { project, access } = await requireVisibleProject(id)
   if (!canAdminProject(access)) redirect(`/projects/${id}`)
-  const channels = await requireDb().select().from(projectChannels).where(eq(projectChannels.projectId, id))
+  const channels = await requireDb()
+    .select()
+    .from(projectChannels)
+    .where(and(eq(projectChannels.projectId, id), eq(projectChannels.workspaceId, requireTenantWorkspaceId())))
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
@@ -40,4 +45,5 @@ export default async function ProjectChannelsPage({ params }: { params: Promise<
       </ul>
     </AppShell>
   )
+  })
 }

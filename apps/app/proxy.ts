@@ -33,7 +33,7 @@ export function proxy(request: NextRequest) {
     return pass(request)
   }
 
-  const session = request.cookies.get('better-auth.session_token')
+  const session = request.cookies.get('better-auth.session_token') || request.cookies.get('__Secure-better-auth.session_token')
   if (!session && !pathname.startsWith('/api/')) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'

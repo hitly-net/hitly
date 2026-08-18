@@ -2,29 +2,51 @@ import { CHANNEL_TYPES, DECISIONS, PLUGIN_IDS, PROJECT_ROLES, WORKSPACE_ROLES } 
 import {
   boolean,
   index,
-  int,
-  json,
-  mysqlEnum,
-  mysqlTable,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
   text,
   timestamp,
   uniqueIndex,
   varchar,
-} from 'drizzle-orm/mysql-core'
+} from 'drizzle-orm/pg-core'
 
 const id = (name = 'id') => varchar(name, { length: 36 })
 
-export const users = mysqlTable('users', {
+const createdAt = () => timestamp('created_at', { precision: 3, withTimezone: true }).notNull().defaultNow()
+const updatedAt = () =>
+  timestamp('updated_at', { precision: 3, withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date())
+
+export const workspaceRoleEnum = pgEnum('workspace_role', WORKSPACE_ROLES)
+export const projectRoleEnum = pgEnum('project_role', PROJECT_ROLES)
+export const pluginIdEnum = pgEnum('plugin_id', PLUGIN_IDS)
+export const channelTypeEnum = pgEnum('channel_type', CHANNEL_TYPES)
+export const approvalStatusEnum = pgEnum('approval_status', [
+  'pending',
+  'decided',
+  'expired',
+  'failed_resume',
+  'cancelled',
+])
+export const decisionEnum = pgEnum('decision', DECISIONS)
+export const devicePlatformEnum = pgEnum('device_platform', ['ios', 'android'])
+export const housekeepingScheduleEnum = pgEnum('housekeeping_schedule', ['hourly', 'daily', 'weekly'])
+
+export const users = pgTable('users', {
   id: id().primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   emailVerified: boolean('email_verified').notNull().default(false),
   image: text('image'),
-  createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 })
 
-export const sessions = mysqlTable(
+export const sessions = pgTable(
   'sessions',
   {
     id: id().primaryKey(),
@@ -32,16 +54,16 @@ export const sessions = mysqlTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     token: varchar('token', { length: 255 }).notNull().unique(),
-    expiresAt: timestamp('expires_at', { fsp: 3 }).notNull(),
+    expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
     ipAddress: text('ip_address'),
     userAgent: text('user_agent'),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (table) => [index('sessions_user_id_idx').on(table.userId)],
 )
 
-export const accounts = mysqlTable(
+export const accounts = pgTable(
   'accounts',
   {
     id: id().primaryKey(),
@@ -53,26 +75,26 @@ export const accounts = mysqlTable(
     accessToken: text('access_token'),
     refreshToken: text('refresh_token'),
     idToken: text('id_token'),
-    accessTokenExpiresAt: timestamp('access_token_expires_at', { fsp: 3 }),
-    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { fsp: 3 }),
+    accessTokenExpiresAt: timestamp('access_token_expires_at', { precision: 3, withTimezone: true }),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { precision: 3, withTimezone: true }),
     scope: text('scope'),
     password: text('password'),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (table) => [index('accounts_user_id_idx').on(table.userId)],
 )
 
-export const verifications = mysqlTable('verifications', {
+export const verifications = pgTable('verifications', {
   id: id().primaryKey(),
   identifier: varchar('identifier', { length: 255 }).notNull(),
   value: text('value').notNull(),
-  expiresAt: timestamp('expires_at', { fsp: 3 }).notNull(),
-  createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+  expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 })
 
-export const workspaces = mysqlTable('workspaces', {
+export const workspaces = pgTable('workspaces', {
   id: id().primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
   slug: varchar('slug', { length: 255 }).notNull().unique(),
@@ -85,11 +107,11 @@ export const workspaces = mysqlTable('workspaces', {
   stripeSubscriptionId: varchar('stripe_subscription_id', { length: 255 }),
   /** OSS default is self-hosted (unlimited). Cloud maps Stripe plans onto this field. */
   plan: varchar('plan', { length: 64 }).notNull().default('self-hosted'),
-  createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 })
 
-export const memberships = mysqlTable(
+export const memberships = pgTable(
   'memberships',
   {
     id: id().primaryKey(),
@@ -99,13 +121,13 @@ export const memberships = mysqlTable(
     userId: id('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    role: mysqlEnum('role', WORKSPACE_ROLES).notNull().default('member'),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+    role: workspaceRoleEnum('role').notNull().default('member'),
+    createdAt: createdAt(),
   },
   (table) => [uniqueIndex('memberships_workspace_user_idx').on(table.workspaceId, table.userId)],
 )
 
-export const invites = mysqlTable(
+export const invites = pgTable(
   'invites',
   {
     id: id().primaryKey(),
@@ -113,19 +135,16 @@ export const invites = mysqlTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     email: varchar('email', { length: 255 }).notNull(),
-    role: mysqlEnum('role', WORKSPACE_ROLES).notNull().default('member'),
+    role: workspaceRoleEnum('role').notNull().default('member'),
     invitedByUserId: id('invited_by_user_id').references(() => users.id, { onDelete: 'set null' }),
-    acceptedAt: timestamp('accepted_at', { fsp: 3 }),
-    expiresAt: timestamp('expires_at', { fsp: 3 }).notNull(),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+    acceptedAt: timestamp('accepted_at', { precision: 3, withTimezone: true }),
+    expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
+    createdAt: createdAt(),
   },
-  (table) => [
-    index('invites_workspace_idx').on(table.workspaceId),
-    index('invites_email_idx').on(table.email),
-  ],
+  (table) => [index('invites_workspace_idx').on(table.workspaceId), index('invites_email_idx').on(table.email)],
 )
 
-export const projects = mysqlTable(
+export const projects = pgTable(
   'projects',
   {
     id: id().primaryKey(),
@@ -134,88 +153,115 @@ export const projects = mysqlTable(
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 255 }).notNull(),
     description: text('description'),
-    plugin: mysqlEnum('plugin', PLUGIN_IDS).notNull(),
-    credentials: json('credentials').$type<Record<string, unknown>>().notNull(),
+    plugin: pluginIdEnum('plugin').notNull(),
+    credentials: jsonb('credentials').$type<Record<string, unknown>>().notNull(),
     defaultAssigneeUserId: id('default_assignee_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
     defaultSlaMinutes: varchar('default_sla_minutes', { length: 16 }).notNull().default('60'),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (table) => [index('projects_workspace_idx').on(table.workspaceId)],
 )
 
-export const projectMemberships = mysqlTable(
+export const projectMemberships = pgTable(
   'project_memberships',
   {
     id: id().primaryKey(),
+    workspaceId: id('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
     projectId: id('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
     userId: id('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    role: mysqlEnum('role', PROJECT_ROLES).notNull().default('user'),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+    role: projectRoleEnum('role').notNull().default('user'),
+    createdAt: createdAt(),
   },
-  (table) => [uniqueIndex('project_memberships_project_user_idx').on(table.projectId, table.userId)],
+  (table) => [
+    uniqueIndex('project_memberships_project_user_idx').on(table.projectId, table.userId),
+    index('project_memberships_workspace_idx').on(table.workspaceId),
+  ],
 )
 
-export const projectApiKeys = mysqlTable(
+export const projectApiKeys = pgTable(
   'project_api_keys',
   {
     id: id().primaryKey(),
+    workspaceId: id('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
     projectId: id('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 255 }).notNull(),
     hashedKey: varchar('hashed_key', { length: 255 }).notNull().unique(),
     prefix: varchar('prefix', { length: 32 }).notNull(),
-    lastUsedAt: timestamp('last_used_at', { fsp: 3 }),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { precision: 3, withTimezone: true }),
+    createdAt: createdAt(),
   },
-  (table) => [index('project_api_keys_project_idx').on(table.projectId)],
+  (table) => [
+    index('project_api_keys_project_idx').on(table.projectId),
+    index('project_api_keys_workspace_idx').on(table.workspaceId),
+  ],
 )
 
-export const projectRules = mysqlTable(
+export const projectRules = pgTable(
   'project_rules',
   {
     id: id().primaryKey(),
+    workspaceId: id('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
     projectId: id('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 255 }).notNull(),
-    priority: int('priority').notNull().default(100),
-    match: json('match').$type<Record<string, unknown>>().notNull(),
-    actions: json('actions').$type<Record<string, unknown>>().notNull(),
+    priority: integer('priority').notNull().default(100),
+    match: jsonb('match').$type<Record<string, unknown>>().notNull(),
+    actions: jsonb('actions').$type<Record<string, unknown>>().notNull(),
     enabled: boolean('enabled').notNull().default(true),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
-  (table) => [index('project_rules_project_idx').on(table.projectId)],
+  (table) => [
+    index('project_rules_project_idx').on(table.projectId),
+    index('project_rules_workspace_idx').on(table.workspaceId),
+  ],
 )
 
-export const projectChannels = mysqlTable(
+export const projectChannels = pgTable(
   'project_channels',
   {
     id: id().primaryKey(),
+    workspaceId: id('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
     projectId: id('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
-    type: mysqlEnum('type', CHANNEL_TYPES).notNull(),
-    config: json('config').$type<Record<string, unknown>>().notNull(),
+    type: channelTypeEnum('type').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull(),
     enabled: boolean('enabled').notNull().default(true),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
-  (table) => [index('project_channels_project_idx').on(table.projectId)],
+  (table) => [
+    index('project_channels_project_idx').on(table.projectId),
+    index('project_channels_workspace_idx').on(table.workspaceId),
+  ],
 )
 
-export const projectEvents = mysqlTable(
+export const projectEvents = pgTable(
   'project_events',
   {
     id: id().primaryKey(),
+    workspaceId: id('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
     projectId: id('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
@@ -223,17 +269,18 @@ export const projectEvents = mysqlTable(
     level: varchar('level', { length: 16 }).notNull().default('info'),
     type: varchar('type', { length: 64 }).notNull(),
     message: text('message').notNull(),
-    payload: json('payload').$type<Record<string, unknown>>().notNull(),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    createdAt: createdAt(),
   },
   (table) => [
     index('project_events_project_idx').on(table.projectId),
     index('project_events_approval_idx').on(table.approvalId),
     index('project_events_created_at_idx').on(table.createdAt),
+    index('project_events_workspace_idx').on(table.workspaceId),
   ],
 )
 
-export const approvals = mysqlTable(
+export const approvals = pgTable(
   'approvals',
   {
     id: id().primaryKey(),
@@ -244,17 +291,15 @@ export const approvals = mysqlTable(
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
     assignedUserId: id('assigned_user_id').references(() => users.id, { onDelete: 'set null' }),
-    plugin: mysqlEnum('plugin', PLUGIN_IDS).notNull(),
-    status: mysqlEnum('status', ['pending', 'decided', 'expired', 'failed_resume', 'cancelled'])
-      .notNull()
-      .default('pending'),
+    plugin: pluginIdEnum('plugin').notNull(),
+    status: approvalStatusEnum('status').notNull().default('pending'),
     actionName: varchar('action_name', { length: 255 }).notNull(),
-    envelope: json('envelope').$type<Record<string, unknown>>().notNull(),
-    origin: json('origin').$type<Record<string, unknown>>().notNull(),
+    envelope: jsonb('envelope').$type<Record<string, unknown>>().notNull(),
+    origin: jsonb('origin').$type<Record<string, unknown>>().notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 255 }),
-    expiresAt: timestamp('expires_at', { fsp: 3 }),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+    expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (table) => [
     index('approvals_workspace_status_idx').on(table.workspaceId, table.status),
@@ -265,7 +310,7 @@ export const approvals = mysqlTable(
   ],
 )
 
-export const userDevices = mysqlTable(
+export const userDevices = pgTable(
   'user_devices',
   {
     id: id().primaryKey(),
@@ -273,35 +318,53 @@ export const userDevices = mysqlTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     expoPushToken: varchar('expo_push_token', { length: 255 }).notNull().unique(),
-    platform: mysqlEnum('platform', ['ios', 'android']).notNull(),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow().onUpdateNow(),
+    platform: devicePlatformEnum('platform').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (table) => [index('user_devices_user_id_idx').on(table.userId)],
 )
 
-export const housekeepingJobs = mysqlTable('housekeeping_jobs', {
+export const housekeepingJobs = pgTable('housekeeping_jobs', {
   id: varchar('id', { length: 64 }).primaryKey(),
-  schedule: mysqlEnum('schedule', ['hourly', 'daily', 'weekly']).notNull(),
-  lastStartedAt: timestamp('last_started_at', { fsp: 3 }),
-  lastFinishedAt: timestamp('last_finished_at', { fsp: 3 }),
+  schedule: housekeepingScheduleEnum('schedule').notNull(),
+  lastStartedAt: timestamp('last_started_at', { precision: 3, withTimezone: true }),
+  lastFinishedAt: timestamp('last_finished_at', { precision: 3, withTimezone: true }),
   lastError: text('last_error'),
-  lastResult: json('last_result').$type<Record<string, unknown>>(),
+  lastResult: jsonb('last_result').$type<Record<string, unknown>>(),
 })
 
-export const decisionRecords = mysqlTable(
+export const decisionRecords = pgTable(
   'decision_records',
   {
     id: id().primaryKey(),
+    workspaceId: id('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
     approvalId: id('approval_id')
       .notNull()
       .references(() => approvals.id, { onDelete: 'cascade' }),
     actorUserId: id('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
-    decision: mysqlEnum('decision', DECISIONS).notNull(),
-    payload: json('payload').$type<Record<string, unknown>>().notNull(),
+    decision: decisionEnum('decision').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
     resumeError: text('resume_error'),
-    resumeResponse: json('resume_response').$type<Record<string, unknown>>(),
-    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+    resumeResponse: jsonb('resume_response').$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
   },
-  (table) => [index('decision_records_approval_idx').on(table.approvalId)],
+  (table) => [
+    index('decision_records_approval_idx').on(table.approvalId),
+    index('decision_records_workspace_idx').on(table.workspaceId),
+  ],
 )
+
+/** Tables Cloud RLS pins to `app.workspace_id`. Control-plane identity tables are not listed. */
+export const TENANT_TABLES = [
+  'projects',
+  'project_memberships',
+  'project_api_keys',
+  'project_rules',
+  'project_channels',
+  'project_events',
+  'approvals',
+  'decision_records',
+] as const

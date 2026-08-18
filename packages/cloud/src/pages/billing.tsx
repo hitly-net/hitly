@@ -3,6 +3,7 @@ export type BillingSettingsProps = {
   plan: string
   usedApprovals: number
   stripeCustomerId?: string | null
+  stripeSubscriptionId?: string | null
 }
 
 export function BillingSettings(_props: BillingSettingsProps) {

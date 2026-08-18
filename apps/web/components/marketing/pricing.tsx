@@ -3,19 +3,24 @@ import { APP_URL } from '@/lib/layout.shared'
 
 const plans = [
   {
-    name: 'Free',
-    price: '$0',
-    body: 'Personal inbox, Mastra plugin, 100 approvals / month.',
+    name: 'Solo',
+    price: 'Free',
+    body: 'Personal hosted inbox, 100 approvals / month, 30 day audit retention.',
+  },
+  {
+    name: 'Pro',
+    price: '$29 / month',
+    body: 'Higher volume, 5k approvals / month, a year of audit retention.',
   },
   {
     name: 'Team',
-    price: '$29',
-    body: 'Shared workspace, audit log, Slack-ready notifications later, 5k approvals / month.',
+    price: '$99 / month',
+    body: 'Shared workspace, 5k approvals / month, a year of audit retention.',
   },
   {
-    name: 'Usage',
-    price: 'Custom',
-    body: 'Volume pricing, SSO, dedicated connections. Talk to us.',
+    name: 'Enterprise',
+    price: 'Contact',
+    body: 'Unlimited usage, longer retention, and domain SSO later. Talk to us.',
   },
 ]
 
@@ -23,7 +28,7 @@ export function PricingTable() {
   return (
     <section className="mx-auto max-w-6xl px-6 py-20">
       <h2 className="text-2xl font-semibold">Pricing</h2>
-      <div className="mt-10 grid gap-4 md:grid-cols-3">
+      <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {plans.map((plan) => (
           <div key={plan.name} className="rounded-xl border border-zinc-200 p-6 dark:border-zinc-800">
             <p className="text-sm text-zinc-500">{plan.name}</p>
@@ -38,7 +43,7 @@ export function PricingTable() {
         rel="noopener noreferrer"
         className="mt-8 inline-block text-sm font-medium underline"
       >
-        Start on Free →
+        Start on Solo →
       </Link>
       <p className="mt-4 text-sm text-zinc-500">
         Self-host the Apache-2.0 server with no usage caps. Cloud plans above are for hitly.net.

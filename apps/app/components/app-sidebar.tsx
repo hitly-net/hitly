@@ -6,6 +6,7 @@ import {
   BookOpen,
   Building2,
   ClipboardList,
+  CreditCard,
   FolderKanban,
   Home,
   Inbox,
@@ -15,6 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { EditionNavItem } from '@hitly/core'
+import { CloudMark } from '@hitly/cloud/brand'
 import { HitlyWordmark } from '@hitly/ui'
 import { WEB_URL } from '@/lib/constants'
 
@@ -30,6 +32,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
 const FOOTER: { href: string; label: string; icon: LucideIcon; external?: boolean }[] = [
   { href: '/settings/workspace', label: 'Workspace', icon: Building2 },
   { href: '/settings/team', label: 'Team', icon: Users },
+  { href: '/settings/billing', label: 'Billing', icon: CreditCard },
   { href: `${WEB_URL}/docs`, label: 'Docs', icon: BookOpen, external: true },
 ]
 
@@ -85,7 +88,14 @@ export function AppSidebar({ nav }: { nav: EditionNavItem[] }) {
     >
       <div className={collapsed ? 'flex flex-col items-center gap-3' : 'flex items-center justify-between gap-2'}>
         <Link href="/" className="text-lg font-semibold tracking-tight" title="Hitly">
-          {collapsed ? 'H' : <HitlyWordmark className="text-lg" />}
+          {collapsed ? (
+            'H'
+          ) : (
+            <span className="inline-flex items-center gap-1.5">
+              <HitlyWordmark className="text-lg" />
+              <CloudMark className="h-4 w-4" />
+            </span>
+          )}
         </Link>
         <button
           type="button"

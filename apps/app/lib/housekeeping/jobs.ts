@@ -2,7 +2,7 @@ import { and, eq, inArray, isNotNull, lt } from 'drizzle-orm'
 import { edition } from '@hitly/cloud'
 import { CLOSED_APPROVAL_STATUSES } from '@hitly/core'
 import { approvals, projectEvents, projects, workspaces } from '@hitly/db/schema'
-import { requireDb } from '../require-db'
+import { requireDb, withTenant } from '../tenant'
 import { affectedRows } from './result'
 import { registerHousekeepingJob } from './scheduler'
 
@@ -11,11 +11,25 @@ const DELETE_CHUNK = 200
 export async function expireOverdueApprovals() {
   const database = requireDb()
   const now = new Date()
-  const result = await database
-    .update(approvals)
-    .set({ status: 'expired' })
-    .where(and(eq(approvals.status, 'pending'), isNotNull(approvals.expiresAt), lt(approvals.expiresAt, now)))
-  return { expired: affectedRows(result) }
+  const spaces = await database.select({ id: workspaces.id }).from(workspaces)
+  let expired = 0
+  for (const space of spaces) {
+    const result = await withTenant(space.id, async () =>
+      requireDb()
+        .update(approvals)
+        .set({ status: 'expired', updatedAt: now })
+        .where(
+          and(
+            eq(approvals.workspaceId, space.id),
+            eq(approvals.status, 'pending'),
+            isNotNull(approvals.expiresAt),
+            lt(approvals.expiresAt, now),
+          ),
+        ),
+    )
+    expired += affectedRows(result)
+  }
+  return { expired }
 }
 
 export async function purgeCompletedApprovals() {
@@ -29,24 +43,29 @@ export async function purgeCompletedApprovals() {
     if (days == null) continue
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
     let removed = 0
-    for (;;) {
-      const stale = await database
-        .select({ id: approvals.id })
-        .from(approvals)
-        .where(
-          and(
-            eq(approvals.workspaceId, space.id),
-            inArray(approvals.status, [...CLOSED_APPROVAL_STATUSES]),
-            lt(approvals.updatedAt, cutoff),
-          ),
-        )
-        .limit(DELETE_CHUNK)
-      if (stale.length === 0) break
-      const ids = stale.map((row) => row.id)
-      await database.delete(projectEvents).where(inArray(projectEvents.approvalId, ids))
-      await database.delete(approvals).where(inArray(approvals.id, ids))
-      removed += ids.length
-    }
+    await withTenant(space.id, async () => {
+      const tenantDb = requireDb()
+      for (;;) {
+        const stale = await tenantDb
+          .select({ id: approvals.id })
+          .from(approvals)
+          .where(
+            and(
+              eq(approvals.workspaceId, space.id),
+              inArray(approvals.status, [...CLOSED_APPROVAL_STATUSES]),
+              lt(approvals.updatedAt, cutoff),
+            ),
+          )
+          .limit(DELETE_CHUNK)
+        if (stale.length === 0) break
+        const ids = stale.map((row) => row.id)
+        await tenantDb
+          .delete(projectEvents)
+          .where(and(eq(projectEvents.workspaceId, space.id), inArray(projectEvents.approvalId, ids)))
+        await tenantDb.delete(approvals).where(and(eq(approvals.workspaceId, space.id), inArray(approvals.id, ids)))
+        removed += ids.length
+      }
+    })
     deleted += removed
     if (removed > 0) byPlan[space.plan] = (byPlan[space.plan] ?? 0) + removed
   }
@@ -62,15 +81,16 @@ export async function purgeExpiredAuditEvents() {
   for (const space of spaces) {
     const days = edition.entitlementsFor(space).auditRetentionDays
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-    const projectIds = await database
-      .select({ id: projects.id })
-      .from(projects)
-      .where(eq(projects.workspaceId, space.id))
-    if (projectIds.length === 0) continue
-    const result = await database
-      .delete(projectEvents)
-      .where(
+    deleted += await withTenant(space.id, async () => {
+      const tenantDb = requireDb()
+      const projectIds = await tenantDb
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.workspaceId, space.id))
+      if (projectIds.length === 0) return 0
+      const result = await tenantDb.delete(projectEvents).where(
         and(
+          eq(projectEvents.workspaceId, space.id),
           inArray(
             projectEvents.projectId,
             projectIds.map((row) => row.id),
@@ -78,7 +98,8 @@ export async function purgeExpiredAuditEvents() {
           lt(projectEvents.createdAt, cutoff),
         ),
       )
-    deleted += affectedRows(result)
+      return affectedRows(result)
+    })
   }
 
   return { deleted }
