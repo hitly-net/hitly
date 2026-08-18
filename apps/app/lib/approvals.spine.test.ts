@@ -22,8 +22,6 @@ import {
 import { ingestApproval, decideApproval, parseDecisionBody, authenticateProjectKey } from './approvals'
 import { generateApiKey } from './keys'
 import { newId } from './ids'
-import { hashApiKey } from './keys'
-import { encodeTenantJson } from './tenant-crypto'
 import { getProjectAccess, canDecide } from './rbac'
 import type { ApprovalEnvelope, OriginRef } from '@hitly/core'
 
@@ -489,7 +487,9 @@ test('evidence: canonical hash, sequential prev_*, idempotent event_id', async (
   for (let i = 1; i < receiptsAfter.length; i++) {
     const current = receiptsAfter[i]
     const prev = receiptsAfter[i - 1]
-    assert.equal(current?.seq, prev?.seq! + 1, 'Seq should be sequential')
+    if (current && prev) {
+      assert.equal(current.seq, prev.seq + 1, 'Seq should be sequential')
+    }
   }
 })
 
