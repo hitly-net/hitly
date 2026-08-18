@@ -35,9 +35,23 @@ export function SiteFooter() {
   return (
     <footer className="mt-auto border-t border-zinc-200 py-10 dark:border-zinc-800">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 text-sm text-zinc-500">
-        <p>
-          <HitlyWordmark trademark /> — approval inbox for agent work.
-        </p>
+        <div className="flex flex-col gap-1">
+          <p>
+            <HitlyWordmark trademark /> — approval inbox for agent work.
+          </p>
+          <p className="text-xs text-zinc-500">
+            <HitlyWordmark /> is a product of Metaspan Ltd (company no.{' '}
+            <a
+              href="https://find-and-update.company-information.service.gov.uk/company/13641200"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-zinc-900 dark:hover:text-zinc-50"
+            >
+              13641200
+            </a>
+            ).
+          </p>
+        </div>
         <div className="flex gap-4">
           <Link href="/docs">Docs</Link>
           <Link href="/privacy">Privacy</Link>
