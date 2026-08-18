@@ -2,7 +2,7 @@ import { inArray, asc } from 'drizzle-orm'
 import { projects } from '@hitly/db/schema'
 import { AppShell } from '@/components/app-shell'
 import { ProjectList } from '@/components/project-list'
-import { getAppContext, withAppTenant } from '@/lib/context'
+import { withAppTenant } from '@/lib/context'
 import { canManageWorkspace, listVisibleProjectIds } from '@/lib/rbac'
 import { requireDb } from '@/lib/tenant'
 
