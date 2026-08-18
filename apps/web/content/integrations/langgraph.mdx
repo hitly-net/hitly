@@ -1,24 +1,24 @@
 ---
 title: LangGraph
-description: interrupt(HumanInterrupt) maps onto the Hitly envelope.
+description: interrupt(HumanInterrupt) maps onto the HITLy envelope.
 ---
 
 Status: **coming soon**.
 
-[LangGraph](https://langchain-ai.github.io/langgraph/) pauses with `interrupt()`. Agent Inbox's `HumanInterrupt` is the closest cousin to Hitly's envelope (`accept` / `edit` / `ignore` / `response`).
+[LangGraph](https://langchain-ai.github.io/langgraph/) pauses with `interrupt()`. Agent Inbox's `HumanInterrupt` is the closest cousin to HITL<sub><i>y</i></sub>'s envelope (`accept` / `edit` / `ignore` / `response`).
 
-## How it works with Hitly
+## How it works with HITL<sub><i>y</i></sub>
 
-1. Graph node calls `interrupt(HumanInterrupt)` and notifies Hitly (webhook or callback).
-2. Hitly stores the envelope (`action_request`, `config`, `description`).
+1. Graph node calls `interrupt(HumanInterrupt)` and notifies HITL<sub><i>y</i></sub> (webhook or callback).
+2. HITL<sub><i>y</i></sub> stores the envelope (`action_request`, `config`, `description`).
 3. Reviewer decides.
-4. Hitly resumes the thread with `HumanResponse`.
+4. HITL<sub><i>y</i></sub> resumes the thread with `HumanResponse`.
 
 A checkpointer is required so the graph can pause.
 
 ## Decision mapping
 
-| Hitly | HumanResponse |
+| HITLy | HumanResponse |
 | --- | --- |
 | `accept` | `{ type: 'accept' }` |
 | `edit` | `{ type: 'edit', args: ActionRequest }` |

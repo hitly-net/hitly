@@ -1,15 +1,24 @@
 import Link from 'next/link'
+import { HitlyWordmark } from '@hitly/ui'
 
 const features = [
   {
     title: 'Unified review and approval',
     href: '/docs/inbox',
-    body: 'Agents and workflows pause in their own runtime. Reviewers decide in Hitly — same inbox, same decisions, web or mobile. You never approve inside Mastra Studio, Hermes CLI, n8n, or LangGraph.',
+    body: (
+      <>
+        Agents and workflows pause in their own runtime. Reviewers decide in <HitlyWordmark /> — same inbox, same decisions, web or mobile. You never approve inside Mastra Studio, Hermes CLI, n8n, or LangGraph.
+      </>
+    ),
   },
   {
     title: 'Every agent and workflow platform',
     href: '/integrations',
-    body: 'Mastra, Hermes, and HTTP callbacks are available today. n8n Wait is an HTTP recipe. LangGraph and Temporal mappings are documented. Pause primitives stay native; Hitly owns the envelope and the resume.',
+    body: (
+      <>
+        Mastra, Hermes, and HTTP callbacks are available today. n8n Wait is an HTTP recipe. LangGraph and Temporal mappings are documented. Pause primitives stay native; <HitlyWordmark /> owns the envelope and the resume.
+      </>
+    ),
   },
   {
     title: 'Governance and org chart',
@@ -23,7 +32,7 @@ export function FeatureBlocks() {
     <section className="mx-auto max-w-6xl px-6 py-20">
       <h2 className="text-2xl font-semibold">One surface for human decisions</h2>
       <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-400">
-        Hitly is the review layer. Origins keep their pause primitives. Your org keeps the audit trail.
+        <HitlyWordmark /> is the review layer. Origins keep their pause primitives. Your org keeps the audit trail.
       </p>
       <div className="mt-10 grid gap-4 md:grid-cols-3">
         {features.map((feature) => (

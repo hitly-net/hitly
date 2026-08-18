@@ -1,15 +1,29 @@
+import { HitlyWordmark } from '@hitly/ui'
+
 const steps = [
   {
     title: 'Pause',
-    body: 'Your workflow hits a Hitly step. Mastra suspends, Hermes prompts or blocks a kanban card, HTTP waits on a resume URL, LangGraph interrupts, Temporal signals.',
+    body: (
+      <>
+        Your workflow hits a <HitlyWordmark /> step. Mastra suspends, Hermes prompts or blocks a kanban card, HTTP waits on a resume URL, LangGraph interrupts, Temporal signals.
+      </>
+    ),
   },
   {
     title: 'Review',
-    body: 'The action lands in the Hitly inbox with context, editable args, and the decisions you allow.',
+    body: (
+      <>
+        The action lands in the <HitlyWordmark /> inbox with context, editable args, and the decisions you allow.
+      </>
+    ),
   },
   {
     title: 'Resume',
-    body: 'Accept, edit, or reject. Hitly maps the decision back to resume(), a webhook, Command, or a Temporal signal.',
+    body: (
+      <>
+        Accept, edit, or reject. <HitlyWordmark /> maps the decision back to resume(), a webhook, Command, or a Temporal signal.
+      </>
+    ),
   },
 ]
 

@@ -5,14 +5,14 @@ description: Wait on condition(), resume with signal hitly.decision.
 
 Status: **coming soon**.
 
-[Temporal](https://docs.temporal.io/design-patterns/approval) pauses with `condition()` until a Signal (or times out). Hitly does not hold a worker; it signals the workflow.
+[Temporal](https://docs.temporal.io/design-patterns/approval) pauses with `condition()` until a Signal (or times out). HITL<sub><i>y</i></sub> does not hold a worker; it signals the workflow.
 
-## How it works with Hitly
+## How it works with HITL<sub><i>y</i></sub>
 
-1. An activity POSTs an approval to Hitly.
+1. An activity POSTs an approval to HITL<sub><i>y</i></sub>.
 2. The workflow `await condition(() => decision !== undefined, timeout)`.
 3. Reviewer decides.
-4. Hitly sends signal `hitly.decision` with `{ decision, args }`.
+4. HITL<sub><i>y</i></sub> sends signal `hitly.decision` with `{ decision, args }`.
 
 ## Configuration
 

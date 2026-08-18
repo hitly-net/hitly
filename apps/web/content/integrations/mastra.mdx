@@ -1,16 +1,16 @@
 ---
 title: Mastra
-description: Suspend a Mastra agent tool or workflow step, review it in Hitly, resume or bail.
+description: Suspend a Mastra agent tool or workflow step, review it in HITLy, resume or bail.
 ---
 
-[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses with `suspend()` and continues with `resume()` / `bail()`. Hitly owns the reviewer UI. Chat with the demo agent in [Mastra Studio](https://mastra.ai/docs/studio/overview) (`mastra dev`, http://localhost:4111).
+[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses with `suspend()` and continues with `resume()` / `bail()`. HITL<sub><i>y</i></sub> owns the reviewer UI. Chat with the demo agent in [Mastra Studio](https://mastra.ai/docs/studio/overview) (`mastra dev`, http://localhost:4111).
 
-## How it works with Hitly
+## How it works with HITL<sub><i>y</i></sub>
 
-1. An agent tool or workflow step calls `suspend()` and POSTs the payload to Hitly.
-2. Hitly stores an [envelope](/docs/envelope) and shows it in the [inbox](/docs/inbox).
+1. An agent tool or workflow step calls `suspend()` and POSTs the payload to HITL<sub><i>y</i></sub>.
+2. HITL<sub><i>y</i></sub> stores an [envelope](/docs/envelope) and shows it in the [inbox](/docs/inbox).
 3. A reviewer accepts, edits, or rejects.
-4. Hitly resumes the origin:
+4. HITL<sub><i>y</i></sub> resumes the origin:
    - **Workflow** — `POST /api/workflows/:workflowId/resume`
    - **Agent** — `POST /api/agents/:agentId/resume-stream`
 5. Reject maps to `resumeData.approved: false`. Workflows should `bail()`; agent tools should return a rejection result to the model.
@@ -20,7 +20,7 @@ See the runnable project in `examples/mastra` (agent + workflow).
 <PhoneShot
   src="/images/iPhone-send-refund.png"
   alt="send-refund Mastra work item with refund context, order data, and Accept decision"
-  caption="Refund workflow paused in Hitly"
+  caption="Refund workflow paused in HITLy"
 />
 
 ## Setup
@@ -59,8 +59,8 @@ MASTRA_BASE_URL=http://localhost:4111
 
 1. Scaffold a Mastra project (`yarn create mastra`) or open `examples/mastra`.
 2. In the tool or step `execute`, call `notifyHitlyApproval()`, then `suspend()`.
-3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the Hitly `hitly` proof survives.
-4. Run `mastra dev` (default `http://localhost:4111`) and Hitly app (`http://localhost:3001`).
+3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the HITLy `hitly` proof survives.
+4. Run `mastra dev` (default `http://localhost:4111`) and HITL<sub><i>y</i></sub> app (`http://localhost:3001`).
 5. Chat with the agent or start the workflow in Studio. Open `cloud.hitly.net/inbox`, accept, watch the run resume.
 
 ### Workflow step
@@ -105,7 +105,7 @@ const approval = createStep({
 
 ### Agent tool
 
-Do not set `requireApproval: true` if Hitly should see the request. That flag pauses *before* `execute`, so `notifyHitlyApproval` never runs. Suspend inside the tool instead:
+Do not set `requireApproval: true` if HITL<sub><i>y</i></sub> should see the request. That flag pauses *before* `execute`, so `notifyHitlyApproval` never runs. Suspend inside the tool instead:
 
 ```ts
 import { createTool } from '@mastra/core/tools'
@@ -114,7 +114,7 @@ import { notifyHitlyApproval, verifyHitlyResume } from '@hitly/plugin-mastra'
 
 export const sendRefundTool = createTool({
   id: 'send-refund',
-  description: 'Issue a customer refund after Hitly approval.',
+  description: 'Issue a customer refund after HITLy approval.',
   inputSchema: z.object({ orderId: z.string(), amount: z.number() }),
   resumeSchema: z.object({ approved: z.boolean() }).passthrough(),
   suspendSchema: z.object({ reason: z.string() }),
@@ -140,7 +140,7 @@ export const sendRefundTool = createTool({
         { runId: String(runId), suspendPayload: { reason: `Refund ${inputData.amount}` } },
       )
       await context.agent?.suspend?.({ reason: 'Human approval required.' })
-      return { sent: false, message: 'Waiting for Hitly approval.' }
+      return { sent: false, message: 'Waiting for HITLy approval.' }
     }
     return { sent: true, message: 'Refund issued.' }
   },
@@ -149,29 +149,29 @@ export const sendRefundTool = createTool({
 
 ## Running locally
 
-1. `yarn workspace @hitly/app dev` — Hitly on port 3001.
+1. `yarn workspace @hitly/app dev` — HITL<sub><i>y</i></sub> on port 3001.
 2. `yarn workspace @hitly/example-mastra dev` (or `yarn dev:mastra`) — Studio on 4111.
 3. Chat with **Refund Agent** or run **refund-workflow**. Approve in the inbox.
 
 ## Production
 
-Hitly must reach `mastraBaseUrl` to call `resume()`. Do not point a hosted Hitly workspace at `localhost`. Restrict Mastra CORS and use a token with workflow/agent resume access.
+HITL<sub><i>y</i></sub> must reach `mastraBaseUrl` to call `resume()`. Do not point a hosted HITL<sub><i>y</i></sub> workspace at `localhost`. Restrict Mastra CORS and use a token with workflow/agent resume access.
 
 ## Configuration options
 
 | Option | Use it to |
 | --- | --- |
-| `apiUrl` | Hitly app origin, such as `https://cloud.hitly.net` |
+| `apiUrl` | HITL<sub><i>y</i></sub> app origin, such as `https://cloud.hitly.net` |
 | `apiKey` | Workspace ingest key |
 | `projectId` | Project that owns the API key |
-| `mastraBaseUrl` | Origin Mastra server Hitly will call on resume |
+| `mastraBaseUrl` | Origin Mastra server HITL<sub><i>y</i></sub> will call on resume |
 | `kind` | `workflow` (default) or `agent` |
 | `workflowId` / `stepId` | Workflow resume target |
 | `agentId` / `toolCallId` | Agent resume target |
 
 ## Decision mapping
 
-| Hitly | Mastra |
+| HITLy | Mastra |
 | --- | --- |
 | `accept` | `resume({ resumeData: { approved: true } })` |
 | `edit` | `resume({ resumeData: { approved: true, ...editedArgs } })` |

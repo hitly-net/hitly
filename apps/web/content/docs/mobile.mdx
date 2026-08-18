@@ -3,15 +3,15 @@ title: Mobile
 description: Reviewer app for iOS and Android — Cloud or hosted login, push, and deep links into a work item.
 ---
 
-The Hitly mobile app is an Expo (React Native) client in `apps/mobile`. It signs into **Hitly Cloud** (`https://cloud.hitly.net`) or a **self-hosted** instance URL, receives device notifications, and opens the approval that needs a decision.
+The HITL<sub><i>y</i></sub> mobile app is an Expo (React Native) client in `apps/mobile`. It signs into **HITL<sub><i>y</i></sub> Cloud** (`https://cloud.hitly.net`) or a **self-hosted** instance URL, receives device notifications, and opens the approval that needs a decision.
 
 Web stays the admin surface for team, rules, people, logs, and API keys. Mobile also has workspace settings, a project list, project inbox, and project config (no key minting).
 
 <PhoneGallery
   shots={[
-    { src: '/images/iPhone-home.png', alt: 'Hitly mobile Home tab with inbox summary counts', caption: 'Home' },
-    { src: '/images/iPhone-inbox.png', alt: 'Hitly mobile Inbox listing send-refund work items', caption: 'Inbox' },
-    { src: '/images/iPhone-projects.png', alt: 'Hitly mobile Projects list for Mastra, HTTP, and LangGraph', caption: 'Projects' },
+    { src: '/images/iPhone-home.png', alt: 'HITLy mobile Home tab with inbox summary counts', caption: 'Home' },
+    { src: '/images/iPhone-inbox.png', alt: 'HITLy mobile Inbox listing send-refund work items', caption: 'Inbox' },
+    { src: '/images/iPhone-projects.png', alt: 'HITLy mobile Projects list for Mastra, HTTP, and LangGraph', caption: 'Projects' },
     { src: '/images/iPhone-send-refund.png', alt: 'send-refund work item with origin, context, data, and decision', caption: 'Work item' },
   ]}
 />
@@ -38,7 +38,7 @@ Assignees with a registered Expo token are pushed on ingest, in addition to emai
 
 ```json
 {
-  "title": "Hitly: send-refund needs a decision",
+  "title": "HITLy: send-refund needs a decision",
   "body": "Acme refunds · expires in 15m",
   "data": { "type": "approval", "approvalId": "apr_…", "instanceUrl": "https://cloud.hitly.net" }
 }

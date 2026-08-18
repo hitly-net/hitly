@@ -1,35 +1,35 @@
 ---
 title: Hermes
-description: Route Hermes command approvals and kanban block/review pauses into the Hitly inbox.
+description: Route Hermes command approvals and kanban block/review pauses into the HITLy inbox.
 ---
 
-[Hermes Agent](https://hermes-agent.nousresearch.com) is a Python agent. Hitly does not run inside Hermes — a drop-in plugin POSTs pauses to Hitly, and applies the decision on the Hermes host.
+[Hermes Agent](https://hermes-agent.nousresearch.com) is a Python agent. HITL<sub><i>y</i></sub> does not run inside Hermes — a drop-in plugin POSTs pauses to HITL<sub><i>y</i></sub>, and applies the decision on the Hermes host.
 
 Hermes “personas” are **named profiles** (`~/.hermes/profiles/<name>/`, each with its own `SOUL.md`). Cron is only one unattended runner.
 
-## How it works with Hitly
+## How it works with HITL<sub><i>y</i></sub>
 
 ### Command approval (CLI, gateway, `/background`)
 
 Dangerous terminal / `execute_code` calls pause in Hermes `tools/approval.py`. Selecting `security.approval.transport: hitly` replaces the built-in prompt (including Telegram `/approve`).
 
-1. The plugin `present()` POSTs the command to Hitly and **polls** until you decide.
+1. The plugin `present()` POSTs the command to HITL<sub><i>y</i></sub> and **polls** until you decide.
 2. Accept maps to Hermes `once`; reject / timeout maps to `deny`.
-3. Hermes still enforces `approvals.timeout` (default **300 seconds**). Hitly SLA can be longer; the command still denies when Hermes times out.
+3. Hermes still enforces `approvals.timeout` (default **300 seconds**). HITL<sub><i>y</i></sub> SLA can be longer; the command still denies when Hermes times out.
 
 ### Kanban workers (autonomous profiles)
 
 The gateway dispatcher spawns `hermes -p <profile>` for board tasks. Those workers **exit** when they need a human — they call `kanban_block` or `kanban_request_review`. That is the HITL path for unattended personas.
 
-1. The plugin POSTs a Hitly card (`kind: kanban`).
+1. The plugin POSTs a HITL<sub><i>y</i></sub> card (`kind: kanban`).
 2. Accept → `hermes kanban comment` + `unblock` on the Hermes host (gateway poller).
 3. Reject → comment, leave the card blocked.
 
-Hitly never POSTs into `hermes dashboard` (localhost-only by default).
+HITL<sub><i>y</i></sub> never POSTs into `hermes dashboard` (localhost-only by default).
 
-### What Hitly cannot wait on
+### What HITL<sub><i>y</i></sub> cannot wait on
 
-| Path | Hermes gate | Hitly |
+| Path | Hermes gate | HITLy |
 | --- | --- | --- |
 | Cron jobs | `approvals.cron_mode`: `deny` or `approve` | No wait. Documented only. |
 | Kanban **shell** commands | `approvals.kanban_mode`: `deny` or `approve` | Same. Workers should `kanban_block` instead. |
@@ -37,7 +37,7 @@ Hitly never POSTs into `hermes dashboard` (localhost-only by default).
 
 ## Setup
 
-1. Create a Hitly project with plugin **Hermes** and copy the project API key.
+1. Create a HITL<sub><i>y</i></sub> project with plugin **Hermes** and copy the project API key.
 2. Copy the plugin into Hermes:
 
 ```bash
@@ -68,7 +68,7 @@ Kanban ingest works even if `transport` is unset. Command routing needs both the
 
 ## Decision mapping
 
-| Hitly | Command transport | Kanban |
+| HITLy | Command transport | Kanban |
 | --- | --- | --- |
 | `accept` | Hermes `once` | comment + unblock |
 | `respond` | — | comment (body) + unblock |

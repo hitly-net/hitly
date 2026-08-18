@@ -50,7 +50,7 @@ export const integrationsSource = loader({
 /** One sidebar: Docs and Integrations as nested folders, used by both layouts. */
 export function getNavTree(): PageTree.Root {
   return {
-    name: 'Hitly',
+    name: 'HITLy',
     children: [...source.getPageTree().children, ...integrationsSource.getPageTree().children],
   }
 }
