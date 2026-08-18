@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useLayoutEffect, useState } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import {
   BookOpen,
   Building2,
@@ -41,18 +41,39 @@ function readCollapsedCookie() {
   return document.cookie.split('; ').includes(`${COOKIE}=1`)
 }
 
+const collapsedStore = {
+  listeners: new Set<() => void>(),
+
+  getSnapshot() {
+    if (typeof document === 'undefined') return false
+    return readCollapsedCookie()
+  },
+
+  subscribe(callback: () => void) {
+    collapsedStore.listeners.add(callback)
+    return () => collapsedStore.listeners.delete(callback)
+  },
+
+  notify() {
+    collapsedStore.listeners.forEach((listener) => listener())
+  },
+
+  set(value: boolean) {
+    setCollapsedCookie(value)
+    collapsedStore.notify()
+  },
+}
+
 export function AppSidebar({ nav }: { nav: EditionNavItem[] }) {
-  const [collapsed, setCollapsed] = useState(false)
+  const collapsed = useSyncExternalStore(
+    collapsedStore.subscribe,
+    collapsedStore.getSnapshot,
+    () => false
+  )
 
-  useLayoutEffect(() => {
-    setCollapsed(readCollapsedCookie())
-  }, [])
-
-  function toggle() {
-    const next = !collapsed
-    setCollapsed(next)
-    setCollapsedCookie(next)
-  }
+  const toggle = useCallback(() => {
+    collapsedStore.set(!collapsed)
+  }, [collapsed])
 
   return (
     <aside
