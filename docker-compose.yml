@@ -1,23 +1,22 @@
 services:
   db:
-    image: mariadb:11
+    image: postgres:16
     container_name: hitly-db
     restart: unless-stopped
     environment:
-      MARIADB_DATABASE: hitly
-      MARIADB_USER: hitly
-      MARIADB_PASSWORD: hitly
-      MARIADB_ROOT_PASSWORD: hitly-root
+      POSTGRES_DB: hitly
+      POSTGRES_USER: hitly
+      POSTGRES_PASSWORD: hitly
     ports:
-      - '127.0.0.1:3306:3306'
+      - '127.0.0.1:5432:5432'
     volumes:
-      - hitly_mariadb:/var/lib/mysql
+      - hitly_postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      test: ['CMD-SHELL', 'pg_isready -U hitly -d hitly']
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10s
 
 volumes:
-  hitly_mariadb:
+  hitly_postgres:

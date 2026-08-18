@@ -183,5 +183,7 @@ export type {
   Feature,
   HitlyEdition,
   HousekeepingSchedule,
+  ResolvedProjectApiKey,
+  TenantDocument,
   WorkspacePlan,
 } from './edition'

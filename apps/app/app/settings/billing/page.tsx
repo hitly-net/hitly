@@ -17,6 +17,7 @@ export default async function BillingPage() {
         plan={workspace.plan}
         usedApprovals={usedApprovals}
         stripeCustomerId={record?.stripeCustomerId ?? null}
+        stripeSubscriptionId={record?.stripeSubscriptionId ?? null}
       />
     </AppShell>
   )

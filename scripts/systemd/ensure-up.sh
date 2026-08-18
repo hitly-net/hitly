@@ -32,6 +32,6 @@ start_app() {
   nohup yarn workspace @hitly/app start --hostname 0.0.0.0 >>/tmp/hitly-app.log 2>&1 &
 }
 
-listening 3306 || start_db
+listening 5432 || start_db
 listening 3000 || start_web
 listening 3001 || start_app

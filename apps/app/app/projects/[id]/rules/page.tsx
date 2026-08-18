@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { projectRules } from '@hitly/db/schema'
 import { createProjectRule, deleteProjectRule } from '@/actions/projects'
@@ -6,15 +6,20 @@ import { AppShell } from '@/components/app-shell'
 import { ProjectTabs } from '@/components/project-tabs'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
-import { requireDb } from '@/lib/require-db'
+import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
+import { withAppTenant } from '@/lib/context'
 
 export const metadata = { title: 'Rules' }
 
 export default async function ProjectRulesPage({ params }: { params: Promise<{ id: string }> }) {
+  return withAppTenant(async () => {
   const { id } = await params
   const { project, access } = await requireVisibleProject(id)
   if (!canAdminProject(access)) redirect(`/projects/${id}`)
-  const rules = await requireDb().select().from(projectRules).where(eq(projectRules.projectId, id))
+  const rules = await requireDb()
+    .select()
+    .from(projectRules)
+    .where(and(eq(projectRules.projectId, id), eq(projectRules.workspaceId, requireTenantWorkspaceId())))
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
@@ -87,4 +92,5 @@ export default async function ProjectRulesPage({ params }: { params: Promise<{ i
       </ul>
     </AppShell>
   )
+  })
 }

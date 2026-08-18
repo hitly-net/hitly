@@ -12,7 +12,9 @@ Local Mac development still uses `yarn dev:web` / `yarn dev:app` and `yarn db:up
 | Git remote | `https://github.com/hitly-net/hitly.git` (`main`) |
 | Web | `http://192.168.10.176:3000` |
 | App | `http://192.168.10.176:3001` |
-| DB | Docker Compose MariaDB (`docker-compose.yml`) |
+| DB | Docker Compose Postgres 16 (`docker-compose.yml`, port 5432) |
+
+Existing LAN hosts that still have MariaDB on 3306 need a new Postgres volume and `yarn db:migrate`. There is no automated MariaDB data migration.
 
 No nginx/TLS. Ports bind `0.0.0.0`. Mobile and the Mastra example stay off this host.
 
@@ -23,7 +25,7 @@ No nginx/TLS. Ports bind `0.0.0.0`. Mobile and the Mastra example stay off this 
 | `hitly-web.service` | `yarn workspace @hitly/web start --hostname 0.0.0.0` | Marketing + docs on `:3000` |
 | `hitly-app.service` | `yarn workspace @hitly/app start --hostname 0.0.0.0` | Product inbox on `:3001` |
 
-MariaDB remains under Docker Compose (`docker compose up -d` in the repo root).
+Postgres remains under Docker Compose (`docker compose up -d` in the repo root).
 
 ## One-time bootstrap
 
@@ -48,7 +50,7 @@ NEXT_PUBLIC_APP_URL=http://192.168.10.176:3001
 WEB_URL=http://192.168.10.176:3000
 BETTER_AUTH_URL=http://192.168.10.176:3001
 BETTER_AUTH_SECRET=<openssl rand -hex 32>
-DATABASE_URL=mysql://hitly:hitly@127.0.0.1:3306/hitly
+DATABASE_URL=postgres://hitly:hitly@127.0.0.1:5432/hitly
 NEXT_PUBLIC_WEB_URL=http://192.168.10.176:3000
 ```
 

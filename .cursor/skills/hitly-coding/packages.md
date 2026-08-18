@@ -6,7 +6,7 @@ Every workspace `package.json` has `hitly.role`. Agents use that field, not gues
 
 | Role | Packages | npm | Notes |
 | --- | --- | --- | --- |
-| `sdk` | `@hitly/core`, `@hitly/plugin-mastra`, `@hitly/plugin-hermes`, `@hitly/plugin-http`, `@hitly/plugin-langgraph`, `@hitly/plugin-temporal` | Yes, later | Public Apache-2.0. Keep `private: true` until first publish. |
+| `sdk` | `@hitly/core`, `@hitly/mail`, `@hitly/plugin-mastra`, `@hitly/plugin-hermes`, `@hitly/plugin-http`, `@hitly/plugin-langgraph`, `@hitly/plugin-temporal` | Yes, later | Public Apache-2.0. Keep `private: true` until first publish. |
 | `app` | `@hitly/app`, `@hitly/web`, `@hitly/mobile` | Never | Next.js apps and the Expo reviewer client. |
 | `internal` | `@hitly/db`, `@hitly/ui` | Never | Server schema/migrations and app UI. |
 | `edition-stub` | `@hitly/cloud` | Never | Public stub. Real implementation is private `hitly-net/hitly-cloud`. |
@@ -21,8 +21,9 @@ apps/app                 @hitly/app          self-hosted + Cloud Next.js shell
 apps/web                 @hitly/web          marketing + docs
 apps/mobile              @hitly/mobile       Expo reviewer app (iOS + Android)
 packages/core            @hitly/core         envelope, plugin interface, entitlements
+packages/mail            @hitly/mail         outbound mailer (console / smtp / resend / memory)
 packages/plugin-*        @hitly/plugin-*     origin-framework adapters
-packages/db              @hitly/db           Drizzle schema + MariaDB migrations
+packages/db              @hitly/db           Drizzle schema + Postgres migrations
 packages/ui              @hitly/ui           shared React primitives
 packages/cloud           @hitly/cloud        OSS edition stub (slots only)
 examples/mastra          @hitly/example-mastra

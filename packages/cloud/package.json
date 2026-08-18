@@ -10,8 +10,11 @@
     ".": "./src/index.ts",
     "./auth/providers": "./src/auth/providers.ts",
     "./auth/buttons": "./src/auth/buttons.tsx",
+    "./brand": "./src/brand.tsx",
     "./stripe/checkout": "./src/stripe/checkout.ts",
     "./stripe/portal": "./src/stripe/portal.ts",
+    "./stripe/subscription": "./src/stripe/subscription.ts",
+    "./stripe/invoices": "./src/stripe/invoices.ts",
     "./stripe/webhook": "./src/stripe/webhook.ts",
     "./pages/billing": "./src/pages/billing.tsx",
     "./pages/invoices": "./src/pages/invoices.tsx"

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { desc, eq } from 'drizzle-orm'
-import { isOpenApprovalStatus, type ApprovalEnvelope, type Decision, type OriginRef, type PluginId } from '@hitly/core'
+import { and, desc, eq } from 'drizzle-orm'
+import { isOpenApprovalStatus, type ApprovalEnvelope, type OriginRef, type PluginId } from '@hitly/core'
 import { approvals, decisionRecords, projectMemberships, users } from '@hitly/db/schema'
 import { Badge, PluginBadge, PluginMark } from '@hitly/ui'
 import { decideWorkItem, delegateWorkItem, retryWorkItem } from '@/actions/projects'
@@ -9,10 +9,12 @@ import { AppShell } from '@/components/app-shell'
 import { ContextMarkdown } from '@/components/context-markdown'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
-import { getAppContext } from '@/lib/context'
+import { RefreshOnFocus, WorkItemDecisionButtons } from '@/components/work-item-client'
+import { withAppTenant } from '@/lib/context'
 import { originFields, envelopeMetadata } from '@/lib/origin'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
-import { requireDb } from '@/lib/require-db'
+import { requireDb } from '@/lib/tenant'
+import { decodeTenantJson } from '@/lib/tenant-crypto'
 import { approvalHasExpired } from '@/lib/approval-expiry'
 
 function personLabel(person: { name: string | null; email: string }) {
@@ -26,12 +28,21 @@ export async function WorkItemDetail({
   approvalId: string
   projectId?: string
 }) {
-  const { user, role, workspace } = await getAppContext()
+  return withAppTenant(async ({ user, role, workspace }) => {
   const database = requireDb()
-  const rows = await database.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1)
-  const approval = rows[0]
-  if (!approval || approval.workspaceId !== workspace.id) notFound()
-  if (projectId && approval.projectId !== projectId) notFound()
+  const rows = await database
+    .select()
+    .from(approvals)
+    .where(and(eq(approvals.id, approvalId), eq(approvals.workspaceId, workspace.id)))
+    .limit(1)
+  const approvalRow = rows[0]
+  if (!approvalRow) notFound()
+  if (projectId && approvalRow.projectId !== projectId) notFound()
+  const approval = {
+    ...approvalRow,
+    envelope: await decodeTenantJson(workspace.id, approvalRow.envelope),
+    origin: await decodeTenantJson(workspace.id, approvalRow.origin),
+  }
 
   const access = await getProjectAccess({
     projectId: approval.projectId,
@@ -50,7 +61,7 @@ export async function WorkItemDetail({
     })
     .from(projectMemberships)
     .innerJoin(users, eq(projectMemberships.userId, users.id))
-    .where(eq(projectMemberships.projectId, approval.projectId))
+    .where(and(eq(projectMemberships.projectId, approval.projectId), eq(projectMemberships.workspaceId, workspace.id)))
 
   const assignedRows = approval.assignedUserId
     ? await database
@@ -65,9 +76,18 @@ export async function WorkItemDetail({
   const decisions = await database
     .select()
     .from(decisionRecords)
-    .where(eq(decisionRecords.approvalId, approval.id))
+    .where(and(eq(decisionRecords.approvalId, approval.id), eq(decisionRecords.workspaceId, workspace.id)))
     .orderBy(desc(decisionRecords.createdAt))
-  const latestDecision = decisions[0]
+  const decodedDecisions = await Promise.all(
+    decisions.map(async (row) => ({
+      ...row,
+      payload: await decodeTenantJson(workspace.id, row.payload),
+      resumeResponse: row.resumeResponse
+        ? await decodeTenantJson(workspace.id, row.resumeResponse)
+        : row.resumeResponse,
+    })),
+  )
+  const latestDecision = decodedDecisions[0]
 
   const envelope = approval.envelope as unknown as ApprovalEnvelope
   const origin = approval.origin as unknown as OriginRef
@@ -88,6 +108,7 @@ export async function WorkItemDetail({
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
+      <RefreshOnFocus />
       <div className="flex flex-wrap items-center gap-2">
         <PluginMark plugin={approval.plugin as PluginId} size="md" className="h-8 w-8" />
         <Badge
@@ -251,20 +272,7 @@ export async function WorkItemDetail({
               className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
             />
           ) : null}
-          <div className="flex flex-wrap gap-2">
-            {(Object.entries(allowed) as [Decision, boolean][])
-              .filter(([, on]) => on)
-              .map(([decision]) => (
-                <button
-                  key={decision}
-                  name="decision"
-                  value={decision}
-                  className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium capitalize text-white dark:bg-zinc-100 dark:text-zinc-900"
-                >
-                  {decision}
-                </button>
-              ))}
-          </div>
+          <WorkItemDecisionButtons allowed={allowed} />
         </form>
       ) : null}
       {approval.status === 'failed_resume' && canDecide(access) ? (
@@ -276,4 +284,5 @@ export async function WorkItemDetail({
       ) : null}
     </AppShell>
   )
+  })
 }

@@ -2,14 +2,14 @@ import { inArray, asc } from 'drizzle-orm'
 import { projects } from '@hitly/db/schema'
 import { AppShell } from '@/components/app-shell'
 import { ProjectList } from '@/components/project-list'
-import { getAppContext } from '@/lib/context'
+import { getAppContext, withAppTenant } from '@/lib/context'
 import { canManageWorkspace, listVisibleProjectIds } from '@/lib/rbac'
-import { requireDb } from '@/lib/require-db'
+import { requireDb } from '@/lib/tenant'
 
 export const metadata = { title: 'Projects' }
 
 export default async function ProjectsPage() {
-  const { workspace, role, user } = await getAppContext()
+  return withAppTenant(async ({ workspace, role, user }) => {
   const ids = await listVisibleProjectIds({
     workspaceId: workspace.id,
     userId: user.id,
@@ -41,4 +41,5 @@ export default async function ProjectsPage() {
       <ProjectList projects={list} canCreate={canCreate} />
     </AppShell>
   )
+  })
 }

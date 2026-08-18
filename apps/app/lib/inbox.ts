@@ -1,8 +1,8 @@
-import { and, asc, desc, eq, gte, inArray, like, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, ilike, inArray, or, sql } from 'drizzle-orm'
 import { CLOSED_APPROVAL_STATUSES, isDecision, type WorkspaceRole } from '@hitly/core'
 import { approvals, decisionRecords, projects, users } from '@hitly/db/schema'
 import { listVisibleProjectIds } from './rbac'
-import { requireDb } from './require-db'
+import { requireDb, withTenant } from './tenant'
 import { INBOX_SCOPES, isInboxScope, type InboxScope } from './list-filters'
 
 export const AUDIT_SORTS = ['createdAt', 'decision', 'actionName', 'projectName', 'actorName'] as const
@@ -28,11 +28,12 @@ export async function listInboxItems(args: {
   scope?: string
   q?: string
 }) {
-  const visibleIds = await listVisibleProjectIds(args)
-  const projectIds = args.projectId ? visibleIds.filter((id) => id === args.projectId) : visibleIds
-  if (projectIds.length === 0) return []
-  const database = requireDb()
-  const filters = [inArray(approvals.projectId, projectIds)]
+  return withTenant(args.workspaceId, async () => {
+    const visibleIds = await listVisibleProjectIds(args)
+    const projectIds = args.projectId ? visibleIds.filter((id) => id === args.projectId) : visibleIds
+    if (projectIds.length === 0) return []
+    const database = requireDb()
+    const filters = [eq(approvals.workspaceId, args.workspaceId), inArray(approvals.projectId, projectIds)]
   const scope = isInboxScope(args.scope) ? args.scope : 'all'
   if (scope === 'open') {
     filters.push(inArray(approvals.status, ['pending', 'failed_resume']))
@@ -41,7 +42,7 @@ export async function listInboxItems(args: {
   }
   const term = args.q ? likeTerm(args.q) : null
   if (term) {
-    const search = or(like(approvals.actionName, term), like(projects.name, term))
+    const search = or(ilike(approvals.actionName, term), ilike(projects.name, term))
     if (search) filters.push(search)
   }
   return database
@@ -67,6 +68,7 @@ export async function listInboxItems(args: {
     .where(and(...filters))
     .orderBy(desc(approvals.createdAt))
     .limit(100)
+  })
 }
 
 export async function inboxSummary(args: {
@@ -75,27 +77,33 @@ export async function inboxSummary(args: {
   workspaceRole: WorkspaceRole
   projectId?: string
 }) {
-  const visibleIds = await listVisibleProjectIds(args)
-  const projectIds = args.projectId ? visibleIds.filter((id) => id === args.projectId) : visibleIds
-  if (projectIds.length === 0) {
-    return { pending: 0, failedResume: 0, decidedToday: 0, projectCount: 0 }
-  }
+  return withTenant(args.workspaceId, async () => {
+    const visibleIds = await listVisibleProjectIds(args)
+    const projectIds = args.projectId ? visibleIds.filter((id) => id === args.projectId) : visibleIds
+    if (projectIds.length === 0) {
+      return { pending: 0, failedResume: 0, decidedToday: 0, projectCount: 0 }
+    }
   const database = requireDb()
   const pendingRows = await database
     .select({ count: sql<number>`count(*)` })
     .from(approvals)
-    .where(and(inArray(approvals.projectId, projectIds), eq(approvals.status, 'pending')))
+    .where(and(inArray(approvals.projectId, projectIds), eq(approvals.workspaceId, args.workspaceId), eq(approvals.status, 'pending')))
   const failedRows = await database
     .select({ count: sql<number>`count(*)` })
     .from(approvals)
-    .where(and(inArray(approvals.projectId, projectIds), eq(approvals.status, 'failed_resume')))
+    .where(and(inArray(approvals.projectId, projectIds), eq(approvals.workspaceId, args.workspaceId), eq(approvals.status, 'failed_resume')))
   const start = new Date()
   start.setHours(0, 0, 0, 0)
   const decidedRows = await database
     .select({ count: sql<number>`count(*)` })
     .from(approvals)
     .where(
-      and(inArray(approvals.projectId, projectIds), eq(approvals.status, 'decided'), gte(approvals.updatedAt, start)),
+      and(
+        inArray(approvals.projectId, projectIds),
+        eq(approvals.workspaceId, args.workspaceId),
+        eq(approvals.status, 'decided'),
+        gte(approvals.updatedAt, start),
+      ),
     )
   return {
     pending: Number(pendingRows[0]?.count ?? 0),
@@ -103,6 +111,7 @@ export async function inboxSummary(args: {
     decidedToday: Number(decidedRows[0]?.count ?? 0),
     projectCount: projectIds.length,
   }
+  })
 }
 
 export async function listAudit(args: {
@@ -115,21 +124,26 @@ export async function listAudit(args: {
   sort?: string
   dir?: string
 }) {
-  const visibleIds = await listVisibleProjectIds(args)
-  const projectIds = args.projectId ? visibleIds.filter((id) => id === args.projectId) : visibleIds
-  if (projectIds.length === 0) return []
-  const database = requireDb()
-  const filters = [inArray(approvals.projectId, projectIds)]
+  return withTenant(args.workspaceId, async () => {
+    const visibleIds = await listVisibleProjectIds(args)
+    const projectIds = args.projectId ? visibleIds.filter((id) => id === args.projectId) : visibleIds
+    if (projectIds.length === 0) return []
+    const database = requireDb()
+    const filters = [
+      eq(decisionRecords.workspaceId, args.workspaceId),
+      eq(approvals.workspaceId, args.workspaceId),
+      inArray(approvals.projectId, projectIds),
+    ]
   if (args.decision && isDecision(args.decision)) {
     filters.push(eq(decisionRecords.decision, args.decision))
   }
   const term = args.q ? likeTerm(args.q) : null
   if (term) {
     const search = or(
-      like(approvals.actionName, term),
-      like(projects.name, term),
-      like(users.name, term),
-      like(users.email, term),
+      ilike(approvals.actionName, term),
+      ilike(projects.name, term),
+      ilike(users.name, term),
+      ilike(users.email, term),
     )
     if (search) filters.push(search)
   }
@@ -162,4 +176,5 @@ export async function listAudit(args: {
     .where(and(...filters))
     .orderBy(direction(sortColumn))
     .limit(200)
+  })
 }

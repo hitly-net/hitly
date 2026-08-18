@@ -1,22 +1,24 @@
 import Link from 'next/link'
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { projectEvents } from '@hitly/db/schema'
 import { AppShell } from '@/components/app-shell'
 import { JsonDisclosure } from '@/components/json-disclosure'
 import { ProjectTabs } from '@/components/project-tabs'
 import { asOriginRef, originSummary } from '@/lib/origin'
 import { requireVisibleProject } from '@/lib/project-page'
-import { requireDb } from '@/lib/require-db'
+import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
+import { withAppTenant } from '@/lib/context'
 
 export const metadata = { title: 'Logs' }
 
 export default async function ProjectLogsPage({ params }: { params: Promise<{ id: string }> }) {
+  return withAppTenant(async () => {
   const { id } = await params
   const { project } = await requireVisibleProject(id)
   const events = await requireDb()
     .select()
     .from(projectEvents)
-    .where(eq(projectEvents.projectId, id))
+    .where(and(eq(projectEvents.projectId, id), eq(projectEvents.workspaceId, requireTenantWorkspaceId())))
     .orderBy(desc(projectEvents.createdAt))
     .limit(200)
 
@@ -58,4 +60,5 @@ export default async function ProjectLogsPage({ params }: { params: Promise<{ id
       </ul>
     </AppShell>
   )
+  })
 }

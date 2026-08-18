@@ -28,7 +28,7 @@ Gate by **package presence**, not `HITLY_EDITION` env vars.
 
 - Match existing file patterns (Next App Router, Drizzle, Better Auth).
 - New origin frameworks: new `@hitly/plugin-<id>`, add the id to `PLUGIN_IDS` in `@hitly/core`.
-- Local DB is MariaDB (`yarn db:up`, `yarn db:migrate`). Do not reintroduce Postgres.
+- Local DB is Postgres (`yarn db:up`, `yarn db:migrate`). Cloud overlay may enable RLS; OSS does not.
 - After code changes: `yarn typecheck` (and `yarn lint` / `yarn build` if you touched apps).
 - LAN production deploy (192.168.10.176): read [hitly-deployment](../hitly-deployment/SKILL.md).
 

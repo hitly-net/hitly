@@ -17,5 +17,6 @@ export async function POST(request: Request) {
   return cloudPortal(request, {
     workspaceId: result.workspace.id,
     stripeCustomerId: record?.stripeCustomerId ?? null,
+    stripeSubscriptionId: record?.stripeSubscriptionId ?? null,
   })
 }

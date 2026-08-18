@@ -16,11 +16,12 @@ jobs:
           cache: yarn
       - run: yarn install --frozen-lockfile
       - run: yarn lint
+      - run: yarn workspace @hitly/mail test
       - run: yarn typecheck
       - run: yarn build
         env:
           BETTER_AUTH_SECRET: ci-only-change-me-please-32ch
           BETTER_AUTH_URL: http://localhost:3001
-          DATABASE_URL: mysql://hitly:hitly@localhost:3306/hitly
+          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
           WEB_URL: http://localhost:3000

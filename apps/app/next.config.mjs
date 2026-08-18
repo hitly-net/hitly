@@ -3,6 +3,7 @@ const config = {
   reactStrictMode: true,
   allowedDevOrigins: ['192.168.68.107'],
   transpilePackages: [
+    '@hitly/mail',
     '@hitly/cloud',
     '@hitly/core',
     '@hitly/ui',
