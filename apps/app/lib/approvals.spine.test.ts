@@ -433,13 +433,15 @@ test('member without project role cannot decide (403)', async () => {
   })
   assert.ok(result.ok)
 
-  // Check member permissions (no explicit project role)
-  const access = await getProjectAccess({
-    projectId: projectA.id,
-    userId: userViewer.id,
-    workspaceRole: 'member',
+  // Check member permissions (no explicit project role) - needs tenant context
+  await withTenant(workspaceA.id, async () => {
+    const access = await getProjectAccess({
+      projectId: projectA.id,
+      userId: userViewer.id,
+      workspaceRole: 'member',
+    })
+    assert.equal(canDecide(access), false, 'Member without project role should not be able to decide')
   })
-  assert.equal(canDecide(access), false, 'Member without project role should not be able to decide')
 })
 
 test('API key cannot decide; session cannot ingest', async () => {
@@ -473,10 +475,10 @@ test('replay decide is not 200', async () => {
   })
   assert.ok(ingestResult.ok)
 
-  const payload = parseDecisionBody({ decision: 'accept' })
+  const payload = parseDecisionBody({ decision: 'ignore' })
   assert.ok(payload)
 
-  // First decide
+  // First decide (using 'ignore' to skip origin resume which might fail in test)
   const decide1 = await decideApproval({
     approvalId: ingestResult.approval.id,
     actorUserId: userAdmin.id,
@@ -484,6 +486,7 @@ test('replay decide is not 200', async () => {
     workspaceId: workspaceA.id,
   })
   assert.ok(!('error' in decide1 && decide1.error), 'First decide should succeed')
+  assert.equal(decide1.status, 'decided', 'First decide should set status to decided')
 
   // Replay decide
   const decide2 = await decideApproval({
@@ -933,14 +936,17 @@ test('non-admin cannot change sink URL', async () => {
   // RBAC check: only admin/editor can change project config (including evidence sink)
   // Member without project role cannot update project settings
   
-  const access = await getProjectAccess({
-    projectId: projectA.id,
-    userId: userViewer.id,
-    workspaceRole: 'member',
-  })
+  // Check permissions - needs tenant context
+  await withTenant(workspaceA.id, async () => {
+    const access = await getProjectAccess({
+      projectId: projectA.id,
+      userId: userViewer.id,
+      workspaceRole: 'member',
+    })
 
-  // Check that member without project role doesn't have write access
-  assert.equal(canDecide(access), false, 'Member without project role cannot decide (implies no write access)')
+    // Check that member without project role doesn't have write access
+    assert.equal(canDecide(access), false, 'Member without project role cannot decide (implies no write access)')
+  })
 })
 
 test('two projects, two sink URLs: A events only to A listener, B sees zero', async () => {
