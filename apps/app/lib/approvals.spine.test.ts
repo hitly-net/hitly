@@ -435,7 +435,7 @@ test('HTTP sink fail-closed: append failure prevents origin resume', async () =>
   const mastraPayload = buildMastraPayload({ projectId: projectFailSink.id })
 
   const ingestResult = await ingestApproval({
-    apiKeyFail.raw,
+    apiKey: apiKeyFail.raw,
     body: mastraPayload,
   })
   // Ingest is fail-open for requested event
