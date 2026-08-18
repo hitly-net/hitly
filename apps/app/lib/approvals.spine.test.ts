@@ -23,8 +23,7 @@ import { ingestApproval, decideApproval, parseDecisionBody, authenticateProjectK
 import { generateApiKey } from './keys'
 import { newId } from './ids'
 import { getProjectAccess, canDecide } from './rbac'
-import { withTenant } from './tenant'
-import { encodeTenantJson } from './tenant-json'
+import { withTenant, encodeTenantJson } from './tenant'
 import type { ApprovalEnvelope, OriginRef } from '@hitly/core'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://hitly:hitly@localhost:5432/hitly'
@@ -412,9 +411,12 @@ test('HTTP sink fail-closed: append failure prevents origin resume', async () =>
   await db.insert(projects).values({
     ...projectFailSink,
     plugin: 'mastra',
-    credentials: {},
+    credentials: await encodeTenantJson(workspaceA.id, {}),
     evidenceSinkType: 'http',
-    evidenceSinkConfig: { url: 'http://localhost:9999/nonexistent', authHeader: 'Bearer test' },
+    evidenceSinkConfig: await encodeTenantJson(workspaceA.id, { 
+      url: 'http://localhost:9999/nonexistent', 
+      authHeader: 'Bearer test' 
+    }),
     createdAt: new Date(),
     updatedAt: new Date(),
   })
