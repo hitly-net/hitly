@@ -314,6 +314,11 @@ export async function retryWorkItem(approvalId: string) {
     if (!canDecide(access)) throw new Error('You cannot retry this work item')
     const { retryResume } = await import('@/lib/approvals')
     const result = await retryResume({ approvalId, workspaceId: workspace.id })
+    if (result.error && result.status === 500) {
+      const returnPath = `/inbox/${approvalId}`
+      const errorParam = encodeURIComponent(result.error)
+      redirect(`${returnPath}?error=${errorParam}`)
+    }
     throwUnlessConflict(result)
     revalidateWorkItem(approvalId, approval.projectId)
   })
