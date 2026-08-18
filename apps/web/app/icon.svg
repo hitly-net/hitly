@@ -2,6 +2,6 @@
   <rect width="512" height="512" fill="#18181b"/>
   <!-- H glyph (Geist Bold inspired, 400px, centered at 248,256) -->
   <path d="M88,56 L168,56 L168,216 L328,216 L328,56 L408,56 L408,456 L328,456 L328,296 L168,296 L168,456 L88,456 Z" fill="#fafafa"/>
-  <!-- Slash (the y) from (318,418) to (428,318) -->
-  <line x1="318" y1="418" x2="428" y2="318" stroke="#fafafa" stroke-width="48" stroke-linecap="round"/>
+  <!-- Check mark (idle blue) -->
+  <path d="M318 372 L362 416 L448 308" stroke="#2563eb" stroke-width="52" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>
