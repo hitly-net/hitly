@@ -405,16 +405,16 @@ test('POST ping does not create a listed row', async () => {
     body: JSON.stringify(pingEvent),
   })
   
-  // Check the home page
+  // Check the home page lists events
   const response = await fetch(`${baseUrl}/`)
   const html = await response.text()
   
   // Should show the real event
-  assert.ok(html.includes(approvalId), 'Should show approval with real event')
+  assert.ok(html.includes(realEvent.event_id), 'Should show real event')
+  assert.ok(html.includes('requested'), 'Should show event type')
   
-  // Count occurrences - should only appear once (not duplicated by ping)
-  const matches = html.match(new RegExp(approvalId, 'g'))
-  assert.ok(matches && matches.length >= 1, 'Approval should appear at least once')
+  // Should NOT show ping event
+  assert.ok(!html.includes(pingEvent.event_id), 'Should NOT show ping event')
 })
 
 test('Second POST same event_id returns same store_uri, one file', async () => {

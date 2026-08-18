@@ -18,21 +18,9 @@ yarn start
 
 The server listens on port 3100 by default (configurable via `PORT` env var).
 
-Open `http://localhost:3100` in your browser to see all approvals stored in this evidence sink.
+Open `http://localhost:3100` in your browser to see all events stored in this evidence sink.
 
-### Running Multiple Isolated Stores
-
-Each server instance is isolated by its `EVENTS_DIR` and `PORT`. To run separate evidence stores for different projects:
-
-```bash
-# Store A for Project A
-PORT=3100 EVENTS_DIR=./events-project-a yarn start
-
-# Store B for Project B (in another terminal)
-PORT=3101 EVENTS_DIR=./events-project-b yarn start
-```
-
-Each store only sees events POSTed to it. Project B's event_id on Store A will return 404 and won't appear in Store A's lists or chains.
+**Note:** This example does not enforce project separation. If two HITLy projects point at the same store URL, their events will mix. That is expected. HITLy controls which sink URL each project uses.
 
 ## Configuration
 
@@ -132,9 +120,15 @@ View the complete evidence chain for an approval.
 Returns an HTML page showing all events for the specified approval ID in sequence, with prev_event_id and prev_content_sha256 matching the previous event. Ping events are excluded from the chain.
 
 ### GET /
-View recent approvals stored in this evidence sink.
+List events with optional filters via query params:
 
-Returns an HTML page listing all approvals (grouped by approval_id) with their latest event. Ping events are excluded from the list.
+- `?event_id=evt_...` - Filter by event ID
+- `?approval_id=apr_...` - Filter by approval ID  
+- `?event_type=decided` - Filter by event type
+- `?runId=run_...` - Filter by origin runId
+- `?projectId=prj_...` (optional) - Filter by origin projectId
+
+Returns an HTML page showing matching events. Ping events are excluded from the list.
 
 ## Testing
 

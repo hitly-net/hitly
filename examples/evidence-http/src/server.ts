@@ -29,6 +29,7 @@ interface EvidenceEvent {
   }
   origin?: {
     plugin?: string
+    projectId?: string
     runId?: string
     stepId?: string
   }
@@ -386,7 +387,11 @@ function renderApprovalChainHtml(events: EvidenceEvent[], approvalId: string, ba
 </html>`
 }
 
-function renderRecentApprovalsHtml(approvals: Array<{approval_id: string, latest_event: EvidenceEvent}>, baseUrl: string): string {
+function renderEventsListHtml(events: EvidenceEvent[], filters: Record<string, string>, baseUrl: string): string {
+  const filterDisplay = Object.entries(filters).length > 0 
+    ? `Filters: ${Object.entries(filters).map(([k, v]) => `${k}=${v}`).join(', ')}`
+    : 'All events'
+  
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -409,8 +414,9 @@ function renderRecentApprovalsHtml(approvals: Array<{approval_id: string, latest
       a { color: #60a5fa; }
       a:hover { color: #93c5fd; }
       .label { color: #a1a1aa; }
-      .approval-row { border-color: #3f3f46; }
-      .approval-row:hover { background: #3f3f46; }
+      .event-row { border-color: #3f3f46; }
+      .event-row:hover { background: #3f3f46; }
+      input { background: #27272a; border-color: #3f3f46; color: #fafafa; }
     }
     .header { margin-bottom: 2rem; }
     .wordmark { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
@@ -426,15 +432,17 @@ function renderRecentApprovalsHtml(approvals: Array<{approval_id: string, latest
     .mono { font-family: ui-monospace, monospace; font-size: 0.875rem; word-break: break-all; }
     a { color: #2563eb; text-decoration: none; }
     a:hover { text-decoration: underline; }
-    .approval-row {
+    .event-row {
       border: 1px solid #e4e4e7;
       border-radius: 0.375rem;
       padding: 1rem;
       margin-bottom: 0.75rem;
     }
-    .approval-row:hover { background: #f9fafb; }
-    .approval-details { font-size: 0.875rem; }
-    .approval-details div { margin-bottom: 0.25rem; }
+    .event-row:hover { background: #f9fafb; }
+    .event-details { font-size: 0.875rem; }
+    .event-details div { margin-bottom: 0.25rem; }
+    .filters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .filters input { padding: 0.25rem 0.5rem; border: 1px solid #e4e4e7; border-radius: 0.25rem; font-size: 0.75rem; }
   </style>
 </head>
 <body>
@@ -444,16 +452,27 @@ function renderRecentApprovalsHtml(approvals: Array<{approval_id: string, latest
   </div>
 
   <div class="card">
-    <h2 style="margin: 0 0 1rem; font-size: 1.125rem;">Recent Approvals</h2>
-    ${approvals.length === 0 ? '<p class="label">No approvals stored yet.</p>' : approvals.map(({ approval_id, latest_event }) => `
-    <div class="approval-row">
+    <form method="get" class="filters">
+      <input type="text" name="event_id" placeholder="event_id" value="${escapeHtml(filters.event_id || '')}">
+      <input type="text" name="approval_id" placeholder="approval_id" value="${escapeHtml(filters.approval_id || '')}">
+      <input type="text" name="event_type" placeholder="event_type" value="${escapeHtml(filters.event_type || '')}">
+      <input type="text" name="runId" placeholder="runId" value="${escapeHtml(filters.runId || '')}">
+      <input type="text" name="projectId" placeholder="projectId (optional)" value="${escapeHtml(filters.projectId || '')}">
+      <button type="submit" style="padding: 0.25rem 0.75rem; border-radius: 0.25rem; border: 1px solid #e4e4e7; background: white; cursor: pointer;">Filter</button>
+      <a href="${escapeHtml(baseUrl)}/" style="padding: 0.25rem 0.75rem; border-radius: 0.25rem; border: 1px solid #e4e4e7; background: white; font-size: 0.75rem; display: inline-block;">Clear</a>
+    </form>
+    <p class="label" style="margin-bottom: 1rem;">${escapeHtml(filterDisplay)} · ${events.length} event(s)</p>
+    ${events.length === 0 ? '<p class="label">No events found.</p>' : events.map(event => `
+    <div class="event-row">
       <div style="margin-bottom: 0.5rem;">
-        <a href="${escapeHtml(baseUrl)}/a/${escapeHtml(approval_id)}" class="mono" style="font-weight: 500;">${escapeHtml(approval_id)}</a>
+        <a href="${escapeHtml(baseUrl)}/events/${escapeHtml(event.event_id)}" class="mono" style="font-weight: 500;">${escapeHtml(event.event_id)}</a>
       </div>
-      <div class="approval-details">
-        <div><span class="label">Latest:</span> ${escapeHtml(latest_event.event_type)} (seq ${latest_event.seq})</div>
-        <div><span class="label">Occurred:</span> <span class="mono">${escapeHtml(latest_event.occurred_at)}</span></div>
-        ${latest_event.action?.name ? `<div><span class="label">Action:</span> ${escapeHtml(latest_event.action.name)}</div>` : ''}
+      <div class="event-details">
+        <div><span class="label">Type:</span> ${escapeHtml(event.event_type)} (seq ${event.seq})</div>
+        <div><span class="label">Approval:</span> <a href="${escapeHtml(baseUrl)}/a/${escapeHtml(event.approval_id)}" class="mono">${escapeHtml(event.approval_id)}</a></div>
+        <div><span class="label">Occurred:</span> <span class="mono">${escapeHtml(event.occurred_at)}</span></div>
+        ${event.action?.name ? `<div><span class="label">Action:</span> ${escapeHtml(event.action.name)}</div>` : ''}
+        ${event.origin?.runId ? `<div><span class="label">Run:</span> <span class="mono">${escapeHtml(event.origin.runId)}</span></div>` : ''}
       </div>
     </div>
     `).join('')}
@@ -601,11 +620,18 @@ export function createEvidenceServer(eventsDir?: string) {
     return
   }
 
-  if (req.method === 'GET' && req.url === '/') {
+  if (req.method === 'GET' && (req.url === '/' || req.url?.startsWith('/?'))) {
     try {
       await ensureEventsDir(EVENTS_DIR)
+      
+      const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+      const filters: Record<string, string> = {}
+      for (const [key, value] of url.searchParams.entries()) {
+        if (value) filters[key] = value
+      }
+      
       const files = await readdir(EVENTS_DIR)
-      const approvalMap = new Map<string, EvidenceEvent>()
+      const events: EvidenceEvent[] = []
       
       for (const file of files) {
         if (!file.endsWith('.json')) continue
@@ -615,22 +641,23 @@ export function createEvidenceServer(eventsDir?: string) {
         
         if (event.event_type === 'ping') continue
         
-        const existing = approvalMap.get(event.approval_id)
-        if (!existing || event.seq > existing.seq) {
-          approvalMap.set(event.approval_id, event)
-        }
+        if (filters.event_id && event.event_id !== filters.event_id) continue
+        if (filters.approval_id && event.approval_id !== filters.approval_id) continue
+        if (filters.event_type && event.event_type !== filters.event_type) continue
+        if (filters.runId && event.origin?.runId !== filters.runId) continue
+        if (filters.projectId && event.origin?.projectId !== filters.projectId) continue
+        
+        events.push(event)
       }
       
-      const approvals = Array.from(approvalMap.entries())
-        .map(([approval_id, latest_event]) => ({ approval_id, latest_event }))
-        .sort((a, b) => new Date(b.latest_event.occurred_at).getTime() - new Date(a.latest_event.occurred_at).getTime())
+      events.sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
       
       const baseUrl = deriveBaseUrl(req)
-      const html = renderRecentApprovalsHtml(approvals, baseUrl)
+      const html = renderEventsListHtml(events, filters, baseUrl)
       res.writeHead(200, { 'Content-Type': 'text/html' })
       res.end(html)
     } catch (error) {
-      console.error('Failed to list approvals:', error)
+      console.error('Failed to list events:', error)
       res.writeHead(500, { 'Content-Type': 'text/html' })
       res.end('<h1>500 Internal Server Error</h1>')
     }
