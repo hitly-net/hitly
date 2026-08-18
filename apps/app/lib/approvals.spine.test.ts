@@ -231,7 +231,12 @@ before(async () => {
 after(async () => {
   // Stop test server
   if (testServer) {
-    testServer.close()
+    await new Promise<void>((resolve) => {
+      testServer!.close(() => {
+        console.log('[test] HTTP server closed')
+        resolve()
+      })
+    })
   }
 
   // Clean up test data
@@ -366,6 +371,20 @@ test('API key cannot decide; session cannot ingest', async () => {
   // Session cannot ingest - ingest route only accepts API key bearer token
   // This is tested by the route logic that checks for authorization header
   assert.ok(true, 'Route-level enforcement: decide requires session, ingest requires API key')
+  })
+})
+
+test('empty or invalid decide payload returns 400', async () => {
+  await inTenant(workspaceA.id, async () => {
+    // parseDecisionBody should reject empty/invalid payloads
+    const emptyPayload = parseDecisionBody({})
+    assert.equal(emptyPayload, null, 'Empty body should return null')
+
+    const invalidDecision = parseDecisionBody({ decision: 'invalid' })
+    assert.equal(invalidDecision, null, 'Invalid decision should return null')
+
+    const missingDecision = parseDecisionBody({ other: 'field' })
+    assert.equal(missingDecision, null, 'Missing decision should return null')
   })
 })
 
