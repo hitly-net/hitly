@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start --port 3001",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test lib/approvals.spine.test.ts"
   },
   "dependencies": {
     "@hitly/mail": "*",
@@ -42,6 +43,7 @@
     "eslint": "^9.36.0",
     "eslint-config-next": "^16.3.0",
     "tailwindcss": "^4.1.13",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.2"
   }
 }
