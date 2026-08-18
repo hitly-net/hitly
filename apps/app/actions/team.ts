@@ -66,3 +66,16 @@ export async function removeWorkspaceMember(memberId: string) {
   await database.delete(memberships).where(eq(memberships.id, memberId))
   revalidatePath('/settings/team')
 }
+
+export async function cancelInvite(inviteId: string) {
+  const { workspace, role } = await getAppContext()
+  if (!canManageWorkspace(role)) {
+    throw new Error('Only workspace admins can cancel invites')
+  }
+  const database = requireDb()
+  const rows = await database.select().from(invites).where(eq(invites.id, inviteId)).limit(1)
+  const invite = rows[0]
+  if (!invite || invite.workspaceId !== workspace.id) throw new Error('Invite not found')
+  await database.delete(invites).where(eq(invites.id, inviteId))
+  revalidatePath('/settings/team')
+}
