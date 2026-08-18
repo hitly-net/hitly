@@ -208,10 +208,18 @@ after(async () => {
   if (client) await client.end()
 })
 
-function buildTestEnvelope(overrides?: Partial<ApprovalEnvelope>): ApprovalEnvelope {
+// Build a raw Mastra ingest payload (what the API receives)
+function buildMastraPayload(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
+    runId: newId('run'),
+    workflowId: 'test-workflow',
+    stepId: 'test-step',
+    mastraBaseUrl: 'http://localhost:4111',
     action: { name: 'test-action', args: { amount: 100 } },
-    allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
+    suspendPayload: {
+      reason: 'Test approval needed',
+      contextMarkdown: 'Test context',
+    },
     systemId: 'test-system',
     inventoryId: 'inv-123',
     policyId: 'policy-1',
@@ -224,30 +232,18 @@ function buildTestEnvelope(overrides?: Partial<ApprovalEnvelope>): ApprovalEnvel
   }
 }
 
-function buildTestOrigin(overrides?: Partial<OriginRef>): OriginRef {
-  return {
-    plugin: 'mastra',
-    projectId: projectA.id,
-    runId: newId('run'),
-    resumeHandle: { url: 'https://example.com/resume', method: 'POST' },
-    ...overrides,
-  }
-}
-
 test('ingest creates approval with evidence fields', async () => {
   await inTenant(workspaceA.id, async () => {
-  await withTenant(workspaceA.id, async () => {
-    const envelope = buildTestEnvelope({
+    const mastraPayload = buildMastraPayload({
       systemId: 'sys-1',
       inventoryId: 'inv-1',
       policyId: 'pol-1',
       riskTier: 'high',
     })
-    const origin = buildTestOrigin()
 
     const result = await ingestApproval({
       apiKey: apiKeyA.raw,
-      body: { envelope, origin },
+      body: mastraPayload,
     })
 
     assert.ok(result.ok, `Ingest should succeed: ${result.ok ? '' : result.error}`)
@@ -264,17 +260,16 @@ test('ingest creates approval with evidence fields', async () => {
     assert.equal(receipts.length, 1, 'Should have one evidence receipt (requested event)')
     assert.equal(receipts[0]?.eventType, 'requested')
   })
-  })
 })
 
 test('workspace B cannot access workspace A approval (404 not 403)', async () => {
   await inTenant(workspaceA.id, async () => {
-    const envelope = buildTestEnvelope()
-    const origin = buildTestOrigin()
+    const mastraPayload = buildMastraPayload()
+    // Origin is part of payload
 
     const resultA = await ingestApproval({
       apiKey: apiKeyA.raw,
-      body: { envelope, origin },
+      body: mastraPayload,
     })
     assert.ok(resultA.ok)
 
@@ -295,12 +290,12 @@ test('workspace B cannot access workspace A approval (404 not 403)', async () =>
 
 test('member without project role cannot decide (403)', async () => {
   await inTenant(workspaceA.id, async () => {
-    const envelope = buildTestEnvelope()
-    const origin = buildTestOrigin()
+    const mastraPayload = buildMastraPayload()
+    // Origin is part of payload
 
     const result = await ingestApproval({
       apiKey: apiKeyA.raw,
-      body: { envelope, origin },
+      body: mastraPayload,
     })
     assert.ok(result.ok)
 
@@ -328,12 +323,12 @@ test('API key cannot decide; session cannot ingest', async () => {
 
 test('replay decide is not 200', async () => {
   await inTenant(workspaceA.id, async () => {
-    const envelope = buildTestEnvelope()
-    const origin = buildTestOrigin()
+    const mastraPayload = buildMastraPayload()
+    // Origin is part of payload
 
     const ingestResult = await ingestApproval({
       apiKey: apiKeyA.raw,
-      body: { envelope, origin },
+      body: mastraPayload,
     })
     assert.ok(ingestResult.ok)
 
@@ -391,12 +386,12 @@ test('HTTP sink fail-closed: append failure prevents origin resume', async () =>
     createdAt: new Date(),
   })
 
-  const envelope = buildTestEnvelope()
-  const origin = buildTestOrigin({ projectId: projectFailSink.id })
+  const mastraPayload = buildMastraPayload()
+  const origin = buildMastraPayload({ projectId: projectFailSink.id })
 
   const ingestResult = await ingestApproval({
     apiKey: apiKeyFail.raw,
-    body: { envelope, origin },
+    body: mastraPayload,
   })
   // Ingest is fail-open for requested event
   assert.ok(ingestResult.ok, 'Ingest should succeed even if sink fails (fail-open for requested)')
@@ -436,12 +431,12 @@ test('HTTP sink fail-closed: append failure prevents origin resume', async () =>
 
 test('decide records session user', async () => {
   await inTenant(workspaceA.id, async () => {
-  const envelope = buildTestEnvelope()
-  const origin = buildTestOrigin()
+  const mastraPayload = buildMastraPayload()
+  // Origin is part of payload
 
   const ingestResult = await ingestApproval({
     apiKey: apiKeyA.raw,
-    body: { envelope, origin },
+    body: mastraPayload,
   })
   assert.ok(ingestResult.ok)
 
@@ -467,12 +462,12 @@ test('decide records session user', async () => {
 
 test('evidence: canonical hash, sequential prev_*, idempotent event_id', async () => {
   await inTenant(workspaceA.id, async () => {
-  const envelope = buildTestEnvelope()
-  const origin = buildTestOrigin()
+  const mastraPayload = buildMastraPayload()
+  // Origin is part of payload
 
   const ingestResult = await ingestApproval({
     apiKey: apiKeyA.raw,
-    body: { envelope, origin },
+    body: mastraPayload,
   })
   assert.ok(ingestResult.ok)
 
@@ -519,12 +514,12 @@ test('evidence: canonical hash, sequential prev_*, idempotent event_id', async (
 
 test('receipts only in DB (no full payload as system of record)', async () => {
   await inTenant(workspaceA.id, async () => {
-  const envelope = buildTestEnvelope()
-  const origin = buildTestOrigin()
+  const mastraPayload = buildMastraPayload()
+  // Origin is part of payload
 
   const ingestResult = await ingestApproval({
     apiKey: apiKeyA.raw,
-    body: { envelope, origin },
+    body: mastraPayload,
   })
   assert.ok(ingestResult.ok)
 
@@ -547,12 +542,12 @@ test('receipts only in DB (no full payload as system of record)', async () => {
 
 test('edit without delta / final_sha256 is invalid', async () => {
   await inTenant(workspaceA.id, async () => {
-  const envelope = buildTestEnvelope()
-  const origin = buildTestOrigin()
+  const mastraPayload = buildMastraPayload()
+  // Origin is part of payload
 
   const ingestResult = await ingestApproval({
     apiKey: apiKeyA.raw,
-    body: { envelope, origin },
+    body: mastraPayload,
   })
   assert.ok(ingestResult.ok)
 
@@ -576,7 +571,7 @@ test('edit without delta / final_sha256 is invalid', async () => {
 
 test('evidence fields round-trip through ingest/decide', async () => {
   await inTenant(workspaceA.id, async () => {
-  const envelope = buildTestEnvelope({
+  const mastraPayload = buildMastraPayload({
     systemId: 'round-trip-sys',
     inventoryId: 'round-trip-inv',
     policyId: 'round-trip-pol',
@@ -585,11 +580,10 @@ test('evidence fields round-trip through ingest/decide', async () => {
     sensitivity: ['pii', 'financial'],
     dataCategories: ['customer', 'transaction'],
   })
-  const origin = buildTestOrigin()
 
   const ingestResult = await ingestApproval({
     apiKey: apiKeyA.raw,
-    body: { envelope, origin },
+    body: mastraPayload,
   })
   assert.ok(ingestResult.ok)
 
@@ -627,12 +621,12 @@ test('evidence fields round-trip through ingest/decide', async () => {
 
 test('decided event has min_days default 180 and expires_at', async () => {
   await inTenant(workspaceA.id, async () => {
-  const envelope = buildTestEnvelope()
-  const origin = buildTestOrigin()
+  const mastraPayload = buildMastraPayload()
+  // Origin is part of payload
 
   const ingestResult = await ingestApproval({
     apiKey: apiKeyA.raw,
-    body: { envelope, origin },
+    body: mastraPayload,
   })
   assert.ok(ingestResult.ok)
 
