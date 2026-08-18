@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { HitlyLockup, HitlyWordmark } from '@hitly/ui'
+import { HitlyWordmark } from '@hitly/ui'
 
 const links = [
   { href: '/docs', label: 'Docs' },
@@ -11,7 +11,7 @@ export function SiteHeader() {
     <header className="border-b border-zinc-200 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80 md:sticky md:top-0 md:z-50">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
         <Link href="/" className="inline-flex">
-          <HitlyLockup markClassName="h-8 w-8" wordmarkClassName="text-lg" />
+          <HitlyWordmark className="text-lg" />
         </Link>
         <nav className="flex items-center gap-6 text-sm">
           {links.map((link) => (
@@ -36,7 +36,7 @@ export function SiteFooter() {
     <footer className="mt-auto border-t border-zinc-200 py-10 dark:border-zinc-800">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 text-sm text-zinc-500">
         <p>
-          <HitlyWordmark /> — human in the loop for agents & workflows.
+          <HitlyWordmark /> — approval inbox for agent work.
         </p>
         <div className="flex gap-4">
           <Link href="/docs">Docs</Link>

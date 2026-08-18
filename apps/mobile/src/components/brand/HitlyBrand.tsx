@@ -9,7 +9,7 @@ export function HitlyWordmark({
   color?: string
 }) {
   return (
-    <Text accessibilityLabel="Hitly" style={{ fontSize: size, fontWeight: '700', color, letterSpacing: -0.3 }}>
+    <Text accessibilityLabel="HITLy" style={{ fontSize: size, fontWeight: '700', color, letterSpacing: -0.3 }}>
       HITL
       <Text
         style={{
@@ -31,7 +31,7 @@ export function HitlyH({ size = 28 }: { size?: number }) {
   const inset = size * 0.26
   return (
     <View
-      accessibilityLabel="Hitly"
+      accessibilityLabel="HITLy"
       style={{
         width: size,
         height: size,
@@ -51,7 +51,7 @@ export function HitlyH({ size = 28 }: { size?: number }) {
 export function HitlyMark({ size = 72 }: { size?: number }) {
   return (
     <View
-      accessibilityLabel="Hitly"
+      accessibilityLabel="HITLy"
       style={[
         styles.mark,
         {

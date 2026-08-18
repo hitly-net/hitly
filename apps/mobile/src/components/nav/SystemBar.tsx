@@ -39,7 +39,7 @@ export function SystemBar() {
           <HamburgerButton />
         )}
         <View style={styles.brand} accessibilityRole="header">
-          <Pressable onPress={() => router.push('/')} style={styles.brandPress} accessibilityLabel="Hitly home">
+          <Pressable onPress={() => router.push('/')} style={styles.brandPress} accessibilityLabel="HITLy home">
             <HitlyWordmark size={18} />
           </Pressable>
         </View>

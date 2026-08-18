@@ -7,7 +7,7 @@ const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-mono' })
 
 export const metadata = {
   title: { default: 'HITLy', template: '%s — HITLy' },
-  description: 'HITLy approval inbox',
+  description: 'HITLy — approval inbox for agent work',
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {

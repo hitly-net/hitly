@@ -87,15 +87,11 @@ export function AppSidebar({ nav }: { nav: EditionNavItem[] }) {
       }
     >
       <div className={collapsed ? 'flex flex-col items-center gap-3' : 'flex items-center justify-between gap-2'}>
-        <Link href="/" className="text-lg font-semibold tracking-tight" title="Hitly">
-          {collapsed ? (
-            'H'
-          ) : (
-            <span className="inline-flex items-center gap-1.5">
-              <HitlyWordmark className="text-lg" />
-              <CloudMark className="h-4 w-4" />
-            </span>
-          )}
+        <Link href="/" className="text-lg font-semibold tracking-tight" title="HITLy">
+          <span className="inline-flex items-center gap-1.5">
+            <HitlyWordmark className={collapsed ? 'text-sm' : 'text-lg'} />
+            {!collapsed && <CloudMark className="h-4 w-4" />}
+          </span>
         </Link>
         <button
           type="button"

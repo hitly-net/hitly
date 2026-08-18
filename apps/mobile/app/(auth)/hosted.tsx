@@ -15,7 +15,7 @@ export default function HostedUrlForm() {
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>Hosted instance</Text>
-      <Text style={styles.sub}>Enter the origin of your Hitly server.</Text>
+      <Text style={styles.sub}>Enter the origin of your HITLy server.</Text>
       <TextInput
         value={url}
         onChangeText={setUrl}

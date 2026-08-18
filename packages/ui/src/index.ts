@@ -4,4 +4,4 @@ export { Card, CardHeader, CardTitle, CardDescription, CardContent } from './car
 export { Badge, type BadgeProps } from './badge'
 export { PluginBadge } from './plugin-badge'
 export { PLUGIN_BRANDS, PluginMark, pluginBrand, type PluginBrand } from './plugin-brand'
-export { HitlyH, HitlyLockup, HitlyMark, HitlyWordmark } from './hitly-brand'
+export { HitlyIcon, HitlyWordmark } from './hitly-brand'
