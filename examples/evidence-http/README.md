@@ -4,9 +4,9 @@ A simple HTTP server that receives `hitly.evidence.v1` events from HITLy and wri
 
 ## Purpose
 
-This example demonstrates how to implement an HTTP evidence sink endpoint for HITLy. It writes evidence events to a local directory as JSON files and provides a browser UI to view events, approval chains, and integrity proofs.
+This example demonstrates how to implement an HTTP evidence sink endpoint for HITLy. The main purpose is to **prove HITLy works** by showing evidence receipts and chains in a browser.
 
-In production, you would implement your own receiver that POSTs evidence events to your durable storage system (database, audit log service, etc.) and serves them via HTTP(S) deep links.
+It writes evidence events to a local directory as JSON files and provides a simple browser UI to view events, approval chains, and integrity proofs. In production, you would implement your own receiver using your durable storage system (database, audit log service, etc.) and serve events via HTTP(S) deep links.
 
 ## Running
 
@@ -20,7 +20,9 @@ The server listens on port 3100 by default (configurable via `PORT` env var).
 
 Open `http://localhost:3100` in your browser to see all events stored in this evidence sink.
 
-**Note:** This example does not enforce project separation. If two HITLy projects point at the same store URL, their events will mix. That is expected. HITLy controls which sink URL each project uses.
+**Main entry point:** The `store_uri` link from a HITLy approval detail page (after decide). That is the product path.
+
+**Note:** This example does not enforce project separation. If two HITLy projects point at the same store URL, their events will mix. That is expected and fine for this example. HITLy controls which sink URL each project uses in its configuration.
 
 ## Configuration
 
@@ -153,10 +155,10 @@ For production use:
 
 ## Browser UI
 
-This example includes a simple browser interface:
+This example includes a simple, ugly-but-functional browser interface:
 
-- **Event page** (`/events/:event_id`) - Shows event details, action, oversight decision, integrity chain, and retention policy
-- **Approval chain** (`/a/:approval_id`) - Shows the complete event sequence for one approval with hash chain verification
-- **Recent approvals** (`/`) - Lists all approvals stored in this sink
+- **Event page** (`/events/:event_id`) - Shows event details, action, oversight decision, integrity chain, and retention policy. This is the main entry point (the `store_uri` from HITLy).
+- **Approval chain** (`/a/:approval_id`) - Shows the complete event sequence for one approval with hash chain verification. Useful as a second hop from the event page.
+- **Event list** (`/`) - Simple list of all events with filter query params for human use (event_id, approval_id, event_type, runId, projectId)
 
 Open the `store_uri` link from the HITLy approval detail page to view the evidence receipt in your browser.

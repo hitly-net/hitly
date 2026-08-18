@@ -112,7 +112,7 @@ function renderEventHtml(event: EvidenceEvent, baseUrl: string): string {
     }
     .header { margin-bottom: 2rem; }
     .wordmark { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
-    .wordmark .sub { font-style: italic; font-weight: 400; }
+    .wordmark .sub { font-style: italic; font-size: 0.65em; line-height: 1; }
     .card { 
       background: white; 
       border: 1px solid #e4e4e7; 
@@ -318,7 +318,7 @@ function renderApprovalChainHtml(events: EvidenceEvent[], approvalId: string, ba
     }
     .header { margin-bottom: 2rem; }
     .wordmark { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
-    .wordmark .sub { font-style: italic; font-weight: 400; }
+    .wordmark .sub { font-style: italic; font-size: 0.65em; line-height: 1; }
     .card { 
       background: white; 
       border: 1px solid #e4e4e7; 
@@ -420,7 +420,7 @@ function renderEventsListHtml(events: EvidenceEvent[], filters: Record<string, s
     }
     .header { margin-bottom: 2rem; }
     .wordmark { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
-    .wordmark .sub { font-style: italic; font-weight: 400; }
+    .wordmark .sub { font-style: italic; font-size: 0.65em; line-height: 1; }
     .card { 
       background: white; 
       border: 1px solid #e4e4e7; 
@@ -677,6 +677,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   server.listen(PORT, () => {
     console.log(`Evidence HTTP receiver listening on http://localhost:${PORT}`)
     console.log(`Events will be written to: ${EVENTS_DIR}`)
-    console.log(`Configure Hitly project evidence sink URL: http://localhost:${PORT}/events`)
+    console.log(`Configure HITLy project evidence sink URL: http://localhost:${PORT}/events`)
   })
 }
