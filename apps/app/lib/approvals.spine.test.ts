@@ -78,7 +78,12 @@ before(async () => {
       res.end()
     }
   })
-  testServer.listen(19999)
+  await new Promise<void>((resolve) => {
+    testServer!.listen(19999, () => {
+      console.log('[test] HTTP evidence sink server listening on port 19999')
+      resolve()
+    })
+  })
 
   client = new pg.Client({ connectionString: DATABASE_URL })
   await client.connect()
