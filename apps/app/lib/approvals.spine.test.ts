@@ -488,31 +488,41 @@ test('HTTP sink fail-closed: append failure prevents origin resume', { timeout: 
   assert.ok(ingestResult.ok, 'Ingest should succeed even if sink fails (fail-open for requested)')
 
   const payload = parseDecisionBody({ decision: 'accept' })
-  assert.ok(payload)
+  assert.ok(payload, 'Payload should be valid')
 
-  // Decide should fail-closed if sink fails
+  console.log('[test] Calling decide with hanging sink (will timeout after 5s)')
+  // Decide should fail-closed if sink hangs (AbortSignal.timeout(5000))
   const decideResult = await decideApproval({
     approvalId: ingestResult.approval.id,
     actorUserId: userAdmin.id,
     payload,
     workspaceId: workspaceA.id,
   })
+  console.log('[test] Decide result:', 'error' in decideResult ? decideResult.error : 'success')
 
   // Check if decision was blocked due to evidence sink failure
-  if ('error' in decideResult && decideResult.error) {
-    assert.ok(
-      decideResult.error.includes('evidence') || decideResult.error.includes('sink'),
-      'Error should mention evidence sink failure'
-    )
-  } else {
-    // If decide succeeded, approval should be pending (not resumed)
-    const approval = await db
-      .select()
-      .from(approvals)
-      .where(eq(approvals.id, ingestResult.approval.id))
-      .limit(1)
-    assert.equal(approval[0]?.status, 'pending', 'Approval should remain pending if sink fails')
-  }
+  assert.ok('error' in decideResult, 'Decide should fail when sink hangs (fail-closed)')
+  assert.ok(
+    decideResult.error.includes('Evidence sink') || 
+    decideResult.error.includes('aborted') || 
+    decideResult.error.includes('timeout'),
+    `Error should mention evidence sink/abort/timeout, got: ${decideResult.error}`
+  )
+
+  // Approval should still be pending (not decided, not resumed)
+  const approval = await db
+    .select()
+    .from(approvals)
+    .where(eq(approvals.id, ingestResult.approval.id))
+    .limit(1)
+  assert.equal(approval[0]?.status, 'pending', 'Approval should remain pending when sink hangs')
+  
+  // Origin should NOT be resumed
+  const decisions = await db
+    .select()
+    .from(decisionRecords)
+    .where(eq(decisionRecords.approvalId, ingestResult.approval.id))
+  assert.equal(decisions.length, 0, 'No decision record should exist when sink hangs')
 
   // Cleanup
   await db.delete(projectApiKeys).where(eq(projectApiKeys.id, apiKeyFail.id))

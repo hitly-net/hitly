@@ -4,7 +4,9 @@ A simple HTTP server that receives `hitly.evidence.v1` events from Hitly and wri
 
 ## Purpose
 
-This example demonstrates how to implement an evidence sink endpoint for Hitly. In production, you would POST evidence events to your own durable storage (S3, database, compliance archive, etc.). This receiver writes events to a local directory for demonstration and development.
+This example demonstrates how to implement an HTTP evidence sink endpoint for Hitly. It writes evidence events to a local directory as JSON files for demonstration and development.
+
+In production, you would implement your own receiver that POSTs evidence events to your durable storage system (S3, database, audit log service, etc.).
 
 ## Running
 
@@ -102,13 +104,21 @@ Append an evidence event.
 ### GET /events/:event_id
 Retrieve a stored evidence event.
 
+## Testing
+
+Run the test suite:
+
+```bash
+yarn test
+```
+
 ## Production Considerations
 
 For production use:
 
-1. **Durable Storage**: Replace local file writes with S3, database, or compliance archive
+1. **Durable Storage**: Replace local file writes with your storage system (S3, database, audit log service)
 2. **Authentication**: Validate `Authorization` header
-3. **Idempotency**: Check `event_id` to prevent duplicate writes
+3. **Idempotency**: Check `event_id` to prevent duplicate writes (this example implements basic idempotency)
 4. **Integrity**: Verify `content_sha256` matches the received event
 5. **Retention**: Honor `retention.min_days` and `retention.expires_at`
 6. **Monitoring**: Log all append operations for audit
