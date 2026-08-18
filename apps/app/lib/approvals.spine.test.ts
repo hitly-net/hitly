@@ -134,6 +134,8 @@ before(async () => {
     ...projectA,
     plugin: 'mastra',
     credentials: {},
+    evidenceSinkType: 'http',
+    evidenceSinkConfig: { url: 'http://localhost:19999/evidence', authHeader: 'Bearer test-token' },
     createdAt: new Date(),
     updatedAt: new Date(),
   })
@@ -147,6 +149,8 @@ before(async () => {
     ...projectB,
     plugin: 'mastra',
     credentials: {},
+    evidenceSinkType: 'http',
+    evidenceSinkConfig: { url: 'http://localhost:19999/evidence', authHeader: 'Bearer test-token' },
     createdAt: new Date(),
     updatedAt: new Date(),
   })
