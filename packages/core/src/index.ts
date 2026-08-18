@@ -72,7 +72,9 @@ export interface ApprovalEnvelope {
   traceId?: string
   spanId?: string
   agentId?: string
+  /** AI system identifier being governed (e.g. "refund-agent-prod") */
   systemId?: string
+  /** This AI system's record in your AI inventory/registry (Layer 1), not a business object ID */
   inventoryId?: string
   policyId?: string
   policyRationale?: string
@@ -94,7 +96,9 @@ export interface OriginRef {
   traceId?: string
   spanId?: string
   agentId?: string
+  /** AI system identifier being governed (e.g. "refund-agent-prod") */
   systemId?: string
+  /** This AI system's record in your AI inventory/registry (Layer 1), not a business object ID */
   inventoryId?: string
   policyId?: string
   policyRationale?: string

@@ -66,8 +66,8 @@ Evidence fields provide audit context for compliance and governance. All are opt
 | `traceId` | OTel/Mastra context | Distributed trace ID |
 | `spanId` | OTel/Mastra context | Current span ID |
 | `agentId` | Mastra/implementor | Agent/workflow identifier (Mastra fills for agents) |
-| `systemId` | Implementor | External system identifier (e.g. order service, payment gateway) |
-| `inventoryId` | Implementor | Asset/resource identifier in the external system |
+| `systemId` | Implementor | AI system identifier being governed (e.g. "refund-agent-prod", "order-workflow") |
+| `inventoryId` | Implementor | This AI system's record in your AI inventory/registry (Layer 1), not a business object ID |
 | `policyId` | Implementor | Policy or rule that triggered this approval |
 | `policyRationale` | Implementor | Why this action requires approval |
 | `riskTier` | Implementor | Risk classification (e.g. "high", "medium", "low") |
@@ -75,7 +75,11 @@ Evidence fields provide audit context for compliance and governance. All are opt
 | `sensitivity` | Implementor | Sensitivity flags (not raw PII) |
 | `dataCategories` | Implementor | Data category flags for GDPR/compliance |
 
+<<<<<<< HEAD
 **HITLy is deployer tooling, not the high-risk system.** `systemId` refers to *your* system (the one being governed), not HITLy itself.
+=======
+**Hitly is deployer tooling, not the high-risk system.** `systemId` is the AI system you are governing (e.g. your agent or workflow deployment). `inventoryId` is that system's entry in your AI inventory/registry, not a business resource like an order ID or user ID.
+>>>>>>> 11dc1de (feat: add test button, fix inventoryId docs, update mastra examples)
 
 ### What Mastra Fills Automatically
 
@@ -99,8 +103,8 @@ const approvalStep = createHitlyApprovalStep({
   action: { name: 'send_refund', args: { orderId, amount } },
 
   // Evidence fields the implementor must provide
-  systemId: 'order-service',
-  inventoryId: orderId,
+  systemId: 'refund-agent-prod',
+  inventoryId: 'ai-inv-refund-agent-v2',  // Your AI inventory record, not orderId
   policyId: 'refund-over-100',
   policyRationale: 'Refunds over $100 require manager approval',
   riskTier: 'medium',

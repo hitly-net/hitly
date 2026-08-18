@@ -6,6 +6,7 @@ import { AppShell } from '@/components/app-shell'
 import { ProjectApiKeys } from '@/components/project-api-keys'
 import { ProjectResumeSecret } from '@/components/project-resume-secret'
 import { ProjectTabs } from '@/components/project-tabs'
+import { TestEvidenceSink } from '@/components/test-evidence-sink'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
 import { ensureProjectResumeSecret } from '@/lib/resume-secret'
@@ -147,6 +148,12 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
           Save
         </button>
       </form>
+
+      {project.evidenceSinkType === 'http' && sinkConfig.url && (
+        <div className="mt-3 max-w-xl">
+          <TestEvidenceSink projectId={id} />
+        </div>
+      )}
 
       <h2 className="mt-10 text-lg font-semibold">API keys</h2>
       <p className="mt-1 text-sm text-zinc-500">Authenticate ingest. The secret is shown once when you create or regenerate a key.</p>

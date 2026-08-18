@@ -178,8 +178,8 @@ For audit and compliance, pass evidence context to `notifyHitlyApproval()`:
 | `traceId` | From OTel context | If no OTel | Distributed trace ID |
 | `spanId` | From OTel context | If no OTel | Current span ID |
 | `agentId` | For agents | For workflows | Agent/workflow identifier |
-| `systemId` | No | Yes | External system ID (e.g. "order-service") |
-| `inventoryId` | No | Yes | Resource ID in that system (e.g. order ID) |
+| `systemId` | No | Yes | AI system being governed (e.g. "refund-agent-prod") |
+| `inventoryId` | No | Yes | This AI system's record in your inventory/registry (Layer 1) |
 | `policyId` | No | Yes | Policy that triggered approval |
 | `policyRationale` | No | Yes | Why approval is required |
 | `riskTier` | No | Yes | Risk level (e.g. "high", "medium", "low") |
@@ -200,8 +200,8 @@ await notifyHitlyApproval(
     action: { name: 'send-refund', args: inputData },
 
     // Evidence fields
-    systemId: 'order-service',
-    inventoryId: inputData.orderId,
+    systemId: 'refund-agent-prod',
+    inventoryId: 'ai-inv-refund-agent-v2',  // Your AI inventory record, not orderId
     policyId: 'refund-over-100',
     policyRationale: 'Refunds over $100 require manager approval',
     riskTier: 'medium',

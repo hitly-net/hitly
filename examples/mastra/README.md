@@ -24,3 +24,31 @@ The local model defaults:
 OPENAI_BASE_URL=http://192.168.10.199:1234/v1
 MASTRA_MODEL=qwen3.6-35b-a3b-mtp
 ```
+
+## Evidence Fields
+
+Both examples send complete evidence for the audit trail:
+
+- `systemId`: `refund-agent-prod` / `refund-workflow-prod` (the AI system being governed)
+- `inventoryId`: `ai-inv-refund-agent-v2` / `ai-inv-refund-workflow-v1` (this system's record in your AI inventory/registry)
+- `policyId`: `refund-over-100` (policy requiring approval)
+- `policyRationale`: Why approval is required
+- `riskTier`: `high` (>$1000), `medium` (>$100), or `low`
+- `toolName`: `send_refund`
+- `sensitivity`: `["financial"]`
+- `dataCategories`: `["transaction", "customer"]`
+
+Evidence events are written to the HTTP sink configured in project settings. To demo the evidence receiver:
+
+1. Run `examples/evidence-http` on port 3100 (or set `PORT`)
+2. In Hitly project settings, set Evidence Storage:
+   - Type: HTTP
+   - URL: `http://localhost:3100/events`
+3. Test the sink (button next to URL field)
+4. Approve a refund in Hitly
+5. Check `examples/evidence-http/events/*.json` for the evidence chain
+
+Each approval creates 3-4 evidence events:
+- `requested` (ingest)
+- `decided` (reviewer decision, **fail-closed**: origin NOT resumed if sink fails)
+- `resumed` or `resume_failed` (origin outcome)

@@ -39,6 +39,15 @@ const server = createServer(async (req, res) => {
 
     try {
       const event = JSON.parse(body) as EvidenceEvent
+      
+      // Handle ping/test events
+      if (event.event_type === 'ping' || req.headers['x-hitly-ping'] === 'true') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, message: 'Evidence sink is reachable' }))
+        console.log('Received ping from Hitly')
+        return
+      }
+
       const eventId = event.event_id
       const filePath = join(EVENTS_DIR, `${eventId}.json`)
 

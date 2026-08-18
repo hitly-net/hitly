@@ -33,7 +33,9 @@ export interface MastraIngestPayload {
   mastraBaseUrl?: string
   traceId?: string
   spanId?: string
+  /** AI system identifier being governed (e.g. "refund-agent-prod") */
   systemId?: string
+  /** This AI system's record in your AI inventory/registry (Layer 1), not a business object ID */
   inventoryId?: string
   policyId?: string
   policyRationale?: string
@@ -373,7 +375,9 @@ export interface HitlyApprovalStepConfig {
   threadId?: string
   traceId?: string
   spanId?: string
+  /** AI system identifier being governed (e.g. "refund-agent-prod") */
   systemId?: string
+  /** This AI system's record in your AI inventory/registry (Layer 1), not a business object ID */
   inventoryId?: string
   policyId?: string
   policyRationale?: string
