@@ -512,6 +512,7 @@ test('replay decide is not 200', async () => {
     // First decide left it in an open status (pending or failed_resume), second can succeed
     // This is acceptable - the test verifies that closed statuses block replay
     assert.ok(true, `First decide left approval in open status ${status}, replay can proceed`)
+  }
 })
 
 test('HTTP sink fail-closed: append failure prevents origin resume', { timeout: 20000 }, async () => {
