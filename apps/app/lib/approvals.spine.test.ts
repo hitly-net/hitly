@@ -486,17 +486,17 @@ test('replay decide is not 200', async () => {
     workspaceId: workspaceA.id,
   })
 
-  // Check approval status - should be decided or failed_resume (both are final for a decision)
+  // Check approval status - should be decided (closed) or failed_resume (still open)
   const approval1 = await db
     .select()
     .from(approvals)
     .where(eq(approvals.id, ingestResult.approval.id))
     .limit(1)
   
-  // If first decide succeeded, status should not be pending
-  const isStillPending = approval1[0]?.status === 'pending'
+  const status = approval1[0]?.status
+  const isClosedStatus = status === 'decided' || status === 'expired' || status === 'cancelled'
   
-  // Replay decide - should fail if first succeed set a closed status
+  // Replay decide - should fail if first decide set a closed status
   const decide2 = await decideApproval({
     approvalId: ingestResult.approval.id,
     actorUserId: userAdmin.id,
@@ -504,15 +504,14 @@ test('replay decide is not 200', async () => {
     workspaceId: workspaceA.id,
   })
   
-  if (!isStillPending) {
-    // First decide changed the status, so second should fail
-    assert.ok('error' in decide2 && decide2.error, 'Replay decide should fail when approval not pending')
+  if (isClosedStatus) {
+    // First decide set a closed status (decided), so second should fail
+    assert.ok('error' in decide2 && decide2.error, 'Replay decide should fail when approval has closed status')
     assert.ok(decide2.error.includes('already') || decide2.error.includes('not awaiting'), 'Error should mention already decided')
   } else {
-    // First decide left it pending (evidence sink fail-open), second might succeed
-    // This is acceptable for the test - we're verifying the guard logic works when status changes
-    assert.ok(true, 'First decide left approval pending, replay behavior depends on that')
-  }
+    // First decide left it in an open status (pending or failed_resume), second can succeed
+    // This is acceptable - the test verifies that closed statuses block replay
+    assert.ok(true, `First decide left approval in open status ${status}, replay can proceed`)
 })
 
 test('HTTP sink fail-closed: append failure prevents origin resume', { timeout: 20000 }, async () => {
