@@ -1,4 +1,4 @@
-import { proxyActivities, defineSignal, setHandler, condition } from '@temporalio/workflow'
+import { proxyActivities, defineSignal, setHandler, condition, workflowInfo } from '@temporalio/workflow'
 import type * as activities from './activities'
 import type { RefundInput, HitlyDecision } from './types'
 
@@ -26,9 +26,9 @@ export async function refundWorkflow(input: RefundInput): Promise<string> {
   })
 
   // Notify HITLy (activity POSTs to HITLy)
-  const workflowId = (globalThis as any).workflowInfo?.().workflowId ?? 'unknown'
+  const wfInfo = workflowInfo()
   await notifyHitlyActivity({
-    workflowId,
+    workflowId: wfInfo.workflowId,
     orderId: input.orderId,
     amount: input.amount,
   })

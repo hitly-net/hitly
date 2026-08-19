@@ -11,10 +11,15 @@ const mockConnection = {
 
 const mockWorkflowHandle = {
   signal: mock.fn(async () => {}),
+  // These should never be called (signal-only resume)
+  start: mock.fn(async () => {}),
 }
 
 const mockWorkflowClient = {
   getHandle: mock.fn(() => mockWorkflowHandle),
+  // These should never be called (signal-only resume)
+  start: mock.fn(async () => {}),
+  signalWithStart: mock.fn(async () => {}),
 }
 
 // Mock the @temporalio/client module
@@ -296,6 +301,51 @@ describe('@hitly/plugin-temporal', () => {
 
       // Restore original
       mockWorkflowHandle.signal = originalSignal
+    })
+
+    it('should only call getHandle + signal, never start or signalWithStart', async () => {
+      // Reset all mocks
+      mockWorkflowClient.getHandle.mock.resetCalls()
+      mockWorkflowHandle.signal.mock.resetCalls()
+      mockWorkflowClient.start.mock.resetCalls()
+      mockWorkflowClient.signalWithStart.mock.resetCalls()
+      mockWorkflowHandle.start.mock.resetCalls()
+
+      const origin: OriginRef = {
+        plugin: 'temporal',
+        projectId: 'prj_123',
+        runId: 'refund-wf-abc',
+        resumeHandle: {
+          address: 'localhost:7233',
+          namespace: 'default',
+          workflowId: 'refund-wf-abc',
+          signal: HITLY_TEMPORAL_SIGNAL,
+        },
+      }
+
+      const payload: DecisionPayload = {
+        decision: 'accept',
+      }
+
+      await temporalPlugin.resume(origin, payload)
+
+      // Assert getHandle was called once
+      const getHandleCalls = (mockWorkflowClient.getHandle as any).mock.calls
+      assert.equal(getHandleCalls.length, 1)
+      assert.equal(getHandleCalls[0].arguments[0], 'refund-wf-abc')
+
+      // Assert signal was called once
+      const signalCalls = (mockWorkflowHandle.signal as any).mock.calls
+      assert.equal(signalCalls.length, 1)
+
+      // Assert start/signalWithStart were NEVER called
+      const clientStartCalls = (mockWorkflowClient.start as any).mock.calls
+      const clientSignalWithStartCalls = (mockWorkflowClient.signalWithStart as any).mock.calls
+      const handleStartCalls = (mockWorkflowHandle.start as any).mock.calls
+
+      assert.equal(clientStartCalls.length, 0, 'client.start should never be called')
+      assert.equal(clientSignalWithStartCalls.length, 0, 'client.signalWithStart should never be called')
+      assert.equal(handleStartCalls.length, 0, 'handle.start should never be called')
     })
   })
 
