@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ActivityIndicator, Alert, ScrollView, Text, StyleSheet } from 'react-native'
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, StyleSheet } from 'react-native'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
 import { allowedActionsFor } from '@hitly/core'
 import { colors } from '../../src/theme'
@@ -94,6 +94,18 @@ export default function WorkItemDetailScreen() {
       />
       <ArgsBlock args={detail.envelope.action.args} />
       <DecisionHistory decisions={detail.decisions} />
+      {detail.evidenceReceipt ? (
+        <Pressable
+          style={styles.receiptLink}
+          onPress={() => {
+            if (detail.evidenceReceipt) {
+              void Linking.openURL(detail.evidenceReceipt.storeUri)
+            }
+          }}
+        >
+          <Text style={styles.receiptText}>View evidence receipt</Text>
+        </Pressable>
+      ) : null}
       {detail.canAct && !expired ? (
         <DecisionBar
           allowed={allowed}
@@ -104,10 +116,9 @@ export default function WorkItemDetailScreen() {
               router.back()
             } catch (err) {
               const next = await client?.approval(detail.id).catch(() => null)
-              if (next && !next.canAct) {
+              if (next) {
                 setDetail(next)
                 await refresh()
-                return
               }
               throw err
             }
@@ -132,4 +143,6 @@ const styles = StyleSheet.create({
   screen: { padding: 16, backgroundColor: colors.bg, paddingBottom: 48 },
   loader: { marginTop: 48 },
   error: { padding: 16, color: colors.danger },
+  receiptLink: { marginTop: 16, paddingVertical: 8 },
+  receiptText: { fontSize: 14, color: colors.accent, textDecorationLine: 'underline' },
 })

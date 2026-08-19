@@ -1,6 +1,6 @@
-# Hitly mobile app
+# HITLy mobile app
 
-Reviewer-first Expo (React Native) app for iOS and Android. One binary signs into **Hitly Cloud** or a **self-hosted** instance, receives native push, and opens the approval that needs a decision.
+Reviewer-first Expo (React Native) app for iOS and Android. One binary signs into **HITLy Cloud** or a **self-hosted** instance, receives native push, and opens the approval that needs a decision.
 
 Web remains the admin surface (projects, keys, rules, channels, billing). Mobile owns inbox, decide, and attention.
 
@@ -70,7 +70,7 @@ There is no in-app edition toggle on the web — Cloud vs OSS is package presenc
 
 ### InstanceGate
 
-- **Hitly Cloud** — lock `baseUrl` to `https://cloud.hitly.net`.
+- **HITLy Cloud** — lock `baseUrl` to `https://cloud.hitly.net`.
 - **Hosted** — user enters origin (normalize `https://`, strip trailing slash). Probe `GET /api/v1/health`. Persist `{ baseUrl, label }` in SecureStore.
 
 ### Login
@@ -271,7 +271,7 @@ On ingest, `notifyAssignee` also POSTs to `https://exp.host/--/api/v2/push/send`
 
 ```json
 {
-  "title": "Hitly: send-refund needs a decision",
+  "title": "HITLy: send-refund needs a decision",
   "body": "Acme refunds · expires in 15m",
   "data": {
     "type": "approval",

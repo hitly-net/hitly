@@ -66,6 +66,7 @@ export type ApprovalDetail = {
   canAct: boolean
   canCancel: boolean
   decisions: DecisionRow[]
+  evidenceReceipt?: { storeUri: string }
 }
 
 export type WorkspaceSettings = {

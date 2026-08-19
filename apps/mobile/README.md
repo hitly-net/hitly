@@ -1,6 +1,6 @@
-# Hitly mobile
+# HITLy mobile
 
-Expo reviewer app for iOS and Android. Sign into Hitly Cloud or a hosted instance, get notified, and open the work item that needs a decision.
+Expo reviewer app for iOS and Android. Sign into HITLy Cloud or a hosted instance, get notified, and open the work item that needs a decision.
 
 ```bash
 yarn install
