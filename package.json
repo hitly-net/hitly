@@ -24,7 +24,7 @@
     "db:down": "docker compose -f docker-compose.yml down",
     "db:generate": "yarn workspace @hitly/db db:generate",
     "db:migrate": "yarn workspace @hitly/db db:migrate",
-    "test": "yarn workspace @hitly/mail test && yarn workspace @hitly/core test && yarn workspace @hitly/app test && yarn workspace @hitly/mobile test && yarn workspace @hitly/example-evidence-http test && yarn workspace @hitly/plugin-langgraph test && yarn workspace @hitly/plugin-temporal test",
+    "test": "yarn workspace @hitly/mail test && yarn workspace @hitly/core test && yarn workspace @hitly/app test && yarn workspace @hitly/mobile test && yarn workspace @hitly/example-evidence-http test && yarn workspace @hitly/plugin-langgraph test && yarn workspace @hitly/plugin-temporal test && yarn workspace @hitly/plugin-hermes test",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",

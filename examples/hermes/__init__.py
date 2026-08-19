@@ -11,18 +11,24 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_POLL_INTERVAL = 1.5
-_poller_started = False
-_file_lock = threading.Lock()
-
 _OPEN_STATUSES = frozenset({"pending", "failed_resume"})
 _ACCEPT_DECISIONS = frozenset({"accept", "respond", "edit"})
 _REJECT_DECISIONS = frozenset({"reject", "ignore", "cancel"})
+
+# Callback state: maps approval_id → response
+_callback_responses: dict[str, dict[str, Any]] = {}
+_callback_lock = threading.Lock()
+
+# Webhook server state
+_webhook_server: HTTPServer | None = None
+_webhook_port: int = 0
+_webhook_lock = threading.Lock()
 
 
 def _hermes_home() -> Path:
@@ -107,7 +113,7 @@ def _save_kanban_items(items: list[dict[str, str]]) -> None:
 
 
 def _remember_kanban(task_id: str, approval_id: str, run_id: str, kanban_status: str) -> None:
-    with _file_lock:
+    with threading.Lock():
         items = _load_kanban_items()
         key = (task_id, run_id)
         items = [item for item in items if (item.get("task_id"), item.get("run_id")) != key]
@@ -123,7 +129,7 @@ def _remember_kanban(task_id: str, approval_id: str, run_id: str, kanban_status:
 
 
 def _drop_kanban(approval_id: str) -> None:
-    with _file_lock:
+    with threading.Lock():
         items = [item for item in _load_kanban_items() if item.get("approval_id") != approval_id]
         _save_kanban_items(items)
 
@@ -154,6 +160,62 @@ def _respond(request: Any, choice: str) -> Any:
     raise RuntimeError("Hermes approval request is missing respond()")
 
 
+class _CallbackHandler(BaseHTTPRequestHandler):
+    """Receives HITLy resume callbacks for command approvals."""
+
+    def log_message(self, format: str, *args: Any) -> None:
+        logger.debug(format, *args)
+
+    def do_POST(self) -> None:
+        """Handle POST from HITLy resume."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length)
+            body = json.loads(body_bytes.decode("utf-8"))
+
+            approval_id = body.get("id")
+            if not approval_id:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'{"error": "Missing id"}')
+                return
+
+            with _callback_lock:
+                _callback_responses[approval_id] = body
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok": true}')
+        except Exception as e:
+            logger.exception("Callback handler error")
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+
+def _ensure_webhook_server() -> int:
+    """Start local webhook server if not running. Returns the port."""
+    global _webhook_server, _webhook_port
+    with _webhook_lock:
+        if _webhook_server is not None:
+            return _webhook_port
+
+        # Find available port
+        server = HTTPServer(("127.0.0.1", 0), _CallbackHandler)
+        _webhook_port = server.server_address[1]
+        _webhook_server = server
+
+        def serve():
+            logger.info(f"HITLy callback server listening on port {_webhook_port}")
+            _webhook_server.serve_forever()
+
+        thread = threading.Thread(target=serve, name="hitly-webhook", daemon=True)
+        thread.start()
+
+        return _webhook_port
+
+
 def present(ctx: Any, request: Any) -> Any:
     settings = _settings(ctx)
     if not settings["api_url"] or not settings["api_key"] or not settings["project_id"]:
@@ -168,6 +230,10 @@ def present(ctx: Any, request: Any) -> Any:
     session_key = str(_attr(request, "session_key", "sessionKey", default="") or "")
     pattern_key = str(_attr(request, "pattern_key", "patternKey", default="") or "")
     run_id = request_id or session_key or f"hermes-{int(time.time())}"
+
+    # Start webhook server and build resumeUrl
+    port = _ensure_webhook_server()
+    resume_url = f"http://127.0.0.1:{port}/hitly-callback"
 
     try:
         created = _request_json(
@@ -186,6 +252,8 @@ def present(ctx: Any, request: Any) -> Any:
                 "command": command,
                 "description": description or None,
                 "expiresAt": _iso_expiry(timeout),
+                "resumeUrl": resume_url,
+                "metadata": {"runId": run_id},
             },
             idempotency_key=request_id or run_id,
         )
@@ -198,22 +266,27 @@ def present(ctx: Any, request: Any) -> Any:
         logger.error("Hitly ingest returned no approval id")
         return _respond(request, "deny")
 
+    # Wait for callback
     deadline = time.monotonic() + max(timeout - 2, 5)
     while time.monotonic() < deadline:
-        try:
-            status = _request_json(settings, "GET", f"/api/v1/approvals/{approval_id}", timeout=15)
-        except Exception:
-            logger.exception("Hitly command poll failed")
-            time.sleep(_POLL_INTERVAL)
-            continue
-        state = str(status.get("status") or "")
-        decision = status.get("decision")
-        if state in _OPEN_STATUSES:
-            time.sleep(_POLL_INTERVAL)
-            continue
-        if decision in _ACCEPT_DECISIONS:
-            return _respond(request, _accept_choice(request))
-        return _respond(request, "deny")
+        with _callback_lock:
+            response = _callback_responses.get(approval_id)
+        if response:
+            decision = response.get("decision")
+            if decision in _ACCEPT_DECISIONS:
+                # Clean up
+                with _callback_lock:
+                    _callback_responses.pop(approval_id, None)
+                return _respond(request, _accept_choice(request))
+            elif decision in _REJECT_DECISIONS:
+                with _callback_lock:
+                    _callback_responses.pop(approval_id, None)
+                return _respond(request, "deny")
+        time.sleep(0.5)
+
+    # Timeout
+    with _callback_lock:
+        _callback_responses.pop(approval_id, None)
     return _respond(request, "deny")
 
 
@@ -233,6 +306,11 @@ def _ingest_kanban(
         logger.error("Hitly kanban ingest skipped: missing settings")
         return
     run_id = os.environ.get("HERMES_KANBAN_RUN_ID", "").strip() or f"{task_id}:{kanban_status}"
+
+    # Kanban also uses callback for resume
+    port = _ensure_webhook_server()
+    resume_url = f"http://127.0.0.1:{port}/hitly-callback"
+
     try:
         created = _request_json(
             settings,
@@ -248,6 +326,8 @@ def _ingest_kanban(
                 "kanbanStatus": kanban_status,
                 "reason": reason,
                 "blockKind": block_kind,
+                "resumeUrl": resume_url,
+                "metadata": {"taskId": task_id, "runId": run_id},
             },
             idempotency_key=f"{task_id}:{run_id}",
         )
@@ -270,59 +350,58 @@ def _hermes_kanban(*args: str) -> None:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"hermes kanban {' '.join(args)} failed")
 
 
-def _apply_kanban_decision(item: dict[str, str], status: dict[str, Any]) -> None:
+def _apply_kanban_decision(item: dict[str, str], decision_body: dict[str, Any]) -> None:
     task_id = item["task_id"]
-    decision = status.get("decision")
-    response = status.get("response")
+    decision = decision_body.get("decision")
+    response = decision_body.get("response")
     note = response.strip() if isinstance(response, str) and response.strip() else ""
     if decision in _ACCEPT_DECISIONS:
-        _hermes_kanban("comment", task_id, note or "Approved in Hitly.")
+        _hermes_kanban("comment", task_id, note or "Approved in HITLy.")
         _hermes_kanban("unblock", task_id)
         _drop_kanban(item["approval_id"])
         return
-    if decision in _REJECT_DECISIONS or str(status.get("status") or "") in {"expired", "cancelled"}:
-        _hermes_kanban("comment", task_id, note or f"Rejected in Hitly ({decision or status.get('status')}).")
+    if decision in _REJECT_DECISIONS:
+        _hermes_kanban("comment", task_id, note or f"Rejected in HITLy ({decision}).")
         _drop_kanban(item["approval_id"])
         return
 
 
-def _poller_loop(ctx: Any) -> None:
+def _kanban_poller_loop(ctx: Any) -> None:
+    """Poll for kanban callback responses and apply them."""
     while True:
         try:
-            settings = _settings(ctx)
-            if settings["api_url"] and settings["api_key"]:
-                with _file_lock:
-                    items = list(_load_kanban_items())
-                for item in items:
+            items = list(_load_kanban_items())
+            for item in items:
+                approval_id = item.get("approval_id")
+                if not approval_id:
+                    continue
+
+                with _callback_lock:
+                    decision_body = _callback_responses.get(approval_id)
+
+                if decision_body:
                     try:
-                        status = _request_json(
-                            settings,
-                            "GET",
-                            f"/api/v1/approvals/{item['approval_id']}",
-                            timeout=15,
-                        )
-                    except Exception:
-                        logger.exception("Hitly kanban poll failed for %s", item.get("approval_id"))
-                        continue
-                    if str(status.get("status") or "") in _OPEN_STATUSES:
-                        continue
-                    try:
-                        _apply_kanban_decision(item, status)
+                        _apply_kanban_decision(item, decision_body)
+                        with _callback_lock:
+                            _callback_responses.pop(approval_id, None)
                     except Exception:
                         logger.exception("Hermes kanban resume failed for %s", item.get("task_id"))
         except Exception:
             logger.exception("Hitly kanban poller iteration failed")
-        time.sleep(5)
+        time.sleep(2)
 
 
-def _maybe_start_poller(ctx: Any) -> None:
-    global _poller_started
-    if _poller_started:
+_kanban_poller_started = False
+
+
+def _maybe_start_kanban_poller(ctx: Any) -> None:
+    global _kanban_poller_started
+    if _kanban_poller_started:
         return
     if os.environ.get("HERMES_KANBAN_TASK") or os.environ.get("HERMES_CRON_SESSION"):
         return
-    _poller_started = True
-    thread = threading.Thread(target=_poller_loop, args=(ctx,), name="hitly-kanban-poller", daemon=True)
+    _kanban_poller_started = True
+    thread = threading.Thread(target=_kanban_poller_loop, args=(ctx,), name="hitly-kanban-poller", daemon=True)
     thread.start()
 
 
@@ -355,4 +434,4 @@ def register(ctx: Any) -> None:
 
     ctx.register_hook("kanban_task_blocked", on_blocked)
     ctx.register_hook("post_tool_call", on_tool)
-    _maybe_start_poller(ctx)
+    _maybe_start_kanban_poller(ctx)

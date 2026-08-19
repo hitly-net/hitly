@@ -13,17 +13,20 @@ Hermes “personas” are **named profiles** (`~/.hermes/profiles/<name>/`, each
 
 Dangerous terminal / `execute_code` calls pause in Hermes `tools/approval.py`. Selecting `security.approval.transport: hitly` replaces the built-in prompt (including Telegram `/approve`).
 
-1. The plugin `present()` POSTs the command to HITL<sub><i>y</i></sub> and **polls** until you decide.
-2. Accept maps to Hermes `once`; reject / timeout maps to `deny`.
-3. Hermes still enforces `approvals.timeout` (default **300 seconds**). HITL<sub><i>y</i></sub> SLA can be longer; the command still denies when Hermes times out.
+1. The plugin `present()` starts a local webhook listener and POSTs the command + `resumeUrl` to HITL<sub><i>y</i></sub>.
+2. The plugin waits on the local callback (not polling HITL<sub><i>y</i></sub>).
+3. Reviewer decides in HITL<sub><i>y</i></sub>.
+4. HITL<sub><i>y</i></sub> POSTs JSON to `resumeUrl`. Accept maps to Hermes `once`; reject / timeout maps to `deny`.
+5. Hermes still enforces `approvals.timeout` (default **300 seconds**). HITL<sub><i>y</i></sub> SLA can be longer; the command still denies when Hermes times out.
 
 ### Kanban workers (autonomous profiles)
 
 The gateway dispatcher spawns `hermes -p <profile>` for board tasks. Those workers **exit** when they need a human — they call `kanban_block` or `kanban_request_review`. That is the HITL path for unattended personas.
 
-1. The plugin POSTs a HITL<sub><i>y</i></sub> card (`kind: kanban`).
-2. Accept → `hermes kanban comment` + `unblock` on the Hermes host (gateway poller).
-3. Reject → comment, leave the card blocked.
+1. The plugin POSTs a HITL<sub><i>y</i></sub> card (`kind: kanban`) with a `resumeUrl` pointing to the local webhook.
+2. Reviewer decides in HITL<sub><i>y</i></sub>.
+3. HITL<sub><i>y</i></sub> POSTs the decision JSON to `resumeUrl`.
+4. Gateway poller receives callback → `hermes kanban comment` + `unblock` (accept) or comment only (reject).
 
 HITL<sub><i>y</i></sub> never POSTs into `hermes dashboard` (localhost-only by default).
 
@@ -65,6 +68,10 @@ security:
 Kanban ingest works even if `transport` is unset. Command routing needs both the plugin **and** `security.approval.transport: hitly`.
 
 `HITLY_API_URL`, `HITLY_API_KEY`, and `HITLY_PROJECT_ID` are env fallbacks for the same settings.
+
+### Resume callback requirements
+
+The `resumeUrl` must be reachable from the HITL<sub><i>y</i></sub> process. Same-machine OSS deployments work fine (`127.0.0.1`). Cloud HITL<sub><i>y</i></sub> cannot reach a laptop `localhost` unless you use a tunnel (ngrok, Tailscale Funnel, etc.).
 
 ## Decision mapping
 
