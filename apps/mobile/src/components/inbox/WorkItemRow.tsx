@@ -3,22 +3,9 @@ import type { WorkItemRow } from '../../types'
 import { colors } from '../../theme'
 import { PluginMark } from './PluginMark'
 import { SlaChip } from './SlaChip'
+import { resultLabel } from './WorkItemRow.helpers'
 
-const DECISION_LABEL: Record<string, string> = {
-  accept: 'accepted',
-  reject: 'rejected',
-  edit: 'edited',
-  respond: 'responded',
-  ignore: 'ignored',
-  cancel: 'cancelled',
-}
-
-function resultLabel(item: WorkItemRow) {
-  if (item.status === 'decided' && item.decision) {
-    return DECISION_LABEL[item.decision] ?? item.decision
-  }
-  return item.status.replaceAll('_', ' ')
-}
+export { resultLabel }
 
 export function WorkItemRowView({ item, onPress }: { item: WorkItemRow; onPress: () => void }) {
   return (

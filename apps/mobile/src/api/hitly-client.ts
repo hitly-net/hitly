@@ -57,9 +57,9 @@ export function createHitlyClient(options: ClientOptions) {
   return {
     async health() {
       const response = await fetch(`${options.baseUrl}/api/v1/health`, { headers: { accept: 'application/json' } })
-      if (!response.ok) throw new Error('Not a Hitly instance')
+      if (!response.ok) throw new Error('Not a HITLy instance')
       const data = (await response.json()) as { ok?: boolean; product?: string }
-      if (!data.ok || data.product !== 'hitly') throw new Error('Not a Hitly instance')
+      if (!data.ok || data.product !== 'hitly') throw new Error('Not a HITLy instance')
       return data
     },
     async signIn(email: string, password: string) {

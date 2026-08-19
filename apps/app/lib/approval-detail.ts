@@ -6,6 +6,7 @@ import { canDecide, getProjectAccess } from './rbac'
 import { originFields, envelopeMetadata } from './origin'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
+import { loadEvidenceReceiptForDisplay } from './evidence'
 
 export async function getApprovalDetail(args: {
   approvalId: string
@@ -60,6 +61,13 @@ export async function getApprovalDetail(args: {
       })),
     )
 
+    const evidenceReceipt = await loadEvidenceReceiptForDisplay(approval.id, args.workspaceId)
+    const evidenceReceiptForApi =
+      evidenceReceipt &&
+      (evidenceReceipt.storeUri.startsWith('http://') || evidenceReceipt.storeUri.startsWith('https://'))
+        ? { storeUri: evidenceReceipt.storeUri }
+        : undefined
+
     return {
       ok: true as const,
       id: approval.id,
@@ -80,6 +88,7 @@ export async function getApprovalDetail(args: {
       canAct,
       canCancel,
       decisions: decodedDecisions,
+      evidenceReceipt: evidenceReceiptForApi,
     }
   })
 }

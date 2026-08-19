@@ -1,12 +1,8 @@
 import { View, Pressable, Text, StyleSheet } from 'react-native'
 import { colors } from '../../theme'
+import { INBOX_SCOPES, isInboxScope, type InboxScope } from './InboxScopeTabs.types'
 
-export const INBOX_SCOPES = ['open', 'all', 'closed'] as const
-export type InboxScope = (typeof INBOX_SCOPES)[number]
-
-export function isInboxScope(value: string | undefined): value is InboxScope {
-  return Boolean(value && (INBOX_SCOPES as readonly string[]).includes(value))
-}
+export { INBOX_SCOPES, isInboxScope, type InboxScope }
 
 export function InboxScopeTabs({ value, onChange }: { value: InboxScope; onChange: (scope: InboxScope) => void }) {
   return (
