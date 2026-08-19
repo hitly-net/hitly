@@ -41,11 +41,11 @@ const plugins = [
   {
     id: 'langgraph',
     name: 'LangGraph',
-    status: 'Coming soon',
+    status: 'Available',
     href: '/integrations/langgraph',
     body: (
       <>
-        Maps HumanInterrupt onto the <HitlyWordmark /> envelope and resumes with HumanResponse.
+        notify_hitly_approval() then interrupt(). Signed HumanResponse resumes the original thread. First-class plugin.
       </>
     ),
   },
