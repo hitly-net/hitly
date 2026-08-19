@@ -10,6 +10,13 @@ from src.hitly import notify_hitly_approval, HitlyApprovalConfig
 from src.resume_auth import verify_hitly_resume, HitlyResumeError
 
 
+def test_server_imports_command():
+    """Test that server.py properly imports Command (regression test)."""
+    import src.server
+    # Command should be available in server module namespace
+    assert hasattr(src.server, 'Command'), "server.py must import Command from langgraph.types"
+
+
 @pytest.mark.asyncio
 async def test_notify_hitly_payload():
     """Test that notify_hitly sends the correct payload shape."""
