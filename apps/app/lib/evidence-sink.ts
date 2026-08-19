@@ -183,7 +183,8 @@ export class S3EvidenceSink implements EvidenceSink {
 
     const authorizationHeader = `AWS4-HMAC-SHA256 Credential=${this.config.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
 
-    const putUrl = `${url.protocol}//${host}${canonicalUri}`
+    const hostWithPort = url.port ? `${host}:${url.port}` : host
+    const putUrl = `${url.protocol}//${hostWithPort}${canonicalUri}`
 
     const response = await fetch(putUrl, {
       method: 'PUT',
