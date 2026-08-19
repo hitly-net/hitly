@@ -80,14 +80,25 @@ Each approval creates 3-4 evidence events:
 
 ## How it works
 
-1. **Graph node** calls `interrupt(HumanInterrupt)` and notifies HITLy (idempotent POST to `/api/v1/approvals`).
-2. **HITLy** stores the envelope and shows it in the inbox.
-3. **Reviewer** accepts or rejects.
-4. **HITLy** resumes the thread with `POST /threads/{thread_id}/runs/wait` and `{ command: { resume: <HumanResponse> } }` signed with HITLY_RESUME_SECRET.
-5. **Graph** verifies the signature (fail-closed: guessed threadId without proof is rejected), then checks `response.type`:
+1. **Graph node** calls `notify_hitly_approval()` (HITLy POST to `/api/v1/approvals`).
+2. **Interrupt node** calls `interrupt()` to pause the graph.
+3. **HITLy** stores the envelope and shows it in the inbox.
+4. **Reviewer** accepts or rejects.
+5. **HITLy** resumes the thread with `POST /threads/{thread_id}/runs/wait` and `{ command: { resume: <HumanResponse> } }` signed with HITLY_RESUME_SECRET.
+6. **Graph** verifies the signature (fail-closed: guessed threadId without proof is rejected), then checks `response.type`:
    - `accept` → issue refund
    - `ignore` (HITLy reject) → do **not** issue refund, return rejection reason
    - `edit` → apply edited args, then issue refund
+
+## Graph Structure
+
+The refund graph is split into three nodes to prevent double-ingest on resume:
+
+1. **notify** node — POSTs to HITLy (runs once)
+2. **approval** node — Calls `interrupt()` and verifies resume proof
+3. **issue_refund** node — Mock-issues the refund if approved
+
+**Why split?** `interrupt()` restarts the same node from the top on resume. If notify + interrupt were in one node, Accept would POST a second inbox item. Previous nodes do not re-run.
 
 ## Resume Security
 
@@ -125,7 +136,7 @@ And configure the LangGraph connection in HITLy with the deployment URL and API 
 
 ## Idempotent notify
 
-The `notify_hitly_idempotent` call is wrapped in a LangGraph `@task` so it only runs **once** even if the node restarts on resume. Without this, the node would double-ingest on resume.
+The graph is split into **notify** + **approval** nodes. `interrupt()` restarts the same node from the top on resume, so if notify + interrupt were in one node, Accept would POST a second inbox item. Previous nodes do not re-run.
 
 ## Checkpointer requirement
 
