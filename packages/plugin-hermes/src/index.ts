@@ -28,6 +28,8 @@ export interface HermesIngestPayload {
   kanbanStatus?: 'blocked' | 'review'
   reason?: string
   blockKind?: string
+  resumeUrl?: string
+  metadata?: Record<string, unknown>
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -65,6 +67,8 @@ export function ingestHermes(raw: unknown): ApprovalEnvelope & { origin: OriginR
   const kanbanStatus = body.kanbanStatus === 'review' ? 'review' : 'blocked'
   const reason = optionalString(body.reason)
   const blockKind = optionalString(body.blockKind)
+  const resumeUrl = optionalString(body.resumeUrl)
+  const metadata = asRecord(body.metadata)
   const runId =
     optionalString(body.runId) ??
     requestId ??
@@ -72,6 +76,9 @@ export function ingestHermes(raw: unknown): ApprovalEnvelope & { origin: OriginR
     sessionKey ??
     ''
 
+  if (!resumeUrl) {
+    throw new Error('Hermes ingest requires resumeUrl')
+  }
   if (kind === 'kanban' && !taskId) {
     throw new Error('Hermes kanban ingest requires taskId')
   }
@@ -119,6 +126,7 @@ export function ingestHermes(raw: unknown): ApprovalEnvelope & { origin: OriginR
       respond: kind === 'kanban',
     }),
     contextMarkdown: contextMarkdown || undefined,
+    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : undefined,
     origin: {
       plugin: 'hermes',
@@ -130,6 +138,8 @@ export function ingestHermes(raw: unknown): ApprovalEnvelope & { origin: OriginR
         requestId,
         taskId,
         runId,
+        resumeUrl,
+        metadata,
       },
       details: originDetails({
         kind,
@@ -151,11 +161,53 @@ export async function resumeHermes(
   payload: DecisionPayload,
   _credentials?: ConnectionCredentials,
 ): Promise<ResumeResponse> {
-  return {
-    resumeData: payload as unknown as Record<string, unknown>,
-    status: 200,
-    body: { ok: true, kind: origin.resumeHandle.kind ?? origin.details?.kind ?? 'command' },
+  const resumeUrl = String(origin.resumeHandle.resumeUrl ?? '')
+  if (!resumeUrl) {
+    return {
+      resumeData: {},
+      status: 0,
+      body: null,
+      error: 'Hermes resume requires resumeUrl. Origin should wait on callback, not poll HITLy.',
+    }
   }
+
+  const metadata = asRecord(origin.resumeHandle.metadata)
+  const resumeData: Record<string, unknown> = {
+    decision: payload.decision,
+    metadata,
+  }
+  const approvalId = optionalString(origin.resumeHandle.approvalId)
+  if (approvalId) resumeData.id = approvalId
+  if (payload.editedArgs) resumeData.editedArgs = payload.editedArgs
+  if (payload.response) resumeData.response = payload.response
+
+  const response = await fetch(resumeUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(resumeData),
+  })
+
+  const text = await response.text()
+  let body: unknown = text || null
+  if (text) {
+    try {
+      body = JSON.parse(text) as unknown
+    } catch {
+      body = text
+    }
+  }
+
+  if (!response.ok) {
+    const snippet = text.length > 500 ? `${text.slice(0, 500)}…` : text
+    return {
+      resumeData,
+      status: response.status,
+      body,
+      error: `Hermes resume failed (${response.status}): ${snippet}`,
+    }
+  }
+
+  return { resumeData, status: response.status, body }
 }
 
 export async function healthcheckHermes(_credentials: ConnectionCredentials): Promise<'ok' | 'error'> {

@@ -10,7 +10,7 @@ Add a framework by writing one adapter against the [envelope](/docs/envelope). Y
 | Plugin | Status | Pause primitive | Resume |
 | --- | --- | --- | --- |
 | [Mastra](/integrations/mastra) | Available | `suspend()` | `run.resume()` / `bail()` |
-| [Hermes](/integrations/hermes) | Available | approval transport / `kanban_block` | origin polls HITL<sub><i>y</i></sub>; kanban comment + unblock |
+| [Hermes](/integrations/hermes) | Available | approval transport / `kanban_block` | POST `{ decision, id, metadata }` to origin callback |
 | [HTTP](/integrations/http) | Available | caller `resumeUrl` | POST `{ decision, id, metadata }` |
 | [n8n](/integrations/n8n) | HTTP today | Wait webhook | POST to `$execution.resumeUrl` |
 | [LangGraph](/integrations/langgraph) | Available | `interrupt()` | `Command({ resume: HumanResponse })` |
