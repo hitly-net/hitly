@@ -1,6 +1,6 @@
 name: hitly
 version: 1.0.0
-description: Route Hermes command approvals and kanban block/review pauses to the Hitly inbox
+description: Route Hermes command approvals and kanban block/review pauses to the HITLy inbox
 manifest_version: 2
 homepage: https://hitly.net/integrations/hermes
 license: Apache-2.0
@@ -8,12 +8,12 @@ config_schema:
   api_url:
     type: str
     default: ""
-    description: Hitly app origin, e.g. http://localhost:3001
+    description: HITLy app origin, e.g. http://localhost:3001
   api_key:
     type: str
     default: ""
-    description: Hitly project API key
+    description: HITLy project API key
   project_id:
     type: str
     default: ""
-    description: Hitly project id
+    description: HITLy project id

@@ -1,4 +1,4 @@
-"""Hitly plugin for Hermes Agent — approval transport + kanban block/review."""
+"""HITLy plugin for Hermes Agent — approval transport + kanban block/review."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def _request_json(
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as error:
         snippet = error.read().decode("utf-8", errors="replace")[:500]
-        raise RuntimeError(f"Hitly {method} {path} failed ({error.code}): {snippet}") from error
+        raise RuntimeError(f"HITLy {method} {path} failed ({error.code}): {snippet}") from error
 
 
 def _iso_expiry(seconds: float) -> str:
@@ -219,7 +219,7 @@ def _ensure_webhook_server() -> int:
 def present(ctx: Any, request: Any) -> Any:
     settings = _settings(ctx)
     if not settings["api_url"] or not settings["api_key"] or not settings["project_id"]:
-        logger.error("Hitly transport is missing api_url, api_key, or project_id")
+        logger.error("HITLy transport is missing api_url, api_key, or project_id")
         return _respond(request, "deny")
 
     timeout = float(_attr(request, "timeout", default=300) or 300)
@@ -258,12 +258,12 @@ def present(ctx: Any, request: Any) -> Any:
             idempotency_key=request_id or run_id,
         )
     except Exception:
-        logger.exception("Hitly command ingest failed")
+        logger.exception("HITLy command ingest failed")
         return _respond(request, "deny")
 
     approval_id = created.get("id")
     if not isinstance(approval_id, str) or not approval_id:
-        logger.error("Hitly ingest returned no approval id")
+        logger.error("HITLy ingest returned no approval id")
         return _respond(request, "deny")
 
     # Wait for callback
@@ -303,7 +303,7 @@ def _ingest_kanban(
         return
     settings = _settings(ctx)
     if not settings["api_url"] or not settings["api_key"] or not settings["project_id"]:
-        logger.error("Hitly kanban ingest skipped: missing settings")
+        logger.error("HITLy kanban ingest skipped: missing settings")
         return
     run_id = os.environ.get("HERMES_KANBAN_RUN_ID", "").strip() or f"{task_id}:{kanban_status}"
 
@@ -332,7 +332,7 @@ def _ingest_kanban(
             idempotency_key=f"{task_id}:{run_id}",
         )
     except Exception:
-        logger.exception("Hitly kanban ingest failed for %s", task_id)
+        logger.exception("HITLy kanban ingest failed for %s", task_id)
         return
     approval_id = created.get("id")
     if isinstance(approval_id, str) and approval_id:
@@ -387,7 +387,7 @@ def _kanban_poller_loop(ctx: Any) -> None:
                     except Exception:
                         logger.exception("Hermes kanban resume failed for %s", item.get("task_id"))
         except Exception:
-            logger.exception("Hitly kanban poller iteration failed")
+            logger.exception("HITLy kanban poller iteration failed")
         time.sleep(2)
 
 
