@@ -52,11 +52,11 @@ const plugins = [
   {
     id: 'temporal',
     name: 'Temporal',
-    status: 'Coming soon',
+    status: 'Available',
     href: '/integrations/temporal',
     body: (
       <>
-        Activity creates the approval; condition() waits; <HitlyWordmark /> sends <code className="text-xs">hitly.decision</code>.
+        Activity POSTs the approval; condition() waits; <HitlyWordmark /> signals <code className="text-xs">hitly.decision</code>.
       </>
     ),
   },

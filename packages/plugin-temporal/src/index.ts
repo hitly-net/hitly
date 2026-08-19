@@ -5,50 +5,199 @@ import {
   type DecisionPayload,
   type HitlyPlugin,
   type OriginRef,
+  type ResumeResponse,
 } from '@hitly/core'
+import { Connection, WorkflowClient } from '@temporalio/client'
 
 export const HITLY_TEMPORAL_SIGNAL = 'hitly.decision'
 
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function stringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out = value.map((item) => optionalString(item)).filter((item): item is string => Boolean(item))
+  return out.length > 0 ? out : undefined
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+export interface TemporalResumeHandle {
+  address: string
+  namespace: string
+  workflowId: string
+  signal: string
+}
+
 /**
  * Temporal pause: activity creates the approval, then condition() until a signal.
- * Resume: Signal `hitly.decision` with { decision, args }. Stub until the SDK ships.
+ * Resume: Signal `hitly.decision` with { decision, args }.
+ * HITLy does NOT hold a worker. Resume is signal only.
  */
 export const temporalPlugin: HitlyPlugin = {
   id: 'temporal',
   ingest(raw: unknown): ApprovalEnvelope & { origin: OriginRef } {
-    const body = (raw ?? {}) as Record<string, unknown>
+    const body = asRecord(raw)
+    const workflowId = String(body.workflowId ?? '')
+    const address = String(body.address ?? '')
+    const namespace = String(body.namespace ?? 'default')
+
+    // Require workflowId (throw if missing/blank)
+    if (!workflowId) {
+      throw new Error('Temporal ingest requires workflowId')
+    }
+
+    const traceId = optionalString(body.traceId)
+    const spanId = optionalString(body.spanId)
+    const systemId = optionalString(body.systemId)
+    const inventoryId = optionalString(body.inventoryId)
+    const policyId = optionalString(body.policyId)
+    const policyRationale = optionalString(body.policyRationale)
+    const riskTier = optionalString(body.riskTier)
+    const toolName = optionalString(body.toolName)
+    const sensitivity = stringList(body.sensitivity)
+    const dataCategories = stringList(body.dataCategories)
+
     return {
       action: {
         name: String(body.actionName ?? 'temporal-approval'),
-        args: (body.args as Record<string, unknown>) ?? {},
+        args: asRecord(body.args),
       },
       allowedActions: allowedActionsFor({ accept: true, reject: true }),
-      contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : undefined,
+      contextMarkdown: optionalString(body.contextMarkdown),
+      traceId,
+      spanId,
+      systemId,
+      inventoryId,
+      policyId,
+      policyRationale,
+      riskTier,
+      toolName,
+      sensitivity,
+      dataCategories,
       origin: {
         plugin: 'temporal',
         projectId: String(body.projectId ?? ''),
-        runId: String(body.workflowId ?? body.runId ?? ''),
+        runId: workflowId,
         resumeHandle: {
-          address: String(body.address ?? ''),
-          namespace: String(body.namespace ?? 'default'),
-          workflowId: String(body.workflowId ?? ''),
+          address,
+          namespace,
+          workflowId,
           signal: HITLY_TEMPORAL_SIGNAL,
         },
         details: Object.fromEntries(
           Object.entries({
-            workflowId: String(body.workflowId ?? body.runId ?? '') || undefined,
-            workflowName: typeof body.workflowName === 'string' ? body.workflowName : undefined,
-            namespace: typeof body.namespace === 'string' ? body.namespace : 'default',
+            workflowId: workflowId || undefined,
+            workflowName: optionalString(body.workflowName),
+            namespace,
           }).filter((entry): entry is [string, string] => Boolean(entry[1])),
         ),
+        traceId,
+        spanId,
+        systemId,
+        inventoryId,
+        policyId,
+        policyRationale,
+        riskTier,
+        toolName,
       },
     }
   },
-  async resume(_origin: OriginRef, _payload: DecisionPayload, _credentials?: ConnectionCredentials): Promise<void> {
-    throw new Error('Temporal resume adapter is not implemented yet')
+  async resume(
+    origin: OriginRef,
+    payload: DecisionPayload,
+    credentials?: ConnectionCredentials,
+  ): Promise<ResumeResponse> {
+    const handle = origin.resumeHandle as unknown as TemporalResumeHandle
+    const address = handle.address
+    const namespace = handle.namespace ?? 'default'
+    const workflowId = handle.workflowId
+
+    if (!address || !workflowId) {
+      return {
+        resumeData: {},
+        status: 0,
+        body: null,
+        error: 'Temporal resume requires address and workflowId',
+      }
+    }
+
+    try {
+      const connectionOptions: any = { address }
+
+      // Add TLS/credentials if available (for Temporal Cloud)
+      if (typeof credentials?.token === 'string' && credentials.token) {
+        connectionOptions.tls = true
+        connectionOptions.apiKey = credentials.token
+      } else if (typeof credentials?.apiKey === 'string' && credentials.apiKey) {
+        connectionOptions.tls = true
+        connectionOptions.apiKey = credentials.apiKey
+      }
+
+      const connection = await Connection.connect(connectionOptions)
+      const client = new WorkflowClient({ connection, namespace })
+      const workflow = client.getHandle(workflowId)
+
+      // Build signal payload: { decision, args }
+      const signalPayload: Record<string, unknown> = {
+        decision: payload.decision,
+      }
+
+      // Include editedArgs when present (for 'edit' decision)
+      if (payload.editedArgs) {
+        signalPayload.args = payload.editedArgs
+      }
+
+      // Signal the workflow
+      await workflow.signal(HITLY_TEMPORAL_SIGNAL, signalPayload)
+
+      return {
+        resumeData: signalPayload,
+        status: 200,
+        body: { signaled: true, workflowId, signal: HITLY_TEMPORAL_SIGNAL },
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        resumeData: {},
+        status: 500,
+        body: null,
+        error: `Temporal signal failed: ${message}`,
+      }
+    }
   },
-  async healthcheck(_credentials: ConnectionCredentials): Promise<'ok' | 'error'> {
-    return 'ok'
+  async healthcheck(credentials: ConnectionCredentials): Promise<'ok' | 'error'> {
+    const address = String(credentials.address ?? credentials.baseUrl ?? '')
+    if (!address) return 'error'
+
+    try {
+      const connectionOptions: any = { address }
+
+      // Add TLS/credentials if available (for Temporal Cloud)
+      if (typeof credentials.token === 'string' && credentials.token) {
+        connectionOptions.tls = true
+        connectionOptions.apiKey = credentials.token
+      } else if (typeof credentials.apiKey === 'string' && credentials.apiKey) {
+        connectionOptions.tls = true
+        connectionOptions.apiKey = credentials.apiKey
+      }
+
+      const connection = await Connection.connect(connectionOptions)
+      const client = new WorkflowClient({ connection, namespace: 'default' })
+
+      // Try to describe the namespace to verify connectivity
+      // Temporal client doesn't expose a direct health endpoint, so we'll check connection
+      // by attempting to get a non-existent workflow handle (which should connect but not find the workflow)
+      // However, this is not ideal. Let's just verify the connection was created successfully.
+      // If connection succeeded, we consider it healthy.
+      await connection.close()
+      return 'ok'
+    } catch {
+      return 'error'
+    }
   },
 }
 
