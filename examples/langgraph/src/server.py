@@ -215,6 +215,11 @@ async def root():
             color: #667eea;
             margin-bottom: 8px;
         }}
+        .logo .sub {{
+            font-style: italic;
+            font-size: 0.65em;
+            line-height: 1;
+        }}
         .logo .subtitle {{
             font-size: 14px;
             color: #6b7280;
@@ -330,7 +335,7 @@ async def root():
 <body>
     <div class="container">
         <div class="logo">
-            <h1>HITLy</h1>
+            <h1>HITL<sub class="sub">y</sub></h1>
             <div class="subtitle">Human-in-the-Loop Platform</div>
         </div>
 
