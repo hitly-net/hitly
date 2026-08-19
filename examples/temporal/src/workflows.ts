@@ -42,19 +42,18 @@ export async function refundWorkflow(input: RefundInput): Promise<string> {
     throw new Error('Timeout waiting for HITLy decision')
   }
 
-  if (!decision) {
-    throw new Error('No decision received')
-  }
+  // Copy to local for type safety (condition() check guarantees decision is defined)
+  const received: HitlyDecision = decision!
 
   // Check decision
-  if (decision.decision === 'reject') {
+  if (received.decision === 'reject') {
     console.log('Refund rejected by HITLy reviewer')
     return `Refund rejected. No refund issued for order ${input.orderId}.`
   }
 
   // Apply edited args if present
-  const finalOrderId = decision.args?.orderId ?? input.orderId
-  const finalAmount = decision.args?.amount ?? input.amount
+  const finalOrderId = received.args?.orderId ?? input.orderId
+  const finalAmount = received.args?.amount ?? input.amount
 
   // Issue refund
   const result = await issueRefundActivity({
