@@ -35,9 +35,13 @@ Start the FastAPI server:
 python -m src.server
 ```
 
-The server listens on `http://127.0.0.1:2024` by default. Open http://127.0.0.1:2024 for the API docs.
+The server listens on `http://127.0.0.1:2024` by default.
 
-### Create a refund thread
+**Open http://127.0.0.1:2024 in your browser** to see the HITLy-branded demo page. Click "Request Refund" (OR-1234 / $123.45) to start the graph. The page will show "Paused — waiting for a HITLy decision" with a link to the HITLy inbox. When the reviewer approves or rejects, the page updates automatically to show the outcome.
+
+### Alternative: API testing
+
+You can also start threads via API:
 
 ```bash
 curl -X POST http://127.0.0.1:2024/refund \
@@ -47,8 +51,8 @@ curl -X POST http://127.0.0.1:2024/refund \
 
 The graph pauses at the `approval` node. Open the HITLy inbox at http://localhost:3001/inbox to approve or reject.
 
-When you **accept**, the graph resumes and issues the refund.  
-When you **reject**, the graph bails without issuing the refund.
+When you **accept** in HITLy, the graph resumes and issues the refund.  
+When you **reject** in HITLy, the graph bails without issuing the refund.
 
 ## Evidence fields
 
