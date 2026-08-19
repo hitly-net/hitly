@@ -138,6 +138,24 @@ HITLy stores a **receipt index only**, not the payload as system of record. Evid
 
 Each event includes integrity fields (`prev_event_id`, `prev_content_sha256`, `content_sha256`) for tamper detection.
 
+### Finding a Receipt
+
+After a decision, the work item displays a **View evidence receipt** link (for http(s) `store_uri` only). This opens the evidence event in the external store.
+
+<DocShot
+  src="/images/inbox-evidence-receipt.png"
+  alt="HITLy inbox work item after decision showing origin response JSON with View evidence receipt link"
+  caption="After decision, work items with http(s) store_uri show View evidence receipt inside HITLy"
+/>
+
+The external store's approval page (`/a/:approval_id`) displays the full event chain for that approval. In the example below, approval `apr_90f2976ec84df7f58a4e6bb1c2f6f66c` links three events: `requested`, `decided`, and `resumed`.
+
+<DocShot
+  src="/images/evidence-chain.png"
+  alt="External evidence store showing approval apr_90f2976ec84df7f58a4e6bb1c2f6f66c with three chained events: requested, decided, and resumed"
+  caption="The approval_id keys the event chain in the external evidence store"
+/>
+
 See `examples/evidence-http` for a reference receiver that writes events to disk.
 
 See [Projects](/docs/projects) and the [API](/docs/api).
