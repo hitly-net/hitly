@@ -12,9 +12,9 @@ export function CloudPlaceholder() {
       <main className="flex flex-1 items-center justify-center px-6 py-12">
         <div className="w-full max-w-md space-y-8">
           <div className="text-center">
-            <h1 className="text-3xl font-semibold tracking-tight">HITLy Cloud is not open yet</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">Coming soon</h1>
             <p className="mt-3 text-zinc-600 dark:text-zinc-400">
-              Join the waitlist to be notified when the hosted inbox is ready.
+              Join the waitlist for early access.
             </p>
           </div>
           <WaitlistForm />
