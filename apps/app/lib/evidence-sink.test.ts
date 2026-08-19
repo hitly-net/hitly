@@ -453,56 +453,56 @@ test('S3EvidenceSink uses prefix for object key', async () => {
   assert.ok(receipt.store_uri.includes('evidence/hitly/evt_123.json'))
 })
 
-test('S3EvidenceSink returns NoneSink on missing endpoint', async () => {
+test('S3EvidenceSink throws on missing endpoint', async () => {
   const { createEvidenceSink } = await import('./evidence-sink')
 
-  const sink = createEvidenceSink({
-    type: 's3',
-    region: 'local',
-    bucket: 'evidence',
-    accessKeyId: 'GK1234',
-    secretAccessKey: 'secret',
-  })
-
-  assert.equal(sink.id, 'none')
+  assert.throws(() => {
+    createEvidenceSink({
+      type: 's3',
+      region: 'local',
+      bucket: 'evidence',
+      accessKeyId: 'GK1234',
+      secretAccessKey: 'secret',
+    })
+  }, /Evidence sink S3 config missing required fields: endpoint/)
 })
 
-test('S3EvidenceSink returns NoneSink on missing bucket', async () => {
+test('S3EvidenceSink throws on missing bucket', async () => {
   const { createEvidenceSink } = await import('./evidence-sink')
 
-  const sink = createEvidenceSink({
-    type: 's3',
-    endpoint: 'http://127.0.0.1:3902',
-    region: 'local',
-    accessKeyId: 'GK1234',
-    secretAccessKey: 'secret',
-  })
-
-  assert.equal(sink.id, 'none')
+  assert.throws(() => {
+    createEvidenceSink({
+      type: 's3',
+      endpoint: 'http://127.0.0.1:3902',
+      region: 'local',
+      accessKeyId: 'GK1234',
+      secretAccessKey: 'secret',
+    })
+  }, /Evidence sink S3 config missing required fields: bucket/)
 })
 
-test('S3EvidenceSink returns NoneSink on missing credentials', async () => {
+test('S3EvidenceSink throws on missing credentials', async () => {
   const { createEvidenceSink } = await import('./evidence-sink')
 
-  const sinkNoAccessKey = createEvidenceSink({
-    type: 's3',
-    endpoint: 'http://127.0.0.1:3902',
-    region: 'local',
-    bucket: 'evidence',
-    secretAccessKey: 'secret',
-  })
+  assert.throws(() => {
+    createEvidenceSink({
+      type: 's3',
+      endpoint: 'http://127.0.0.1:3902',
+      region: 'local',
+      bucket: 'evidence',
+      secretAccessKey: 'secret',
+    })
+  }, /Evidence sink S3 config missing required fields: accessKeyId/)
 
-  assert.equal(sinkNoAccessKey.id, 'none')
-
-  const sinkNoSecret = createEvidenceSink({
-    type: 's3',
-    endpoint: 'http://127.0.0.1:3902',
-    region: 'local',
-    bucket: 'evidence',
-    accessKeyId: 'GK1234',
-  })
-
-  assert.equal(sinkNoSecret.id, 'none')
+  assert.throws(() => {
+    createEvidenceSink({
+      type: 's3',
+      endpoint: 'http://127.0.0.1:3902',
+      region: 'local',
+      bucket: 'evidence',
+      accessKeyId: 'GK1234',
+    })
+  }, /Evidence sink S3 config missing required fields: secretAccessKey/)
 })
 
 test('S3EvidenceSink handles PutObject error', async () => {
@@ -595,4 +595,53 @@ test('S3EvidenceSink handles PutObject 5xx error', async () => {
   await assert.rejects(async () => {
     await sink.append(mockEvent)
   }, /Evidence sink S3 PutObject failed \(500\)/)
+})
+
+test('S3EvidenceSink defaults to path-style for non-AWS endpoints', async () => {
+  const { S3EvidenceSink } = await import('./evidence-sink')
+  const mockEvent: EvidenceEvent = {
+    spec: 'hitly.evidence.v1',
+    event_id: 'evt_789',
+    approval_id: 'apr_012',
+    event_type: 'requested',
+    seq: 1,
+    occurred_at: '2024-01-01T00:00:00.000Z',
+    origin: {
+      plugin: 'mastra',
+      projectId: 'prj_xyz',
+      runId: 'run_uvw',
+    },
+    action: {
+      name: 'test',
+      args: {},
+      proposed_sha256: 'xyz789',
+    },
+    retention: {
+      min_days: 180,
+    },
+    integrity: {
+      alg: 'sha256',
+      content_sha256: 'test_hash_3',
+    },
+  }
+
+  let capturedUrl = ''
+
+  global.fetch = async (url: string | URL | Request) => {
+    capturedUrl = String(url)
+    return new Response('', { status: 200 })
+  }
+
+  const sink = new S3EvidenceSink({
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    bucket: 'evidence',
+    accessKeyId: 'GK1234',
+    secretAccessKey: 'secret',
+  })
+
+  await sink.append(mockEvent)
+
+  assert.ok(capturedUrl.includes('127.0.0.1:3902/evidence/evt_789.json'), `Expected path-style URL, got: ${capturedUrl}`)
+  assert.ok(!capturedUrl.includes('evidence.127.0.0.1'), `Should not use virtual-host style, got: ${capturedUrl}`)
 })

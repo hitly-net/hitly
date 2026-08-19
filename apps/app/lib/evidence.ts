@@ -266,7 +266,7 @@ async function loadProjectSinkConfig(projectId: string, workspaceId: string) {
     accessKeyId: optionalString(config.accessKeyId),
     secretAccessKey: optionalString(config.secretAccessKey),
     prefix: optionalString(config.prefix),
-    forcePathStyle: config.forcePathStyle === true,
+    forcePathStyle: typeof config.forcePathStyle === 'boolean' ? config.forcePathStyle : undefined,
   }
 }
 

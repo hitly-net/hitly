@@ -247,7 +247,16 @@ export function createEvidenceSink(config: {
       metadata: config.metadata,
     })
   }
-  if (config.type === 's3' && config.endpoint && config.region && config.bucket && config.accessKeyId && config.secretAccessKey) {
+  if (config.type === 's3') {
+    if (!config.endpoint || !config.region || !config.bucket || !config.accessKeyId || !config.secretAccessKey) {
+      const missing = []
+      if (!config.endpoint) missing.push('endpoint')
+      if (!config.region) missing.push('region')
+      if (!config.bucket) missing.push('bucket')
+      if (!config.accessKeyId) missing.push('accessKeyId')
+      if (!config.secretAccessKey) missing.push('secretAccessKey')
+      throw new Error(`Evidence sink S3 config missing required fields: ${missing.join(', ')}`)
+    }
     const isAwsEndpoint = config.endpoint.includes('amazonaws.com')
     const forcePathStyle = config.forcePathStyle !== undefined ? config.forcePathStyle : !isAwsEndpoint
     return new S3EvidenceSink({
