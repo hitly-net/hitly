@@ -3,18 +3,213 @@ title: LangGraph
 description: interrupt(HumanInterrupt) maps onto the HITLy envelope.
 ---
 
-Status: **coming soon**.
-
-[LangGraph](https://langchain-ai.github.io/langgraph/) pauses with `interrupt()`. Agent Inbox's `HumanInterrupt` is the closest cousin to HITL<sub><i>y</i></sub>'s envelope (`accept` / `edit` / `ignore` / `response`).
+[LangGraph](https://langchain-ai.github.io/langgraph/) pauses with `interrupt(HumanInterrupt)` and continues with `Command({ resume: HumanResponse })`. HITL<sub><i>y</i></sub> owns the reviewer UI.
 
 ## How it works with HITL<sub><i>y</i></sub>
 
-1. Graph node calls `interrupt(HumanInterrupt)` and notifies HITL<sub><i>y</i></sub> (webhook or callback).
-2. HITL<sub><i>y</i></sub> stores the envelope (`action_request`, `config`, `description`).
-3. Reviewer decides.
-4. HITL<sub><i>y</i></sub> resumes the thread with `HumanResponse`.
+1. A graph node calls `interrupt(HumanInterrupt)` and POSTs the payload to HITL<sub><i>y</i></sub>.
+2. HITL<sub><i>y</i></sub> stores an [envelope](/docs/envelope) and shows it in the [inbox](/docs/inbox).
+3. A reviewer accepts, edits, or rejects.
+4. HITL<sub><i>y</i></sub> resumes the thread:
+   - **LangGraph Platform** — `POST /threads/{threadId}/runs/wait` with `{ command: { resume: HumanResponse } }`
+5. Reject maps to `resume({ type: 'ignore' })`. The node should check `response.type` and bail or return a rejection result when `type == 'ignore'`.
 
-A checkpointer is required so the graph can pause.
+See the runnable project in `examples/langgraph` (refund graph with FastAPI server).
+
+## Setup
+
+Create a workspace, [API key](/docs/api), and LangGraph [connection](/docs/connections) (`deployment URL` + token).
+
+Install `@hitly/plugin-langgraph` (for TypeScript notify helpers, optional):
+
+```bash
+yarn add @hitly/plugin-langgraph
+```
+
+```bash
+npm i @hitly/plugin-langgraph
+```
+
+```bash
+pnpm add @hitly/plugin-langgraph
+```
+
+```bash
+bun add @hitly/plugin-langgraph
+```
+
+Set env:
+
+```bash
+HITLY_API_URL=http://localhost:3001
+HITLY_API_KEY=hitly_...
+HITLY_PROJECT_ID=prj_...
+LANGGRAPH_BASE_URL=http://127.0.0.1:2024
+```
+
+## Integration guide (Python)
+
+1. Create a LangGraph graph with a checkpointer (required for `interrupt`).
+2. In the approval node, POST to HITL<sub><i>y</i></sub> `/api/v1/approvals` with the `HumanInterrupt` shape.
+3. Wrap the notify in a LangGraph `@task` so it only runs **once** even if the node restarts on resume.
+4. Call `interrupt(HumanInterrupt(...))` and wait for resume.
+5. Check `response.type`:
+   - `accept` → proceed
+   - `ignore` (HITL<sub><i>y</i></sub> reject) → bail or return rejection
+   - `edit` → apply edited args, then proceed
+6. Implement a FastAPI route `POST /threads/{thread_id}/runs/wait` that accepts `{ command: { resume: HumanResponse } }` and calls `graph.ainvoke(Command(resume=...), config)`.
+
+### Graph node example
+
+```python
+from langgraph.graph import StateGraph
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt, Command
+from langgraph.prebuilt import task
+import httpx
+import os
+
+async def notify_hitly_idempotent(thread_id: str, order_id: str, amount: float):
+    """Idempotent notify (wrapped in @task)."""
+    hitly_api_url = os.getenv("HITLY_API_URL", "http://localhost:3001")
+    hitly_api_key = os.getenv("HITLY_API_KEY", "")
+    hitly_project_id = os.getenv("HITLY_PROJECT_ID", "")
+    deployment_url = os.getenv("LANGGRAPH_BASE_URL", "http://127.0.0.1:2024")
+    
+    payload = {
+        "plugin": "langgraph",
+        "projectId": hitly_project_id,
+        "threadId": thread_id,
+        "deploymentUrl": deployment_url,
+        "graphId": "refund-graph",
+        "action_request": {
+            "action": "send-refund",
+            "args": {"orderId": order_id, "amount": amount},
+        },
+        "config": {"allow_accept": True, "allow_ignore": True},
+        "description": f"Refund of ${amount} for order {order_id}",
+        # Evidence fields
+        "systemId": "refund-graph-prod",
+        "inventoryId": "ai-inv-refund-graph-v1",
+        "policyId": "refund-over-100",
+        "riskTier": "high" if amount > 1000 else "medium",
+    }
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            f"{hitly_api_url.rstrip('/')}/api/v1/approvals",
+            json=payload,
+            headers={"Authorization": f"Bearer {hitly_api_key}"},
+        )
+        response.raise_for_status()
+
+
+async def approval_node(state, config):
+    thread_id = config["configurable"]["thread_id"]
+    
+    # Idempotent notify
+    @task
+    async def notify_once():
+        await notify_hitly_idempotent(thread_id, state["order_id"], state["amount"])
+    
+    await notify_once()
+    
+    # Interrupt and wait for HITLy resume
+    human_response = interrupt(
+        HumanInterrupt(
+            action_request={"action": "send-refund", "args": {...}},
+            config={"allow_accept": True, "allow_ignore": True},
+            description="Refund approval required",
+        )
+    )
+    
+    # Check resume type
+    if isinstance(human_response, dict):
+        if human_response.get("type") == "ignore":
+            # HITLy reject: do not issue refund
+            return {**state, "approved": False, "rejection_reason": "Reviewer rejected"}
+        elif human_response.get("type") == "accept":
+            return {**state, "approved": True}
+        elif human_response.get("type") == "edit":
+            args = human_response.get("args", {})
+            return {**state, "order_id": args.get("orderId"), "approved": True}
+    
+    return {**state, "approved": True}
+
+
+# Build graph with checkpointer
+builder = StateGraph(RefundState)
+builder.add_node("approval", approval_node)
+# ... add edges ...
+checkpointer = MemorySaver()
+refund_graph = builder.compile(checkpointer=checkpointer)
+```
+
+### FastAPI resume route
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class ResumeRequest(BaseModel):
+    assistant_id: str | None = None
+    command: dict
+
+@app.post("/threads/{thread_id}/runs/wait")
+async def resume_thread(thread_id: str, req: ResumeRequest):
+    if thread_id not in threads:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    
+    config = threads[thread_id]["config"]
+    resume_value = req.command.get("resume")
+    
+    # Resume the graph with HumanResponse
+    result = await refund_graph.ainvoke(Command(resume=resume_value), config)
+    threads[thread_id]["state"] = result
+    
+    return {"thread_id": thread_id, "status": "completed", "state": result}
+```
+
+## Running locally
+
+1. `yarn workspace @hitly/app dev` — HITL<sub><i>y</i></sub> on port 3001.
+2. `cd examples/langgraph && python -m src.server` — FastAPI server on port 2024.
+3. `curl -X POST http://127.0.0.1:2024/refund -d '{"order_id": "OR-1234", "amount": 123.45}'`
+4. Approve or reject in the inbox at http://localhost:3001/inbox.
+
+## Production
+
+HITL<sub><i>y</i></sub> must reach `deploymentUrl` to call the resume endpoint. Do not point a hosted HITL<sub><i>y</i></sub> workspace at `localhost`. Use LangGraph Cloud or a publicly accessible deployment.
+
+## Configuration options
+
+| Option | Use it to |
+| --- | --- |
+| `apiUrl` | HITL<sub><i>y</i></sub> app origin, such as `https://cloud.hitly.net` |
+| `apiKey` | Workspace ingest key |
+| `projectId` | Project that owns the API key |
+| `deploymentUrl` | Origin LangGraph server HITL<sub><i>y</i></sub> will call on resume |
+| `threadId` | Thread to resume |
+| `graphId` / `assistantId` | Graph or assistant identifier |
+
+### Evidence Fields (Optional)
+
+For audit and compliance, pass evidence context in the notify payload:
+
+| Field | Description |
+| --- | --- |
+| `systemId` | AI system being governed (e.g. "refund-graph-prod") |
+| `inventoryId` | This AI system's record in your inventory/registry (Layer 1) |
+| `policyId` | Policy that triggered approval |
+| `policyRationale` | Why approval is required |
+| `riskTier` | Risk level (e.g. "high", "medium", "low") |
+| `toolName` | Tool or action name |
+| `sensitivity` | Sensitivity flags (not raw PII) |
+| `dataCategories` | Data category flags (GDPR/compliance) |
+
+Evidence events are written to the configured HTTP sink (project settings → Evidence Storage). See [Envelope](/docs/envelope#evidence-fields) for full details.
 
 ## Decision mapping
 
@@ -29,3 +224,5 @@ A checkpointer is required so the graph can pause.
 
 - [Envelope](/docs/envelope)
 - [API](/docs/api)
+- Example: `examples/langgraph`
+

@@ -1,0 +1,12 @@
+{
+  "name": "@hitly/example-langgraph",
+  "version": "0.0.1",
+  "private": true,
+  "hitly": {
+    "role": "example"
+  },
+  "scripts": {
+    "dev": "python -m src.server",
+    "test": "pytest src/test_refund_graph.py -v"
+  }
+}
