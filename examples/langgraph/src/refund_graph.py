@@ -16,6 +16,43 @@ from langchain_core.runnables import RunnableConfig
 from .hitly import HitlyApprovalConfig, notify_hitly_approval, verify_hitly_resume, HitlyResumeError
 
 
+async def notify_node(state: RefundState, config: RunnableConfig) -> RefundState:
+    """
+    Notify HITLy that approval is required.
+    
+    This node runs once before the interrupt. Previous nodes do not re-run.
+    """
+    thread_id = config.get("configurable", {}).get("thread_id", "unknown")
+    hitly_config = HitlyApprovalConfig()
+    
+    risk_tier = "high" if state["amount"] > 1000 else "medium" if state["amount"] > 100 else "low"
+    
+    await notify_hitly_approval(
+        config=hitly_config,
+        thread_id=thread_id,
+        graph_id="refund-graph",
+        action={
+            "action": "send-refund",
+            "args": {"orderId": state["order_id"], "amount": state["amount"]},
+        },
+        description=(
+            f"Refund of ${state['amount']} for order {state['order_id']}. "
+            f"{'High-value' if state['amount'] > 1000 else 'Standard'} refund requires approval."
+        ),
+        # Evidence fields for audit trail
+        system_id=SYSTEM_ID,
+        inventory_id=INVENTORY_ID,
+        policy_id=POLICY_ID,
+        policy_rationale=POLICY_RATIONALE,
+        risk_tier=risk_tier,
+        tool_name=TOOL_NAME,
+        sensitivity=SENSITIVITY,
+        data_categories=DATA_CATEGORIES,
+    )
+    
+    return state
+
+
 # Evidence fields mirror Mastra example
 SYSTEM_ID = "refund-graph-prod"
 INVENTORY_ID = "ai-inv-refund-graph-v1"
@@ -35,80 +72,30 @@ class RefundState(TypedDict):
     rejection_reason: str | None
 
 
-class HumanInterrupt:
-    """
-    LangGraph HumanInterrupt for pausing the graph.
-    Maps to HITLy envelope via action_request, config, description.
-    """
-    def __init__(
-        self,
-        action_request: dict,
-        config: dict | None = None,
-        description: str | None = None,
-    ):
-        self.action_request = action_request
-        self.config = config or {}
-        self.description = description
-
-
-async def approval_node(state: RefundState, config: RunnableConfig) -> RefundState:
+async def notify_node(state: RefundState, config: RunnableConfig) -> RefundState:
     """
     Pause for HITLy reviewer before issuing refund.
+    
+    This node only does interrupt + verify. Notify happened in the previous node.
     
     On resume with type=='ignore' (HITLy reject), do not issue refund.
     On accept, proceed to issue_refund_node.
     
     **Security**: Verifies HITLY_RESUME_SECRET to prevent spoofed resumes.
     """
-    # Extract thread_id from config
     thread_id = config.get("configurable", {}).get("thread_id", "unknown")
-    
-    # Initialize HITLy config (validates env vars)
     hitly_config = HitlyApprovalConfig()
-    
-    # Idempotent notify: wrapped in a task so it only runs once
-    # even if the node restarts on resume
-    from langgraph.prebuilt import task
-    
-    @task
-    async def notify_once():
-        risk_tier = "high" if state["amount"] > 1000 else "medium" if state["amount"] > 100 else "low"
-        
-        await notify_hitly_approval(
-            config=hitly_config,
-            thread_id=thread_id,
-            graph_id="refund-graph",
-            action={
-                "action": "send-refund",
-                "args": {"orderId": state["order_id"], "amount": state["amount"]},
-            },
-            description=(
-                f"Refund of ${state['amount']} for order {state['order_id']}. "
-                f"{'High-value' if state['amount'] > 1000 else 'Standard'} refund requires approval."
-            ),
-            # Evidence fields for audit trail
-            system_id=SYSTEM_ID,
-            inventory_id=INVENTORY_ID,
-            policy_id=POLICY_ID,
-            policy_rationale=POLICY_RATIONALE,
-            risk_tier=risk_tier,
-            tool_name=TOOL_NAME,
-            sensitivity=SENSITIVITY,
-            data_categories=DATA_CATEGORIES,
-        )
-    
-    await notify_once()
     
     # Interrupt and wait for HITLy resume
     human_response = interrupt(
-        HumanInterrupt(
-            action_request={
+        {
+            "action_request": {
                 "action": "send-refund",
                 "args": {"orderId": state["order_id"], "amount": state["amount"]},
             },
-            config={"allow_accept": True, "allow_ignore": True},
-            description=f"Refund approval required for ${state['amount']}",
-        )
+            "config": {"allow_accept": True, "allow_ignore": True},
+            "description": f"Refund approval required for ${state['amount']}",
+        }
     )
     
     # Verify HITLy resume proof (fail-closed: guessed threadId is rejected)
@@ -170,9 +157,11 @@ def should_issue_refund(state: RefundState) -> Literal["issue_refund", "rejected
 
 # Build the graph
 builder = StateGraph(RefundState)
+builder.add_node("notify", notify_node)
 builder.add_node("approval", approval_node)
 builder.add_node("issue_refund", issue_refund_node)
-builder.add_edge(START, "approval")
+builder.add_edge(START, "notify")
+builder.add_edge("notify", "approval")
 builder.add_conditional_edges(
     "approval",
     should_issue_refund,

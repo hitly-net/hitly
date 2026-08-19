@@ -68,7 +68,7 @@ async function postLangGraphResume(
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(60_000),
   })
   const text = await response.text()
   let parsed: unknown = text || null
@@ -100,11 +100,16 @@ export const langgraphPlugin: HitlyPlugin = {
     const body = asRecord(raw)
     const actionRequest = asRecord(body.action_request ?? body.action)
     const config = asRecord(body.config)
-    const threadId = String(body.threadId ?? body.runId ?? '')
+    const threadId = String(body.threadId ?? '')
     const projectId = String(body.projectId ?? '')
     const deploymentUrl = String(body.deploymentUrl ?? '')
     const graphId = optionalString(body.graphId)
     const assistantId = optionalString(body.assistantId)
+
+    // Require threadId (do not accept missing to green tests)
+    if (!threadId) {
+      throw new Error('LangGraph ingest requires threadId')
+    }
 
     const traceId = optionalString(body.traceId)
     const spanId = optionalString(body.spanId)

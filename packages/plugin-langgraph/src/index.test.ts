@@ -35,6 +35,34 @@ describe('@hitly/plugin-langgraph', () => {
       assert.equal(result.origin.runId, 'thread_abc')
     })
 
+    it('should throw when threadId is missing', () => {
+      const raw = {
+        plugin: 'langgraph',
+        projectId: 'prj_123',
+        // threadId is missing
+        deploymentUrl: 'http://localhost:2024',
+        action_request: { action: 'test' },
+      }
+
+      assert.throws(() => {
+        langgraphPlugin.ingest(raw)
+      }, /LangGraph ingest requires threadId/)
+    })
+
+    it('should throw when threadId is empty string', () => {
+      const raw = {
+        plugin: 'langgraph',
+        projectId: 'prj_123',
+        threadId: '',
+        deploymentUrl: 'http://localhost:2024',
+        action_request: { action: 'test' },
+      }
+
+      assert.throws(() => {
+        langgraphPlugin.ingest(raw)
+      }, /LangGraph ingest requires threadId/)
+    })
+
     it('should ingest with evidence fields', () => {
       const raw = {
         projectId: 'prj_123',
