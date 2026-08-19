@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 from src.refund_graph import (
     refund_graph,
     RefundState,
-    notify_hitly_idempotent,
 )
+from src.hitly import notify_hitly_approval, HitlyApprovalConfig
 from src.resume_auth import verify_hitly_resume, HitlyResumeError
 
 
@@ -24,14 +24,26 @@ async def test_notify_hitly_payload():
                 "HITLY_API_URL": "http://localhost:3001",
                 "HITLY_API_KEY": "test_key",
                 "HITLY_PROJECT_ID": "prj_test",
+                "HITLY_RESUME_SECRET": "test_secret",
+                "LANGGRAPH_BASE_URL": "http://127.0.0.1:2024",
             },
         ):
-            await notify_hitly_idempotent(
+            config = HitlyApprovalConfig()
+            await notify_hitly_approval(
+                config=config,
                 thread_id="thread_123",
-                order_id="OR-1234",
-                amount=150.0,
-                deployment_url="http://127.0.0.1:2024",
                 graph_id="refund-graph",
+                action={
+                    "action": "send-refund",
+                    "args": {"orderId": "OR-1234", "amount": 150.0},
+                },
+                system_id="refund-graph-prod",
+                inventory_id="ai-inv-refund-graph-v1",
+                policy_id="refund-over-100",
+                risk_tier="medium",
+                tool_name="send_refund",
+                sensitivity=["financial"],
+                data_categories=["transaction", "customer"],
             )
         
         # Check the call was made
@@ -120,7 +132,7 @@ async def test_refund_graph_interrupt():
     config = {"configurable": {"thread_id": "test_thread"}}
     
     # Mock notify to avoid real HTTP call
-    with patch("src.refund_graph.notify_hitly_idempotent", new_callable=AsyncMock):
+    with patch("src.refund_graph.notify_hitly_approval", new_callable=AsyncMock):
         result = await refund_graph.ainvoke(initial_state, config)
         
         # Should be paused (approved is None means waiting)
@@ -167,8 +179,8 @@ async def test_refund_graph_accept_with_valid_proof():
     valid_resume = {**data, "hitly": {**claim, "sig": sig}}
     
     # Mock notify and set HITLY_RESUME_SECRET
-    with patch("src.refund_graph.notify_hitly_idempotent", new_callable=AsyncMock):
-        with patch.dict("os.environ", {"HITLY_RESUME_SECRET": secret}):
+    with patch("src.refund_graph.notify_hitly_approval", new_callable=AsyncMock):
+        with patch.dict("os.environ", {"HITLY_RESUME_SECRET": secret, "HITLY_API_KEY": "test_key", "HITLY_PROJECT_ID": "prj_test"}):
             # First invoke pauses
             await refund_graph.ainvoke(initial_state, config)
             
@@ -202,8 +214,8 @@ async def test_refund_graph_rejects_guessed_accept():
     guessed_resume = {"type": "accept"}
     
     # Mock notify and set HITLY_RESUME_SECRET
-    with patch("src.refund_graph.notify_hitly_idempotent", new_callable=AsyncMock):
-        with patch.dict("os.environ", {"HITLY_RESUME_SECRET": "test_secret"}):
+    with patch("src.refund_graph.notify_hitly_approval", new_callable=AsyncMock):
+        with patch.dict("os.environ", {"HITLY_RESUME_SECRET": "test_secret", "HITLY_API_KEY": "test_key", "HITLY_PROJECT_ID": "prj_test"}):
             # First invoke pauses
             await refund_graph.ainvoke(initial_state, config)
             

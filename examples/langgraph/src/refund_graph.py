@@ -7,15 +7,14 @@ Reviewer accepts or rejects. On reject, the refund is NOT issued.
 **Security**: Resume verification with HITLY_RESUME_SECRET prevents spoofed resumes.
 """
 
-from typing import TypedDict, Annotated, Literal
+from typing import TypedDict, Literal
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt, Command
 from langchain_core.runnables import RunnableConfig
-import httpx
-import os
 
-from .resume_auth import verify_hitly_resume, HitlyResumeError
+from .hitly import HitlyApprovalConfig, notify_hitly_approval, verify_hitly_resume, HitlyResumeError
+
 
 # Evidence fields mirror Mastra example
 SYSTEM_ID = "refund-graph-prod"
@@ -52,72 +51,6 @@ class HumanInterrupt:
         self.description = description
 
 
-async def notify_hitly_idempotent(
-    thread_id: str,
-    order_id: str,
-    amount: float,
-    deployment_url: str,
-    graph_id: str,
-) -> None:
-    """
-    Notify HITLy approval endpoint (idempotent).
-    
-    This is decorated as a LangGraph @task so it only runs once
-    even if the node restarts on resume.
-    """
-    hitly_api_url = os.getenv("HITLY_API_URL", "http://localhost:3001")
-    hitly_api_key = os.getenv("HITLY_API_KEY", "")
-    hitly_project_id = os.getenv("HITLY_PROJECT_ID", "")
-    
-    if not hitly_api_key or not hitly_project_id:
-        raise ValueError(
-            "Set HITLY_API_KEY and HITLY_PROJECT_ID in .env "
-            "(copy from HITLy project page)"
-        )
-    
-    risk_tier = "high" if amount > 1000 else "medium" if amount > 100 else "low"
-    
-    payload = {
-        "plugin": "langgraph",
-        "projectId": hitly_project_id,
-        "threadId": thread_id,
-        "deploymentUrl": deployment_url,
-        "graphId": graph_id,
-        "action_request": {
-            "action": "send-refund",
-            "args": {"orderId": order_id, "amount": amount},
-        },
-        "config": {
-            "allow_accept": True,
-            "allow_ignore": True,
-        },
-        "description": (
-            f"Refund of ${amount} for order {order_id}. "
-            f"{'High-value' if amount > 1000 else 'Standard'} refund requires approval."
-        ),
-        # Evidence fields for audit trail
-        "systemId": SYSTEM_ID,
-        "inventoryId": INVENTORY_ID,
-        "policyId": POLICY_ID,
-        "policyRationale": POLICY_RATIONALE,
-        "riskTier": risk_tier,
-        "toolName": TOOL_NAME,
-        "sensitivity": SENSITIVITY,
-        "dataCategories": DATA_CATEGORIES,
-    }
-    
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.post(
-            f"{hitly_api_url.rstrip('/')}/api/v1/approvals",
-            json=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {hitly_api_key}",
-            },
-        )
-        response.raise_for_status()
-
-
 async def approval_node(state: RefundState, config: RunnableConfig) -> RefundState:
     """
     Pause for HITLy reviewer before issuing refund.
@@ -129,8 +62,9 @@ async def approval_node(state: RefundState, config: RunnableConfig) -> RefundSta
     """
     # Extract thread_id from config
     thread_id = config.get("configurable", {}).get("thread_id", "unknown")
-    deployment_url = os.getenv("LANGGRAPH_BASE_URL", "http://127.0.0.1:2024")
-    graph_id = "refund-graph"
+    
+    # Initialize HITLy config (validates env vars)
+    hitly_config = HitlyApprovalConfig()
     
     # Idempotent notify: wrapped in a task so it only runs once
     # even if the node restarts on resume
@@ -138,12 +72,29 @@ async def approval_node(state: RefundState, config: RunnableConfig) -> RefundSta
     
     @task
     async def notify_once():
-        await notify_hitly_idempotent(
+        risk_tier = "high" if state["amount"] > 1000 else "medium" if state["amount"] > 100 else "low"
+        
+        await notify_hitly_approval(
+            config=hitly_config,
             thread_id=thread_id,
-            order_id=state["order_id"],
-            amount=state["amount"],
-            deployment_url=deployment_url,
-            graph_id=graph_id,
+            graph_id="refund-graph",
+            action={
+                "action": "send-refund",
+                "args": {"orderId": state["order_id"], "amount": state["amount"]},
+            },
+            description=(
+                f"Refund of ${state['amount']} for order {state['order_id']}. "
+                f"{'High-value' if state['amount'] > 1000 else 'Standard'} refund requires approval."
+            ),
+            # Evidence fields for audit trail
+            system_id=SYSTEM_ID,
+            inventory_id=INVENTORY_ID,
+            policy_id=POLICY_ID,
+            policy_rationale=POLICY_RATIONALE,
+            risk_tier=risk_tier,
+            tool_name=TOOL_NAME,
+            sensitivity=SENSITIVITY,
+            data_categories=DATA_CATEGORIES,
         )
     
     await notify_once()
@@ -162,7 +113,12 @@ async def approval_node(state: RefundState, config: RunnableConfig) -> RefundSta
     
     # Verify HITLy resume proof (fail-closed: guessed threadId is rejected)
     try:
-        verify_hitly_resume(human_response, run_id=thread_id, required=True)
+        verify_hitly_resume(
+            human_response,
+            run_id=thread_id,
+            secret=hitly_config.resume_secret,
+            required=True,
+        )
     except HitlyResumeError as e:
         print(f"⚠️  Resume verification failed: {e}")
         return {
