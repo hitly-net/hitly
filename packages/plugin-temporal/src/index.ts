@@ -11,6 +11,41 @@ import { Connection, WorkflowClient } from '@temporalio/client'
 
 export const HITLY_TEMPORAL_SIGNAL = 'hitly.decision'
 
+// Temporal client factory for dependency injection (test-only override)
+export interface TemporalConnection {
+  close(): Promise<void>
+}
+
+export interface TemporalWorkflowHandle {
+  signal(signalName: string, payload: unknown): Promise<void>
+}
+
+export interface TemporalWorkflowClient {
+  getHandle(workflowId: string): TemporalWorkflowHandle
+}
+
+export interface TemporalClientFactory {
+  connect(options: { address: string; tls?: boolean; apiKey?: string }): Promise<TemporalConnection>
+  createClient(options: { connection: TemporalConnection; namespace: string }): TemporalWorkflowClient
+}
+
+let clientFactory: TemporalClientFactory = {
+  async connect(options) {
+    return (await Connection.connect(options)) as unknown as TemporalConnection
+  },
+  createClient(options) {
+    return new WorkflowClient(options as any) as unknown as TemporalWorkflowClient
+  },
+}
+
+/**
+ * Override the Temporal client factory (test-only).
+ * DO NOT use this in production code.
+ */
+export function __setTemporalClientFactory(factory: TemporalClientFactory): void {
+  clientFactory = factory
+}
+
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
@@ -126,7 +161,7 @@ export const temporalPlugin: HitlyPlugin = {
     }
 
     try {
-      const connectionOptions: any = { address }
+      const connectionOptions: { address: string; tls?: boolean; apiKey?: string } = { address }
 
       // Add TLS/credentials if available (for Temporal Cloud)
       if (typeof credentials?.token === 'string' && credentials.token) {
@@ -137,8 +172,8 @@ export const temporalPlugin: HitlyPlugin = {
         connectionOptions.apiKey = credentials.apiKey
       }
 
-      const connection = await Connection.connect(connectionOptions)
-      const client = new WorkflowClient({ connection, namespace })
+      const connection = await clientFactory.connect(connectionOptions)
+      const client = clientFactory.createClient({ connection, namespace })
       const workflow = client.getHandle(workflowId)
 
       // Build signal payload: { decision, args }
@@ -174,7 +209,7 @@ export const temporalPlugin: HitlyPlugin = {
     if (!address) return 'error'
 
     try {
-      const connectionOptions: any = { address }
+      const connectionOptions: { address: string; tls?: boolean; apiKey?: string } = { address }
 
       // Add TLS/credentials if available (for Temporal Cloud)
       if (typeof credentials.token === 'string' && credentials.token) {
@@ -185,14 +220,7 @@ export const temporalPlugin: HitlyPlugin = {
         connectionOptions.apiKey = credentials.apiKey
       }
 
-      const connection = await Connection.connect(connectionOptions)
-      const client = new WorkflowClient({ connection, namespace: 'default' })
-
-      // Try to describe the namespace to verify connectivity
-      // Temporal client doesn't expose a direct health endpoint, so we'll check connection
-      // by attempting to get a non-existent workflow handle (which should connect but not find the workflow)
-      // However, this is not ideal. Let's just verify the connection was created successfully.
-      // If connection succeeded, we consider it healthy.
+      const connection = await clientFactory.connect(connectionOptions)
       await connection.close()
       return 'ok'
     } catch {

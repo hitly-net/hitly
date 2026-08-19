@@ -1,41 +1,59 @@
-import { describe, it, mock } from 'node:test'
+import { describe, it, mock, beforeEach } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { temporalPlugin, HITLY_TEMPORAL_SIGNAL } from './index'
+import {
+  temporalPlugin,
+  HITLY_TEMPORAL_SIGNAL,
+  __setTemporalClientFactory,
+  type TemporalClientFactory,
+  type TemporalConnection,
+  type TemporalWorkflowHandle,
+} from './index'
 import type { DecisionPayload, OriginRef, ResumeResponse } from '@hitly/core'
 
-// Mock the Temporal client module
-const mockConnection = {
-  connect: mock.fn(async () => mockConnection),
+// Mock Temporal client components
+const mockConnection: TemporalConnection = {
   close: mock.fn(async () => {}),
 }
 
-const mockWorkflowHandle = {
+const mockWorkflowHandle: TemporalWorkflowHandle & {
+  signal: ReturnType<typeof mock.fn>
+  start?: ReturnType<typeof mock.fn>
+} = {
   signal: mock.fn(async () => {}),
-  // These should never be called (signal-only resume)
+  // This should never be called (signal-only resume)
   start: mock.fn(async () => {}),
 }
 
-const mockWorkflowClient = {
+const mockClient = {
   getHandle: mock.fn(() => mockWorkflowHandle),
   // These should never be called (signal-only resume)
   start: mock.fn(async () => {}),
   signalWithStart: mock.fn(async () => {}),
 }
 
-// Mock the @temporalio/client module
-const mockTemporalClient = {
-  Connection: {
-    connect: mockConnection.connect,
-  },
-  WorkflowClient: mock.fn(() => mockWorkflowClient),
+const mockConnect = mock.fn(async () => mockConnection)
+
+const mockFactory: TemporalClientFactory = {
+  connect: mockConnect,
+  createClient: mock.fn(() => mockClient),
 }
 
-// Replace the module imports
-mock.module('@temporalio/client', {
-  namedExports: mockTemporalClient,
-})
-
 describe('@hitly/plugin-temporal', () => {
+  beforeEach(() => {
+    // Install mock factory before each test
+    __setTemporalClientFactory(mockFactory)
+    // Reset all mock call counts
+    mockConnect.mock.resetCalls()
+    ;(mockConnection.close as any).mock.resetCalls()
+    mockWorkflowHandle.signal.mock.resetCalls()
+    if (mockWorkflowHandle.start) {
+      mockWorkflowHandle.start.mock.resetCalls()
+    }
+    mockClient.getHandle.mock.resetCalls()
+    ;(mockClient.start as any).mock.resetCalls()
+    ;(mockClient.signalWithStart as any).mock.resetCalls()
+    ;(mockFactory.createClient as any).mock.resetCalls()
+  })
   describe('ingest', () => {
     it('should ingest a Temporal approval with workflowId', () => {
       const raw = {
@@ -134,10 +152,6 @@ describe('@hitly/plugin-temporal', () => {
 
   describe('resume', () => {
     it('should signal accept to Temporal workflow', async () => {
-      // Reset mocks
-      mockConnection.connect.mock.resetCalls()
-      mockWorkflowHandle.signal.mock.resetCalls()
-
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -163,7 +177,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.equal((result.body as any).signal, HITLY_TEMPORAL_SIGNAL)
 
       // Verify workflow.signal was called
-      const signalCalls = (mockWorkflowHandle.signal as any).mock.calls
+      const signalCalls = mockWorkflowHandle.signal.mock.calls
       assert.equal(signalCalls.length, 1)
       const signalCall = signalCalls[0]
       assert.equal(signalCall.arguments[0], HITLY_TEMPORAL_SIGNAL)
@@ -171,8 +185,6 @@ describe('@hitly/plugin-temporal', () => {
     })
 
     it('should signal reject decision', async () => {
-      mockWorkflowHandle.signal.mock.resetCalls()
-
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -191,14 +203,12 @@ describe('@hitly/plugin-temporal', () => {
 
       await temporalPlugin.resume(origin, payload)
 
-      const signalCalls = (mockWorkflowHandle.signal as any).mock.calls
+      const signalCalls = mockWorkflowHandle.signal.mock.calls
       const signalCall = signalCalls[0]
       assert.deepEqual(signalCall.arguments[1], { decision: 'reject' })
     })
 
     it('should signal edit with args', async () => {
-      mockWorkflowHandle.signal.mock.resetCalls()
-
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -218,7 +228,7 @@ describe('@hitly/plugin-temporal', () => {
 
       await temporalPlugin.resume(origin, payload)
 
-      const signalCalls = (mockWorkflowHandle.signal as any).mock.calls
+      const signalCalls = mockWorkflowHandle.signal.mock.calls
       const signalCall = signalCalls[0]
       assert.deepEqual(signalCall.arguments[1], {
         decision: 'edit',
@@ -271,11 +281,14 @@ describe('@hitly/plugin-temporal', () => {
     })
 
     it('should handle Temporal client errors', async () => {
-      // Make signal throw an error
-      const originalSignal = mockWorkflowHandle.signal
-      mockWorkflowHandle.signal = mock.fn(async () => {
-        throw new Error('Workflow not found')
-      })
+      // Create a failing factory for this test
+      const failingFactory: TemporalClientFactory = {
+        connect: mock.fn(async () => {
+          throw new Error('Workflow not found')
+        }),
+        createClient: mock.fn(() => mockClient),
+      }
+      __setTemporalClientFactory(failingFactory)
 
       const origin: OriginRef = {
         plugin: 'temporal',
@@ -298,19 +311,9 @@ describe('@hitly/plugin-temporal', () => {
       assert.equal(result.status, 500)
       assert(result.error?.includes('Temporal signal failed'))
       assert(result.error?.includes('Workflow not found'))
-
-      // Restore original
-      mockWorkflowHandle.signal = originalSignal
     })
 
     it('should only call getHandle + signal, never start or signalWithStart', async () => {
-      // Reset all mocks
-      mockWorkflowClient.getHandle.mock.resetCalls()
-      mockWorkflowHandle.signal.mock.resetCalls()
-      mockWorkflowClient.start.mock.resetCalls()
-      mockWorkflowClient.signalWithStart.mock.resetCalls()
-      mockWorkflowHandle.start.mock.resetCalls()
-
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -330,18 +333,18 @@ describe('@hitly/plugin-temporal', () => {
       await temporalPlugin.resume(origin, payload)
 
       // Assert getHandle was called once
-      const getHandleCalls = (mockWorkflowClient.getHandle as any).mock.calls
+      const getHandleCalls = mockClient.getHandle.mock.calls
       assert.equal(getHandleCalls.length, 1)
       assert.equal(getHandleCalls[0].arguments[0], 'refund-wf-abc')
 
       // Assert signal was called once
-      const signalCalls = (mockWorkflowHandle.signal as any).mock.calls
+      const signalCalls = mockWorkflowHandle.signal.mock.calls
       assert.equal(signalCalls.length, 1)
 
       // Assert start/signalWithStart were NEVER called
-      const clientStartCalls = (mockWorkflowClient.start as any).mock.calls
-      const clientSignalWithStartCalls = (mockWorkflowClient.signalWithStart as any).mock.calls
-      const handleStartCalls = (mockWorkflowHandle.start as any).mock.calls
+      const clientStartCalls = (mockClient.start as any).mock.calls
+      const clientSignalWithStartCalls = (mockClient.signalWithStart as any).mock.calls
+      const handleStartCalls = mockWorkflowHandle.start!.mock.calls
 
       assert.equal(clientStartCalls.length, 0, 'client.start should never be called')
       assert.equal(clientSignalWithStartCalls.length, 0, 'client.signalWithStart should never be called')
@@ -359,9 +362,6 @@ describe('@hitly/plugin-temporal', () => {
     })
 
     it('should return ok when connection succeeds', async () => {
-      mockConnection.connect.mock.resetCalls()
-      mockConnection.close.mock.resetCalls()
-
       const result = await temporalPlugin.healthcheck({
         plugin: 'temporal',
         address: 'localhost:7233',
@@ -375,11 +375,14 @@ describe('@hitly/plugin-temporal', () => {
     })
 
     it('should return error when connection fails', async () => {
-      // Make connect throw an error
-      const originalConnect = mockConnection.connect
-      mockConnection.connect = mock.fn(async () => {
-        throw new Error('Connection refused')
-      })
+      // Create a failing factory for this test
+      const failingFactory: TemporalClientFactory = {
+        connect: mock.fn(async () => {
+          throw new Error('Connection refused')
+        }),
+        createClient: mock.fn(() => mockClient),
+      }
+      __setTemporalClientFactory(failingFactory)
 
       const result = await temporalPlugin.healthcheck({
         plugin: 'temporal',
@@ -387,9 +390,6 @@ describe('@hitly/plugin-temporal', () => {
       })
 
       assert.equal(result, 'error')
-
-      // Restore original
-      mockConnection.connect = originalConnect
     })
   })
 })
