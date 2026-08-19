@@ -453,7 +453,7 @@ test('S3EvidenceSink uses prefix for object key', async () => {
   assert.ok(receipt.store_uri.includes('evidence/hitly/evt_123.json'))
 })
 
-test('S3EvidenceSink throws on missing endpoint', async () => {
+test('S3EvidenceSink returns NoneSink on missing endpoint', async () => {
   const { createEvidenceSink } = await import('./evidence-sink')
 
   const sink = createEvidenceSink({
@@ -467,7 +467,7 @@ test('S3EvidenceSink throws on missing endpoint', async () => {
   assert.equal(sink.id, 'none')
 })
 
-test('S3EvidenceSink throws on missing bucket', async () => {
+test('S3EvidenceSink returns NoneSink on missing bucket', async () => {
   const { createEvidenceSink } = await import('./evidence-sink')
 
   const sink = createEvidenceSink({
@@ -479,6 +479,30 @@ test('S3EvidenceSink throws on missing bucket', async () => {
   })
 
   assert.equal(sink.id, 'none')
+})
+
+test('S3EvidenceSink returns NoneSink on missing credentials', async () => {
+  const { createEvidenceSink } = await import('./evidence-sink')
+
+  const sinkNoAccessKey = createEvidenceSink({
+    type: 's3',
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    bucket: 'evidence',
+    secretAccessKey: 'secret',
+  })
+
+  assert.equal(sinkNoAccessKey.id, 'none')
+
+  const sinkNoSecret = createEvidenceSink({
+    type: 's3',
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    bucket: 'evidence',
+    accessKeyId: 'GK1234',
+  })
+
+  assert.equal(sinkNoSecret.id, 'none')
 })
 
 test('S3EvidenceSink handles PutObject error', async () => {
@@ -525,4 +549,50 @@ test('S3EvidenceSink handles PutObject error', async () => {
   await assert.rejects(async () => {
     await sink.append(mockEvent)
   }, /Evidence sink S3 PutObject failed/)
+})
+
+test('S3EvidenceSink handles PutObject 5xx error', async () => {
+  const { S3EvidenceSink } = await import('./evidence-sink')
+  const mockEvent: EvidenceEvent = {
+    spec: 'hitly.evidence.v1',
+    event_id: 'evt_456',
+    approval_id: 'apr_789',
+    event_type: 'decided',
+    seq: 2,
+    occurred_at: '2024-01-01T00:00:00.000Z',
+    origin: {
+      plugin: 'mastra',
+      projectId: 'prj_abc',
+      runId: 'run_def',
+    },
+    action: {
+      name: 'test',
+      args: {},
+      proposed_sha256: 'def456',
+    },
+    retention: {
+      min_days: 180,
+    },
+    integrity: {
+      alg: 'sha256',
+      content_sha256: 'test_hash_2',
+    },
+  }
+
+  global.fetch = async () => {
+    return new Response('Internal Server Error', { status: 500 })
+  }
+
+  const sink = new S3EvidenceSink({
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    bucket: 'evidence',
+    accessKeyId: 'GK1234',
+    secretAccessKey: 'secret',
+    forcePathStyle: true,
+  })
+
+  await assert.rejects(async () => {
+    await sink.append(mockEvent)
+  }, /Evidence sink S3 PutObject failed \(500\)/)
 })

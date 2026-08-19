@@ -209,7 +209,7 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
             defaultChecked={sinkConfig.forcePathStyle === true}
             className="h-4 w-4"
           />
-          Force path-style URLs (required for Garage and most non-AWS S3)
+          Force path-style URLs (defaults to on for non-AWS endpoints)
         </label>
 
         <button

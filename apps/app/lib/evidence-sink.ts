@@ -248,6 +248,8 @@ export function createEvidenceSink(config: {
     })
   }
   if (config.type === 's3' && config.endpoint && config.region && config.bucket && config.accessKeyId && config.secretAccessKey) {
+    const isAwsEndpoint = config.endpoint.includes('amazonaws.com')
+    const forcePathStyle = config.forcePathStyle !== undefined ? config.forcePathStyle : !isAwsEndpoint
     return new S3EvidenceSink({
       endpoint: config.endpoint,
       region: config.region,
@@ -255,7 +257,7 @@ export function createEvidenceSink(config: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
       prefix: config.prefix,
-      forcePathStyle: config.forcePathStyle,
+      forcePathStyle,
     })
   }
   return new NoneSink()

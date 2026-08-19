@@ -86,7 +86,7 @@ In your HITLy project settings (Config tab), set:
 - **S3 Access Key ID**: `GK...` (from step 2)
 - **S3 Secret Access Key**: (from step 2)
 - **S3 Prefix**: (optional, e.g., `hitly/` to organize objects under a prefix)
-- **Force Path Style**: `true` (required for Garage and most non-AWS S3 implementations)
+- **Force Path Style**: Defaults to `true` for non-AWS endpoints (Garage, R2, on-premises S3). Automatically enabled when a custom endpoint is set.
 
 Save the configuration.
 

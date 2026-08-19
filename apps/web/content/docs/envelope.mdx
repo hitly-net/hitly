@@ -151,7 +151,7 @@ See `examples/evidence-http` for a reference HTTP receiver.
 - **S3 Access Key ID**: IAM or service account access key
 - **S3 Secret Access Key**: Corresponding secret key
 - **S3 Prefix**: Optional prefix for object keys (e.g., `hitly/` to organize events under a folder)
-- **Force Path Style**: Enable for Garage and most non-AWS S3-compatible services (uses `bucket.example.com/key` instead of `example.com/bucket/key`)
+- **Force Path Style**: Defaults to enabled for non-AWS endpoints (Garage, R2, on-premises S3). Uses `example.com/bucket/key` instead of virtual-host `bucket.example.com/key`.
 
 Each evidence event is stored as a JSON file named `{event_id}.json` (or `{prefix}/{event_id}.json` if prefix is set). The `store_uri` in the receipt is the HTTPS URL to that S3 object.
 

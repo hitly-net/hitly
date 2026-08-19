@@ -285,9 +285,15 @@ export async function appendEvidence(args: {
     console.log(`[evidence] HTTP sink config has no URL`)
     return null
   }
-  if (sinkConfig.type === 's3' && (!sinkConfig.endpoint || !sinkConfig.bucket)) {
-    console.log(`[evidence] S3 sink config missing endpoint or bucket`)
-    return null
+  if (sinkConfig.type === 's3') {
+    if (!sinkConfig.endpoint || !sinkConfig.bucket || !sinkConfig.accessKeyId || !sinkConfig.secretAccessKey) {
+      const missing = []
+      if (!sinkConfig.endpoint) missing.push('endpoint')
+      if (!sinkConfig.bucket) missing.push('bucket')
+      if (!sinkConfig.accessKeyId) missing.push('accessKeyId')
+      if (!sinkConfig.secretAccessKey) missing.push('secretAccessKey')
+      throw new Error(`Evidence sink S3 config missing required fields: ${missing.join(', ')}`)
+    }
   }
 
   console.log(`[evidence] Sink: type=${sinkConfig.type}`)
