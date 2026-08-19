@@ -76,6 +76,9 @@ export function ingestHermes(raw: unknown): ApprovalEnvelope & { origin: OriginR
     sessionKey ??
     ''
 
+  if (!resumeUrl) {
+    throw new Error('Hermes ingest requires resumeUrl')
+  }
   if (kind === 'kanban' && !taskId) {
     throw new Error('Hermes kanban ingest requires taskId')
   }
@@ -135,7 +138,8 @@ export function ingestHermes(raw: unknown): ApprovalEnvelope & { origin: OriginR
         requestId,
         taskId,
         runId,
-        ...(resumeUrl ? { resumeUrl, metadata } : {}),
+        resumeUrl,
+        metadata,
       },
       details: originDetails({
         kind,

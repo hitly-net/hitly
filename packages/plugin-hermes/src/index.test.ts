@@ -53,7 +53,7 @@ describe('@hitly/plugin-hermes', () => {
       assert.equal(result.origin.resumeHandle.resumeUrl, 'http://localhost:8080/kanban-callback')
     })
 
-    it('should ingest without resumeUrl (legacy poll mode)', () => {
+    it('should throw when resumeUrl is missing', () => {
       const raw = {
         plugin: 'hermes',
         projectId: 'prj_123',
@@ -61,10 +61,9 @@ describe('@hitly/plugin-hermes', () => {
         command: 'ls -la',
       }
 
-      const result = hermesPlugin.ingest(raw)
-
-      assert.equal(result.origin.resumeHandle.resumeUrl, undefined)
-      assert.equal(result.origin.runId, 'cmd_abc')
+      assert.throws(() => {
+        hermesPlugin.ingest(raw)
+      }, /Hermes ingest requires resumeUrl/)
     })
 
     it('should throw when runId is missing for command', () => {
@@ -73,6 +72,7 @@ describe('@hitly/plugin-hermes', () => {
         projectId: 'prj_123',
         kind: 'command',
         command: 'test',
+        resumeUrl: 'http://localhost:8080/callback',
       }
 
       assert.throws(() => {
@@ -85,6 +85,7 @@ describe('@hitly/plugin-hermes', () => {
         plugin: 'hermes',
         projectId: 'prj_123',
         kind: 'kanban',
+        resumeUrl: 'http://localhost:8080/callback',
       }
 
       assert.throws(() => {
@@ -172,7 +173,14 @@ describe('@hitly/plugin-hermes', () => {
       assert.equal(body.response, 'Not approved at this time')
     })
 
-    it('should return error when resumeUrl is missing', async () => {
+    it('should return error when resumeUrl is missing and not call fetch', async () => {
+      const mockFetch = mock.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => '{}',
+      })) as unknown as typeof fetch
+      global.fetch = mockFetch
+
       const origin: OriginRef = {
         plugin: 'hermes',
         projectId: 'prj_123',
@@ -192,6 +200,10 @@ describe('@hitly/plugin-hermes', () => {
       assert.equal(result.status, 0)
       assert(result.error?.includes('Hermes resume requires resumeUrl'))
       assert(result.error?.includes('Origin should wait on callback'))
+      
+      // Verify fetch was never called
+      const mockCalls = (mockFetch as any).mock.calls
+      assert.equal(mockCalls.length, 0, 'fetch should not be called when resumeUrl is missing')
     })
 
     it('should handle HTTP errors from resumeUrl', async () => {
