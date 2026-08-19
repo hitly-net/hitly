@@ -3,7 +3,7 @@ title: Mobile
 description: Reviewer app for iOS and Android — Cloud or hosted login, push, and deep links into a work item.
 ---
 
-The HITL<sub><i>y</i></sub> mobile app is an Expo (React Native) client in `apps/mobile`. It signs into **HITL<sub><i>y</i></sub> Cloud** (`https://cloud.hitly.net`) or a **self-hosted** instance URL, receives device notifications, and opens the approval that needs a decision.
+The HITL<sub><i>y</i></sub> mobile app is an Expo (React Native) client in `apps/mobile`. It signs into a **self-hosted** instance URL, receives device notifications, and opens the approval that needs a decision. (Cloud login at `cloud.hitly.net` is waitlist-only; join at [hitly.net](https://hitly.net).)
 
 Web stays the admin surface for team, rules, people, logs, and API keys. Mobile also has workspace settings, a project list, project inbox, and project config (no key minting).
 
@@ -26,7 +26,7 @@ Do not put a project API key (`hitly_…`) in the mobile app. Those keys are ing
 
 ## Deep links
 
-- Universal link (Cloud): `https://cloud.hitly.net/inbox/{approvalId}`
+- Universal link (self-hosted): `http://localhost:3001/inbox/{approvalId}`
 - Custom scheme: `hitly://inbox/{approvalId}?host={instanceUrl}`
 - Push tap: `data.approvalId` + `data.instanceUrl`
 
@@ -40,7 +40,7 @@ Assignees with a registered Expo token are pushed on ingest, in addition to emai
 {
   "title": "HITLy: send-refund needs a decision",
   "body": "Acme refunds · expires in 15m",
-  "data": { "type": "approval", "approvalId": "apr_…", "instanceUrl": "https://cloud.hitly.net" }
+  "data": { "type": "approval", "approvalId": "apr_…", "instanceUrl": "http://localhost:3001" }
 }
 ```
 

@@ -84,28 +84,32 @@ The Mastra plugin automatically captures:
 - `agentId` (for agent approvals)
 - `runId`, `stepId`, `toolCallId` (always)
 
-Everything else must be passed by the implementor via `createHitlyApprovalStep()` config.
+Everything else must be passed by the implementor via `notifyHitlyApproval()` config.
 
 ### Example: Mastra with Evidence
 
 ```ts
-import { createHitlyApprovalStep } from '@hitly/plugin-mastra'
+import { notifyHitlyApproval } from '@hitly/plugin-mastra'
 
-const approvalStep = createHitlyApprovalStep({
-  apiUrl: process.env.HITLY_API_URL,
-  apiKey: process.env.HITLY_API_KEY,
-  projectId: process.env.HITLY_PROJECT_ID,
-  agentId: 'refund-agent',
-  action: { name: 'send_refund', args: { orderId, amount } },
+await notifyHitlyApproval(
+  {
+    apiUrl: process.env.HITLY_API_URL!,
+    apiKey: process.env.HITLY_API_KEY!,
+    projectId: process.env.HITLY_PROJECT_ID!,
+    mastraBaseUrl: process.env.MASTRA_BASE_URL!,
+    agentId: 'refund-agent',
+    action: { name: 'send_refund', args: { orderId, amount } },
 
-  // Evidence fields the implementor must provide
-  systemId: 'refund-agent-prod',
-  inventoryId: 'ai-inv-refund-agent-v2',  // Your AI inventory record, not orderId
-  policyId: 'refund-over-100',
-  policyRationale: 'Refunds over $100 require manager approval',
-  riskTier: 'medium',
-  toolName: 'send_refund',
-})
+    // Evidence fields the implementor must provide
+    systemId: 'refund-agent-prod',
+    inventoryId: 'ai-inv-refund-agent-v2',  // Your AI inventory record, not orderId
+    policyId: 'refund-over-100',
+    policyRationale: 'Refunds over $100 require manager approval',
+    riskTier: 'medium',
+    toolName: 'send_refund',
+  },
+  { runId: String(runId), suspendPayload: { reason: 'Approval required' } },
+)
 ```
 
 Evidence events are written to the configured HTTP sink (see [Evidence Storage](#evidence-storage) below) as `hitly.evidence.v1` JSON.

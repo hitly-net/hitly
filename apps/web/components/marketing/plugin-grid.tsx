@@ -7,7 +7,7 @@ const plugins = [
     name: 'Mastra',
     status: 'Available',
     href: '/integrations/mastra',
-    body: 'createHitlyApprovalStep() wraps suspend() and resume(). First-class plugin.',
+    body: 'notifyHitlyApproval() wraps suspend() and resume(). First-class plugin.',
   },
   {
     id: 'hermes',
