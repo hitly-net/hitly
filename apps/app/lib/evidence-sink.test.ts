@@ -645,3 +645,55 @@ test('S3EvidenceSink defaults to path-style for non-AWS endpoints', async () => 
   assert.ok(capturedUrl.includes('127.0.0.1:3902/evidence/evt_789.json'), `Expected path-style URL, got: ${capturedUrl}`)
   assert.ok(!capturedUrl.includes('evidence.127.0.0.1'), `Should not use virtual-host style, got: ${capturedUrl}`)
 })
+
+test('S3EvidenceSink includes port in SigV4 Host header', async () => {
+  const { S3EvidenceSink } = await import('./evidence-sink')
+  const mockEvent: EvidenceEvent = {
+    spec: 'hitly.evidence.v1',
+    event_id: 'evt_port',
+    approval_id: 'apr_port',
+    event_type: 'requested',
+    seq: 1,
+    occurred_at: '2024-01-01T00:00:00.000Z',
+    origin: {
+      plugin: 'mastra',
+      projectId: 'prj_port',
+      runId: 'run_port',
+    },
+    action: {
+      name: 'test',
+      args: {},
+      proposed_sha256: 'port123',
+    },
+    retention: {
+      min_days: 180,
+    },
+    integrity: {
+      alg: 'sha256',
+      content_sha256: 'test_hash_port',
+    },
+  }
+
+  let capturedHeaders: Record<string, string> = {}
+
+  global.fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    if (init?.headers) {
+      capturedHeaders = init.headers as Record<string, string>
+    }
+    return new Response('', { status: 200 })
+  }
+
+  const sink = new S3EvidenceSink({
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    bucket: 'evidence',
+    accessKeyId: 'GK1234',
+    secretAccessKey: 'secret',
+    forcePathStyle: true,
+  })
+
+  await sink.append(mockEvent)
+
+  assert.ok(capturedHeaders['host'] === '127.0.0.1:3902', `Expected Host header with port, got: ${capturedHeaders['host']}`)
+  assert.ok(capturedHeaders['authorization'].includes('SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date'), 'Host must be in SignedHeaders')
+})

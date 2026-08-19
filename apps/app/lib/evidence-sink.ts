@@ -162,7 +162,9 @@ export class S3EvidenceSink implements EvidenceSink {
 
     const endpoint = this.config.endpoint.replace(/\/+$/, '')
     const url = new URL(endpoint)
-    const host = this.config.forcePathStyle ? url.hostname : `${this.config.bucket}.${url.hostname}`
+    const baseHost = this.config.forcePathStyle ? url.hostname : `${this.config.bucket}.${url.hostname}`
+    const isNonStandardPort = url.port && ((url.protocol === 'https:' && url.port !== '443') || (url.protocol === 'http:' && url.port !== '80'))
+    const host = isNonStandardPort ? `${baseHost}:${url.port}` : baseHost
     const canonicalUri = this.config.forcePathStyle ? `/${this.config.bucket}/${key}` : `/${key}`
 
     const payloadHash = await this.sha256(body)
@@ -183,8 +185,7 @@ export class S3EvidenceSink implements EvidenceSink {
 
     const authorizationHeader = `AWS4-HMAC-SHA256 Credential=${this.config.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
 
-    const hostWithPort = url.port ? `${host}:${url.port}` : host
-    const putUrl = `${url.protocol}//${hostWithPort}${canonicalUri}`
+    const putUrl = `${url.protocol}//${host}${canonicalUri}`
 
     const response = await fetch(putUrl, {
       method: 'PUT',

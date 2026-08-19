@@ -206,7 +206,12 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
           <input
             type="checkbox"
             name="evidenceSinkS3ForcePathStyle"
-            defaultChecked={sinkConfig.forcePathStyle === true}
+            defaultChecked={
+              sinkConfig.forcePathStyle === true ||
+              (sinkConfig.forcePathStyle !== false &&
+                typeof sinkConfig.endpoint === 'string' &&
+                !sinkConfig.endpoint.includes('amazonaws.com'))
+            }
             className="h-4 w-4"
           />
           Force path-style URLs (defaults to on for non-AWS endpoints)

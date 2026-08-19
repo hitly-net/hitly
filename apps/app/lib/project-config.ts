@@ -25,7 +25,7 @@ export type ProjectConfigInput = {
   evidenceSinkS3AccessKeyId: string
   evidenceSinkS3SecretAccessKey: string
   evidenceSinkS3Prefix: string
-  evidenceSinkS3ForcePathStyle: boolean
+  evidenceSinkS3ForcePathStyle: boolean | undefined
 }
 
 export function parseProjectConfig(input: Record<string, unknown>): ProjectConfigInput | { error: string } {
@@ -50,7 +50,10 @@ export function parseProjectConfig(input: Record<string, unknown>): ProjectConfi
   const evidenceSinkS3AccessKeyId = typeof input.evidenceSinkS3AccessKeyId === 'string' ? input.evidenceSinkS3AccessKeyId.trim() : ''
   const evidenceSinkS3SecretAccessKey = typeof input.evidenceSinkS3SecretAccessKey === 'string' ? input.evidenceSinkS3SecretAccessKey.trim() : ''
   const evidenceSinkS3Prefix = typeof input.evidenceSinkS3Prefix === 'string' ? input.evidenceSinkS3Prefix.trim() : ''
-  const evidenceSinkS3ForcePathStyle = input.evidenceSinkS3ForcePathStyle === true || input.evidenceSinkS3ForcePathStyle === 'true'
+  const evidenceSinkS3ForcePathStyle = 
+    input.evidenceSinkS3ForcePathStyle === true || input.evidenceSinkS3ForcePathStyle === 'true' ? true :
+    input.evidenceSinkS3ForcePathStyle === false || input.evidenceSinkS3ForcePathStyle === 'false' ? false :
+    undefined
 
   if (evidenceSinkMetadata) {
     try {
@@ -154,7 +157,9 @@ export async function saveProjectConfig(projectId: string, input: ProjectConfigI
     if (input.evidenceSinkS3AccessKeyId) sinkConfig.accessKeyId = input.evidenceSinkS3AccessKeyId
     if (input.evidenceSinkS3SecretAccessKey) sinkConfig.secretAccessKey = input.evidenceSinkS3SecretAccessKey
     if (input.evidenceSinkS3Prefix) sinkConfig.prefix = input.evidenceSinkS3Prefix
-    sinkConfig.forcePathStyle = input.evidenceSinkS3ForcePathStyle
+    if (typeof input.evidenceSinkS3ForcePathStyle === 'boolean') {
+      sinkConfig.forcePathStyle = input.evidenceSinkS3ForcePathStyle
+    }
   }
 
   await database
