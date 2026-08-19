@@ -3,6 +3,8 @@ HITLy + LangGraph refund graph demo.
 
 The refund graph pauses with interrupt(HumanInterrupt) and notifies HITLy.
 Reviewer accepts or rejects. On reject, the refund is NOT issued.
+
+**Security**: Resume verification with HITLY_RESUME_SECRET prevents spoofed resumes.
 """
 
 from typing import TypedDict, Annotated, Literal
@@ -12,6 +14,8 @@ from langgraph.types import interrupt, Command
 from langchain_core.runnables import RunnableConfig
 import httpx
 import os
+
+from .resume_auth import verify_hitly_resume, HitlyResumeError
 
 # Evidence fields mirror Mastra example
 SYSTEM_ID = "refund-graph-prod"
@@ -120,6 +124,8 @@ async def approval_node(state: RefundState, config: RunnableConfig) -> RefundSta
     
     On resume with type=='ignore' (HITLy reject), do not issue refund.
     On accept, proceed to issue_refund_node.
+    
+    **Security**: Verifies HITLY_RESUME_SECRET to prevent spoofed resumes.
     """
     # Extract thread_id from config
     thread_id = config.get("configurable", {}).get("thread_id", "unknown")
@@ -153,6 +159,18 @@ async def approval_node(state: RefundState, config: RunnableConfig) -> RefundSta
             description=f"Refund approval required for ${state['amount']}",
         )
     )
+    
+    # Verify HITLy resume proof (fail-closed: guessed threadId is rejected)
+    try:
+        verify_hitly_resume(human_response, run_id=thread_id, required=True)
+    except HitlyResumeError as e:
+        print(f"⚠️  Resume verification failed: {e}")
+        return {
+            **state,
+            "approved": False,
+            "refund_issued": False,
+            "rejection_reason": f"Resume verification failed: {e}",
+        }
     
     # Check resume response type
     if isinstance(human_response, dict):

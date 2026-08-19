@@ -7,6 +7,7 @@ import {
   type OriginRef,
   type ResumeResponse,
 } from '@hitly/core'
+import { signHitlyResume } from './resume-auth'
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
@@ -67,7 +68,7 @@ async function postLangGraphResume(
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(5_000),
   })
   const text = await response.text()
   let parsed: unknown = text || null
@@ -186,7 +187,23 @@ export const langgraphPlugin: HitlyPlugin = {
       }
     }
 
-    const humanResponse = decisionToHumanResponse(payload)
+    let humanResponse = decisionToHumanResponse(payload)
+    const secret = typeof credentials?.resumeSecret === 'string' ? credentials.resumeSecret : ''
+    const stepId = origin.stepId ?? ''
+    const approvalId = typeof origin.resumeHandle.approvalId === 'string' ? origin.resumeHandle.approvalId : undefined
+
+    // Sign the resume data with HITLy proof
+    let resumeData = humanResponse as unknown as Record<string, unknown>
+    if (secret) {
+      resumeData = signHitlyResume({
+        secret,
+        resumeData,
+        runId: threadId,
+        stepId,
+        approvalId,
+      })
+    }
+
     const assistantId = handle.assistantId || handle.graphId
 
     const token = typeof credentials?.token === 'string' ? credentials.token : ''
@@ -195,7 +212,7 @@ export const langgraphPlugin: HitlyPlugin = {
 
     const resumeBody = {
       assistant_id: assistantId,
-      command: { resume: humanResponse },
+      command: { resume: resumeData },
     }
 
     const originResponse = await postLangGraphResume(
@@ -204,7 +221,7 @@ export const langgraphPlugin: HitlyPlugin = {
       headers,
     )
 
-    return { resumeData: humanResponse as unknown as Record<string, unknown>, ...originResponse }
+    return { resumeData, ...originResponse }
   },
   async healthcheck(credentials: ConnectionCredentials): Promise<'ok' | 'error'> {
     const baseUrl = String(credentials.baseUrl ?? credentials.deploymentUrl ?? '')
@@ -221,4 +238,5 @@ export const langgraphPlugin: HitlyPlugin = {
   },
 }
 
-export default langgraphPlugin
+export { langgraphPlugin as default }
+export { signHitlyResume, verifyHitlyResume } from './resume-auth'

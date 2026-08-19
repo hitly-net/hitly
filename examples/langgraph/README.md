@@ -9,7 +9,7 @@ The **refund graph** pauses with `interrupt(HumanInterrupt)` and notifies HITLy.
 ## Setup
 
 1. Start HITLy (`yarn db:up`, `yarn db:migrate`, `yarn dev:app`) and create a LangGraph project. Copy the project id and API key from the project page.
-2. Copy `.env.example` to `.env` and set `HITLY_API_KEY`, `HITLY_PROJECT_ID`.
+2. Copy `.env.example` to `.env` and set `HITLY_API_KEY`, `HITLY_PROJECT_ID`, and `HITLY_RESUME_SECRET` (from the HITLy project Config page).
 3. Point the HITLy project origin base URL at `http://127.0.0.1:2024` (or set `LANGGRAPH_BASE_URL`).
 
 Install Python dependencies:
@@ -83,11 +83,19 @@ Each approval creates 3-4 evidence events:
 1. **Graph node** calls `interrupt(HumanInterrupt)` and notifies HITLy (idempotent POST to `/api/v1/approvals`).
 2. **HITLy** stores the envelope and shows it in the inbox.
 3. **Reviewer** accepts or rejects.
-4. **HITLy** resumes the thread with `POST /threads/{thread_id}/runs/wait` and `{ command: { resume: <HumanResponse> } }`.
-5. **Graph** checks `response.type`:
+4. **HITLy** resumes the thread with `POST /threads/{thread_id}/runs/wait` and `{ command: { resume: <HumanResponse> } }` signed with HITLY_RESUME_SECRET.
+5. **Graph** verifies the signature (fail-closed: guessed threadId without proof is rejected), then checks `response.type`:
    - `accept` → issue refund
    - `ignore` (HITLy reject) → do **not** issue refund, return rejection reason
    - `edit` → apply edited args, then issue refund
+
+## Resume Security
+
+The graph **requires** `HITLY_RESUME_SECRET` to verify that resume came from HITLy. Guessed `threadId` without the signed proof will be rejected. This prevents:
+
+- Spoofed resumes from external actors
+- Cross-project resume attempts (HITLy signs with project-specific secret)
+- Replay attacks (5-minute TTL on proof)
 
 ## Testing
 
@@ -118,6 +126,10 @@ And configure the LangGraph connection in HITLy with the deployment URL and API 
 ## Idempotent notify
 
 The `notify_hitly_idempotent` call is wrapped in a LangGraph `@task` so it only runs **once** even if the node restarts on resume. Without this, the node would double-ingest on resume.
+
+## Checkpointer requirement
+
+The graph **requires** a checkpointer (e.g. `MemorySaver` or `SqliteSaver`) to pause at `interrupt()`. Starting the graph without a checkpointer will fail immediately.
 
 ## Decision mapping
 
