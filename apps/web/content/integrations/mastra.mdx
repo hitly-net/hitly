@@ -25,25 +25,19 @@ See the runnable project in `examples/mastra` (agent + workflow).
 
 ## Setup
 
+Clone the monorepo and set up the local HITL<sub><i>y</i></sub> app:
+
+```bash
+git clone https://github.com/hitly-net/hitly.git
+cd hitly
+yarn install
+cp apps/app/.env.example apps/app/.env.local
+yarn db:up
+yarn db:migrate
+yarn dev:app  # http://localhost:3001
+```
+
 Create a workspace, [API key](/docs/api), and Mastra [connection](/docs/connections) (`base URL` + token).
-
-Install `@hitly/plugin-mastra`:
-
-```bash
-yarn add @hitly/plugin-mastra
-```
-
-```bash
-npm i @hitly/plugin-mastra
-```
-
-```bash
-pnpm add @hitly/plugin-mastra
-```
-
-```bash
-bun add @hitly/plugin-mastra
-```
 
 Set env:
 
@@ -61,7 +55,7 @@ MASTRA_BASE_URL=http://localhost:4111
 2. In the tool or step `execute`, call `notifyHitlyApproval()`, then `suspend()`.
 3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the HITLy `hitly` proof survives.
 4. Run `mastra dev` (default `http://localhost:4111`) and HITL<sub><i>y</i></sub> app (`http://localhost:3001`).
-5. Chat with the agent or start the workflow in Studio. Open `cloud.hitly.net/inbox`, accept, watch the run resume.
+5. Chat with the agent or start the workflow in Studio. Open `http://localhost:3001/inbox`, accept, watch the run resume.
 
 ### Workflow step
 
@@ -161,7 +155,7 @@ HITL<sub><i>y</i></sub> must reach `mastraBaseUrl` to call `resume()`. Do not po
 
 | Option | Use it to |
 | --- | --- |
-| `apiUrl` | HITL<sub><i>y</i></sub> app origin, such as `https://cloud.hitly.net` |
+| `apiUrl` | HITL<sub><i>y</i></sub> app origin, such as `http://localhost:3001` |
 | `apiKey` | Workspace ingest key |
 | `projectId` | Project that owns the API key |
 | `mastraBaseUrl` | Origin Mastra server HITL<sub><i>y</i></sub> will call on resume |
