@@ -118,15 +118,7 @@ async def approval_node(state: RefundState, config: RunnableConfig) -> RefundSta
     # Check resume response type
     if isinstance(human_response, dict):
         response_type = human_response.get("type")
-        if response_type == "ignore":
-            # HITLy reject: do not issue refund
-            return {
-                **state,
-                "approved": False,
-                "refund_issued": False,
-                "rejection_reason": "Reviewer rejected the refund",
-            }
-        elif response_type == "accept":
+        if response_type == "accept":
             return {**state, "approved": True}
         elif response_type == "edit":
             # Apply edited args if provided
@@ -138,8 +130,18 @@ async def approval_node(state: RefundState, config: RunnableConfig) -> RefundSta
                 "approved": True,
             }
     
-    # Default: approved
-    return {**state, "approved": True}
+    # Default: reject (unknown or missing type, or type == "ignore")
+    # Fail-closed: only explicit "accept" or "edit" proceed
+    return {
+        **state,
+        "approved": False,
+        "refund_issued": False,
+        "rejection_reason": (
+            "Reviewer rejected the refund"
+            if isinstance(human_response, dict) and human_response.get("type") == "ignore"
+            else "Unknown or missing response type (fail-closed)"
+        ),
+    }
 
 
 def issue_refund_node(state: RefundState) -> RefundState:
