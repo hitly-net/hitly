@@ -16,9 +16,9 @@ test('handleDecideError: reload succeeds with still-pending item → stay', asyn
     expiresAt: null,
     envelope: {
       action: { name: 'send-refund', args: {} },
-      allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false },
+      allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
     },
-    origin: { plugin: 'mastra', projectId: 'prj_1' },
+    origin: { plugin: 'mastra', projectId: 'prj_1', runId: 'run_1', resumeHandle: {} },
     originFields: [],
     canAct: true,
     canCancel: true,
@@ -42,9 +42,9 @@ test('handleDecideError: reload succeeds but now decided → stay', async () => 
     expiresAt: null,
     envelope: {
       action: { name: 'send-refund', args: {} },
-      allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false },
+      allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
     },
-    origin: { plugin: 'mastra', projectId: 'prj_1' },
+    origin: { plugin: 'mastra', projectId: 'prj_1', runId: 'run_2', resumeHandle: {} },
     originFields: [],
     canAct: false,
     canCancel: false,

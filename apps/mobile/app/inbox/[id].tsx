@@ -117,7 +117,8 @@ export default function WorkItemDetailScreen() {
               router.back()
             } catch (err) {
               const outcome = await handleDecideError(async () => {
-                return await client?.approval(detail.id).catch(() => null)
+                const result = await client?.approval(detail.id).catch(() => null)
+                return result ?? null
               })
               if (outcome.action === 'stay') {
                 setDetail(outcome.detail)
