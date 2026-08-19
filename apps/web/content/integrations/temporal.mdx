@@ -3,27 +3,196 @@ title: Temporal
 description: Wait on condition(), resume with signal hitly.decision.
 ---
 
-Status: **coming soon**.
-
 [Temporal](https://docs.temporal.io/design-patterns/approval) pauses with `condition()` until a Signal (or times out). HITL<sub><i>y</i></sub> does not hold a worker; it signals the workflow.
 
 ## How it works with HITL<sub><i>y</i></sub>
 
-1. An activity POSTs an approval to HITL<sub><i>y</i></sub>.
+1. An activity POSTs an approval to HITL<sub><i>y</i></sub> `/api/v1/approvals`.
 2. The workflow `await condition(() => decision !== undefined, timeout)`.
-3. Reviewer decides.
+3. Reviewer decides in the HITL<sub><i>y</i></sub> inbox.
 4. HITL<sub><i>y</i></sub> sends signal `hitly.decision` with `{ decision, args }`.
+5. The workflow checks `decision`:
+   - `accept` → proceed with the action
+   - `reject` → bail without taking the action
+   - `edit` → apply edited arguments, then proceed
 
-## Configuration
+See the runnable project in `examples/temporal` (TypeScript refund workflow with worker and client).
 
-| Field | Meaning |
+## Setup
+
+Create a workspace, [API key](/docs/api), and Temporal [connection](/docs/connections) (`address`, `namespace`, and optional `apiKey` for Temporal Cloud).
+
+Set env:
+
+```bash
+HITLY_API_URL=http://localhost:3001
+HITLY_API_KEY=hitly_...
+HITLY_PROJECT_ID=prj_...
+TEMPORAL_ADDRESS=localhost:7233
+TEMPORAL_NAMESPACE=default
+```
+
+## Integration guide (TypeScript)
+
+### 1. Install dependencies
+
+```bash
+npm install @temporalio/activity @temporalio/client @temporalio/worker @temporalio/workflow
+```
+
+### 2. Create HITLy notify activity
+
+```typescript
+import type { NotifyHitlyInput } from './types'
+
+export async function notifyHitlyActivity(input: NotifyHitlyInput): Promise<void> {
+  const payload = {
+    plugin: 'temporal',
+    projectId: process.env.HITLY_PROJECT_ID,
+    workflowId: input.workflowId,
+    address: process.env.TEMPORAL_ADDRESS,
+    namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
+    actionName: 'send-refund',
+    args: { orderId: input.orderId, amount: input.amount },
+    contextMarkdown: `Refund of $${input.amount} for order ${input.orderId}.`,
+    // Evidence fields
+    systemId: 'refund-workflow-prod',
+    inventoryId: 'ai-inv-refund-workflow-v1',
+    policyId: 'refund-over-100',
+    riskTier: input.amount > 1000 ? 'high' : 'medium',
+  }
+
+  const response = await fetch(`${process.env.HITLY_API_URL}/api/v1/approvals`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${process.env.HITLY_API_KEY}`,
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    throw new Error(`HITLy ingest failed: ${await response.text()}`)
+  }
+}
+```
+
+### 3. Workflow with condition() and signal
+
+```typescript
+import { proxyActivities, defineSignal, setHandler, condition } from '@temporalio/workflow'
+import type * as activities from './activities'
+
+const { notifyHitlyActivity, issueRefundActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: '60 seconds',
+})
+
+// Define the hitly.decision signal
+export const hitlyDecisionSignal = defineSignal<[HitlyDecision]>('hitly.decision')
+
+export async function refundWorkflow(input: RefundInput): Promise<string> {
+  let decision: HitlyDecision | undefined = undefined
+
+  // Set up signal handler
+  setHandler(hitlyDecisionSignal, (payload: HitlyDecision) => {
+    decision = payload
+  })
+
+  // Notify HITLy
+  const workflowId = (globalThis as any).workflowInfo?.().workflowId ?? 'unknown'
+  await notifyHitlyActivity({ workflowId, ...input })
+
+  // Wait for signal with timeout (5 minutes)
+  const signalReceived = await condition(() => decision !== undefined, '5m')
+
+  if (!signalReceived || !decision) {
+    throw new Error('Timeout waiting for HITLy decision')
+  }
+
+  // Check decision
+  if (decision.decision === 'reject') {
+    return `Refund rejected. No refund issued for order ${input.orderId}.`
+  }
+
+  // Apply edited args if present
+  const finalArgs = {
+    orderId: decision.args?.orderId ?? input.orderId,
+    amount: decision.args?.amount ?? input.amount,
+  }
+
+  // Issue refund
+  return await issueRefundActivity(finalArgs)
+}
+```
+
+## Running locally
+
+1. `yarn workspace @hitly/app dev` — HITL<sub><i>y</i></sub> on port 3001.
+2. `temporal server start-dev` — Temporal server on port 7233.
+3. `cd examples/temporal && yarn worker` — Worker listening on `hitly-refund-queue`.
+4. `cd examples/temporal && yarn start-workflow` — Start a refund workflow.
+5. Open the HITL<sub><i>y</i></sub> inbox at http://localhost:3001/inbox to approve or reject.
+
+## Production
+
+HITL<sub><i>y</i></sub> must reach `address` to signal workflows. Do not point a hosted HITL<sub><i>y</i></sub> workspace at `localhost`. Use Temporal Cloud or a publicly accessible Temporal server.
+
+For Temporal Cloud, set:
+
+```
+TEMPORAL_ADDRESS=your-namespace.tmprl.cloud:7233
+TEMPORAL_NAMESPACE=your-namespace.production
+TEMPORAL_API_KEY=your-api-key
+```
+
+And configure the Temporal connection in HITL<sub><i>y</i></sub> with the address, namespace, and API key.
+
+## Configuration options
+
+| Option | Use it to |
 | --- | --- |
-| `address` | Temporal frontend (`localhost:7233`) |
-| `namespace` | e.g. `default` |
-| `workflowId` | stored on `OriginRef.runId` |
-| signal name | `hitly.decision` |
+| `address` | Temporal frontend address (e.g. `localhost:7233`) |
+| `namespace` | Temporal namespace (e.g. `default`) |
+| `workflowId` | Workflow to signal (stored on `OriginRef.runId`) |
+| Signal name | `hitly.decision` |
+
+### Evidence Fields (Optional)
+
+For audit and compliance, pass evidence context in the notify call:
+
+| Field | Description |
+| --- | --- |
+| `systemId` | AI system being governed (e.g. "refund-workflow-prod") |
+| `inventoryId` | This AI system's record in your inventory/registry (Layer 1) |
+| `policyId` | Policy that triggered approval |
+| `policyRationale` | Why approval is required |
+| `riskTier` | Risk level (e.g. "high", "medium", "low") |
+| `toolName` | Tool or action name |
+| `sensitivity` | Sensitivity flags (not raw PII) |
+| `data_categories` | Data category flags (GDPR/compliance) |
+
+Evidence events are written to the configured HTTP sink (project settings → Evidence Storage). See [Envelope](/docs/envelope#evidence-fields) for full details.
+
+## Decision mapping
+
+| HITL<sub><i>y</i></sub> | Signal payload |
+| --- | --- |
+| `accept` | `{ decision: 'accept' }` |
+| `edit` | `{ decision: 'edit', args: { orderId, amount } }` |
+| `reject` | `{ decision: 'reject' }` |
+
+## Checkpointer and timeout notes
+
+**Checkpointer N/A.** Temporal workflows are durably persisted by default. `condition()` timeout is the **workflow's** problem — HITL<sub><i>y</i></sub> stays pending until decide/expiry/cancel.
+
+**Fail-closed note:** Sink 5xx / hang >5s → pending, no signal, store-failed UI.
+
+**Isolation:** A's workflowId is never signaled with B's credentials/namespace. B deciding A is 404.
 
 ## Related
 
 - [Envelope](/docs/envelope)
 - [API](/docs/api)
+- Example: `examples/temporal`
+- [Temporal Approval Pattern](https://docs.temporal.io/design-patterns/approval)
+

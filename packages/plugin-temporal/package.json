@@ -23,12 +23,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/index.test.ts"
   },
   "dependencies": {
-    "@hitly/core": "*"
+    "@hitly/core": "*",
+    "@temporalio/client": "^1.11.3"
   },
   "devDependencies": {
+    "tsx": "^4.23.12",
     "typescript": "^5.9.2"
   }
 }

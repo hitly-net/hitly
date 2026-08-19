@@ -16,7 +16,7 @@ const features = [
     href: '/integrations',
     body: (
       <>
-        Mastra, Hermes, HTTP, and LangGraph are available today. n8n Wait is an HTTP recipe. Temporal is documented. Pause primitives stay native; <HitlyWordmark /> owns the envelope and the resume.
+        Mastra, Hermes, HTTP, LangGraph, and Temporal are available today. n8n Wait is an HTTP recipe. Pause primitives stay native; <HitlyWordmark /> owns the envelope and the resume.
       </>
     ),
   },
