@@ -11,6 +11,7 @@ import { ArgsBlock } from '../../src/components/detail/ArgsBlock'
 import { DecisionHistory } from '../../src/components/detail/DecisionHistory'
 import { DecisionBar } from '../../src/components/detail/DecisionBar'
 import { RetryResumeButton } from '../../src/components/detail/RetryResumeButton'
+import { handleDecideError } from '../../src/components/detail/decide-helpers'
 import { useAttention } from '../../src/providers/AttentionProvider'
 import type { ApprovalDetail } from '../../src/types'
 
@@ -115,9 +116,11 @@ export default function WorkItemDetailScreen() {
               await refresh()
               router.back()
             } catch (err) {
-              const next = await client?.approval(detail.id).catch(() => null)
-              if (next) {
-                setDetail(next)
+              const outcome = await handleDecideError(async () => {
+                return await client?.approval(detail.id).catch(() => null)
+              })
+              if (outcome.action === 'stay') {
+                setDetail(outcome.detail)
                 await refresh()
               }
               throw err

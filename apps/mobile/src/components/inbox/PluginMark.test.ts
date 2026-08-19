@@ -1,32 +1,33 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { BRANDS } from './PluginMark.brands'
 
 test('PluginMark: mastra brand exists', () => {
-  const pluginId = 'mastra'
-  assert.ok(['mastra', 'http', 'langgraph', 'temporal', 'hermes'].includes(pluginId))
+  assert.ok(BRANDS.mastra)
+  assert.equal(BRANDS.mastra.label, 'Mastra')
 })
 
 test('PluginMark: http brand exists', () => {
-  const pluginId = 'http'
-  assert.ok(['mastra', 'http', 'langgraph', 'temporal', 'hermes'].includes(pluginId))
+  assert.ok(BRANDS.http)
+  assert.equal(BRANDS.http.label, 'HTTP')
 })
 
 test('PluginMark: langgraph brand exists', () => {
-  const pluginId = 'langgraph'
-  assert.ok(['mastra', 'http', 'langgraph', 'temporal', 'hermes'].includes(pluginId))
+  assert.ok(BRANDS.langgraph)
+  assert.equal(BRANDS.langgraph.label, 'LangGraph')
 })
 
 test('PluginMark: temporal brand exists', () => {
-  const pluginId = 'temporal'
-  assert.ok(['mastra', 'http', 'langgraph', 'temporal', 'hermes'].includes(pluginId))
+  assert.ok(BRANDS.temporal)
+  assert.equal(BRANDS.temporal.label, 'Temporal')
 })
 
 test('PluginMark: hermes brand exists', () => {
-  const pluginId = 'hermes'
-  assert.ok(['mastra', 'http', 'langgraph', 'temporal', 'hermes'].includes(pluginId))
+  assert.ok(BRANDS.hermes)
+  assert.equal(BRANDS.hermes.label, 'Hermes')
 })
 
 test('PluginMark: unknown plugin falls back to default', () => {
-  const pluginId = 'unknown-plugin'
-  assert.ok(!['mastra', 'http', 'langgraph', 'temporal', 'hermes'].includes(pluginId))
+  const unknownPlugin = 'unknown-plugin'
+  assert.ok(!BRANDS[unknownPlugin])
 })

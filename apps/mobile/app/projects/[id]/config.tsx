@@ -60,21 +60,20 @@ function ProjectConfigBody() {
   }, [client, id])
 
   async function save() {
-    if (!client || !id) return
+    if (!client || !id || !config) return
     setPending(true)
     setError(null)
     setSaved(false)
     try {
+      const temporal = config.plugin === 'temporal'
       await client.updateProjectConfig(id, {
         name,
         description,
         sla,
         defaultAssigneeUserId: assignee || null,
-        baseUrl,
-        token: token || undefined,
-        address,
-        namespace,
-        taskQueue,
+        ...(temporal
+          ? { address, namespace, taskQueue }
+          : { baseUrl, token: token || undefined }),
       })
       setToken('')
       setSaved(true)
@@ -116,12 +115,6 @@ function ProjectConfigBody() {
           </Pressable>
         )
       })}
-      <Field
-        label={temporal ? 'Temporal address' : 'Origin base URL'}
-        value={baseUrl}
-        onChange={setBaseUrl}
-        placeholder={temporal ? 'Temporal address' : 'https://…'}
-      />
       {temporal ? (
         <>
           <Field label="Address" value={address} onChange={setAddress} />
@@ -129,13 +122,16 @@ function ProjectConfigBody() {
           <Field label="Task queue" value={taskQueue} onChange={setTaskQueue} />
         </>
       ) : (
-        <Field
-          label="Origin HTTP token"
-          value={token}
-          onChange={setToken}
-          secureTextEntry
-          placeholder="Leave blank to keep the current token"
-        />
+        <>
+          <Field label="Origin base URL" value={baseUrl} onChange={setBaseUrl} placeholder="https://…" />
+          <Field
+            label="Origin HTTP token"
+            value={token}
+            onChange={setToken}
+            secureTextEntry
+            placeholder="Leave blank to keep the current token"
+          />
+        </>
       )}
       <PrimaryButton label={pending ? 'Saving…' : 'Save'} onPress={() => void save()} disabled={pending} />
       {saved ? <Text style={styles.ok}>Saved.</Text> : null}

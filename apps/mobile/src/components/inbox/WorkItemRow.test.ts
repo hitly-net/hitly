@@ -1,21 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { resultLabel } from './WorkItemRow.helpers'
 import type { WorkItemRow } from '../../types'
-
-function resultLabel(item: WorkItemRow) {
-  const DECISION_LABEL: Record<string, string> = {
-    accept: 'accepted',
-    reject: 'rejected',
-    edit: 'edited',
-    respond: 'responded',
-    ignore: 'ignored',
-    cancel: 'cancelled',
-  }
-  if (item.status === 'decided' && item.decision) {
-    return DECISION_LABEL[item.decision] ?? item.decision
-  }
-  return item.status.replaceAll('_', ' ')
-}
 
 test('WorkItemRow: decided + accept shows accepted', () => {
   const item: WorkItemRow = {
