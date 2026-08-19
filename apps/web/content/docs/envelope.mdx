@@ -116,13 +116,20 @@ Evidence events are written to the configured HTTP sink (see [Evidence Storage](
 
 ## Evidence Storage
 
-Configure an HTTP evidence sink in project settings:
+Configure an evidence sink in project settings. HITLy supports three sink types:
 
-1. **Sink Type**: `None` (default) or `HTTP`
-2. **Sink URL**: POST destination for evidence events
-3. **Authorization Header**: Optional auth token
-4. **Custom Headers**: Optional HTTP headers (one per line: `Name: value`)
-5. **Metadata**: Optional JSON object sent as transport-only metadata
+### Sink Types
+
+1. **None** (default): No evidence storage. HITLy keeps a minimal receipt in the database.
+2. **HTTP**: POST evidence events to an HTTP endpoint (e.g., your audit log service, SIEM collector).
+3. **S3**: Store evidence events in S3-compatible object storage (AWS S3, Cloudflare R2, Garage, on-premises Ceph/Cloudian).
+
+### HTTP Sink Configuration
+
+- **Sink URL**: POST destination for evidence events
+- **Authorization Header**: Optional auth token
+- **Custom Headers**: Optional HTTP headers (one per line: `Name: value`)
+- **Metadata**: Optional JSON object sent as transport-only metadata
 
 Evidence events are POSTed to your URL with:
 - `Content-Type: application/json`
@@ -133,6 +140,30 @@ Evidence events are POSTed to your URL with:
 - Full event JSON body (see `packages/core/src/evidence.ts`)
 
 **Important**: Custom headers and metadata are **transport-only**. They are sent with the HTTP request but are **not stored in the evidence event body**. This preserves the `content_sha256` hash. Use them to pass routing information, credentials, or context to your storage backend without affecting the canonical evidence record.
+
+See `examples/evidence-http` for a reference HTTP receiver.
+
+### S3 Sink Configuration
+
+- **S3 Endpoint**: S3-compatible endpoint URL (e.g., `http://127.0.0.1:3902` for Garage, `https://s3.eu-west-1.amazonaws.com` for AWS)
+- **S3 Region**: Region name (e.g., `local`, `us-east-1`, `eu-west-1`, `auto` for Cloudflare R2)
+- **S3 Bucket**: Bucket name (dedicated to evidence; not mixed with application assets)
+- **S3 Access Key ID**: IAM or service account access key
+- **S3 Secret Access Key**: Corresponding secret key
+- **S3 Prefix**: Optional prefix for object keys (e.g., `hitly/` to organize events under a folder)
+- **Force Path Style**: Defaults to enabled for non-AWS endpoints (Garage, R2, on-premises S3). Uses `example.com/bucket/key` instead of virtual-host `bucket.example.com/key`.
+
+Each evidence event is stored as a JSON file named `{event_id}.json` (or `{prefix}/{event_id}.json` if prefix is set). The `store_uri` in the receipt is the HTTPS URL to that S3 object.
+
+HITLy uses AWS Signature Version 4 (SigV4) to authenticate PutObject requests. Credentials are encrypted in the project configuration.
+
+**Supported S3-compatible services:**
+- **AWS S3**: Enable versioning and Block Public Access. Use a dedicated bucket for evidence.
+- **Cloudflare R2**: Set region to `auto`. R2 does not support Object Lock (community request only); do not require Object Lock.
+- **Garage** (local development): See `examples/evidence-s3` for a docker compose setup.
+- **On-premises S3** (Ceph, Cloudian): Set `forcePathStyle: true`.
+
+See `examples/evidence-s3` for a Garage docker compose setup and configuration guide.
 
 HITLy stores a **receipt index only**, not the payload as system of record. Evidence lifecycle:
 

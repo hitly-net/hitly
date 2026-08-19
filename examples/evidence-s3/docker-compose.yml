@@ -1,0 +1,20 @@
+services:
+  garage:
+    image: dxflrs/garage:v1.0.1
+    container_name: hitly-garage
+    restart: unless-stopped
+    environment:
+      GARAGE_RPC_SECRET: hitly-dev-secret-key-change-in-production
+      GARAGE_ADMIN_TOKEN: hitly-admin-token
+    ports:
+      - '3902:3902'
+      - '3903:3903'
+    volumes:
+      - ./garage.toml:/etc/garage.toml
+      - garage_data:/var/lib/garage
+      - garage_meta:/var/lib/garage/meta
+    command: ['-c', '/etc/garage.toml', 'server']
+
+volumes:
+  garage_data:
+  garage_meta:

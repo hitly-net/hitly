@@ -255,11 +255,18 @@ async function loadProjectSinkConfig(projectId: string, workspaceId: string) {
       : undefined
 
   return {
-    type: row.evidenceSinkType as 'none' | 'http',
+    type: row.evidenceSinkType as 'none' | 'http' | 's3',
     url: optionalString(config.url),
     authHeader: optionalString(config.authHeader),
     headers,
     metadata,
+    endpoint: optionalString(config.endpoint),
+    region: optionalString(config.region),
+    bucket: optionalString(config.bucket),
+    accessKeyId: optionalString(config.accessKeyId),
+    secretAccessKey: optionalString(config.secretAccessKey),
+    prefix: optionalString(config.prefix),
+    forcePathStyle: typeof config.forcePathStyle === 'boolean' ? config.forcePathStyle : undefined,
   }
 }
 
@@ -274,12 +281,22 @@ export async function appendEvidence(args: {
     console.log(`[evidence] No sink config for project ${args.projectId} workspace ${args.workspaceId}`)
     return null
   }
-  if (!sinkConfig.url) {
-    console.log(`[evidence] Sink config has no URL: type=${sinkConfig.type}`)
+  if (sinkConfig.type === 'http' && !sinkConfig.url) {
+    console.log(`[evidence] HTTP sink config has no URL`)
     return null
   }
+  if (sinkConfig.type === 's3') {
+    if (!sinkConfig.endpoint || !sinkConfig.bucket || !sinkConfig.accessKeyId || !sinkConfig.secretAccessKey) {
+      const missing = []
+      if (!sinkConfig.endpoint) missing.push('endpoint')
+      if (!sinkConfig.bucket) missing.push('bucket')
+      if (!sinkConfig.accessKeyId) missing.push('accessKeyId')
+      if (!sinkConfig.secretAccessKey) missing.push('secretAccessKey')
+      throw new Error(`Evidence sink S3 config missing required fields: ${missing.join(', ')}`)
+    }
+  }
 
-  console.log(`[evidence] Sink: type=${sinkConfig.type}, url=${sinkConfig.url}`)
+  console.log(`[evidence] Sink: type=${sinkConfig.type}`)
   const sink = createEvidenceSink(sinkConfig)
   console.log(`[evidence] Appending ${args.event.event_type} event ${args.event.event_id}`)
   const receipt = await sink.append(args.event)

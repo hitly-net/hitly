@@ -90,7 +90,7 @@ export interface AppendReceipt {
 }
 
 export interface EvidenceSink {
-  id: 'none' | 'http'
+  id: 'none' | 'http' | 's3'
   append(event: EvidenceEvent): Promise<AppendReceipt>
 }
 

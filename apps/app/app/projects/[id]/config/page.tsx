@@ -127,6 +127,7 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
         >
           <option value="none">None</option>
           <option value="http">HTTP</option>
+          <option value="s3">S3</option>
         </select>
         <input
           name="evidenceSinkUrl"
@@ -159,6 +160,62 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
         <p className="text-xs text-zinc-500">
           Optional metadata JSON object sent as <code>X-Hitly-Metadata</code> header with each evidence POST. Transport-only, not stored in the evidence event.
         </p>
+
+        <h3 className="mt-4 text-sm font-semibold">S3 Configuration</h3>
+        <p className="text-xs text-zinc-500">
+          For S3 sink type. Supports AWS S3, Cloudflare R2, Garage, and on-premises S3-compatible storage (Ceph, Cloudian).
+        </p>
+        <input
+          name="evidenceSinkS3Endpoint"
+          defaultValue={String(sinkConfig.endpoint ?? '')}
+          placeholder="S3 endpoint (e.g., http://127.0.0.1:3902)"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <input
+          name="evidenceSinkS3Region"
+          defaultValue={String(sinkConfig.region ?? '')}
+          placeholder="S3 region (e.g., local, us-east-1, eu-west-1, auto)"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <input
+          name="evidenceSinkS3Bucket"
+          defaultValue={String(sinkConfig.bucket ?? '')}
+          placeholder="S3 bucket name (e.g., evidence)"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <input
+          name="evidenceSinkS3AccessKeyId"
+          defaultValue=""
+          placeholder="S3 access key ID (leave blank to keep)"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <input
+          name="evidenceSinkS3SecretAccessKey"
+          type="password"
+          defaultValue=""
+          placeholder="S3 secret access key (leave blank to keep)"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <input
+          name="evidenceSinkS3Prefix"
+          defaultValue={String(sinkConfig.prefix ?? '')}
+          placeholder="S3 key prefix (optional, e.g., hitly/)"
+          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="evidenceSinkS3ForcePathStyle"
+            defaultChecked={
+              sinkConfig.forcePathStyle === true ||
+              (sinkConfig.forcePathStyle !== false &&
+                typeof sinkConfig.endpoint === 'string' &&
+                !sinkConfig.endpoint.includes('amazonaws.com'))
+            }
+            className="h-4 w-4"
+          />
+          Force path-style URLs (defaults to on for non-AWS endpoints)
+        </label>
 
         <button
           type="submit"
