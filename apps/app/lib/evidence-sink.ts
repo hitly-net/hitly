@@ -96,7 +96,9 @@ export class S3EvidenceSink implements EvidenceSink {
   private config: S3SinkConfig
 
   constructor(config: S3SinkConfig) {
-    this.config = config
+    const isAwsEndpoint = config.endpoint.includes('amazonaws.com')
+    const forcePathStyle = config.forcePathStyle !== undefined ? config.forcePathStyle : !isAwsEndpoint
+    this.config = { ...config, forcePathStyle }
   }
 
   private async sha256(data: string): Promise<string> {
