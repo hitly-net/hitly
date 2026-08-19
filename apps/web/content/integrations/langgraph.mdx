@@ -17,7 +17,7 @@ description: Pause LangGraph agents for human approval before sensitive actions.
    - `ignore` (HITL<sub><i>y</i></sub> reject) → bail without taking the action
    - `edit` → apply edited arguments, then proceed
 
-**Competitive note**: Agent Inbox / hitl.sh collect an answer; HITL<sub><i>y</i></sub> pauses the agent, takes a decision, resumes the original run with proof.
+Agent Inbox / hitl.sh collect an answer; HITL<sub><i>y</i></sub> pauses the agent, takes a decision, resumes the original run with proof. Origins keep interrupt(); HITL<sub><i>y</i></sub> owns the envelope and the signed resume.
 
 See the runnable project in `examples/langgraph` (refund graph with FastAPI server).
 
@@ -165,8 +165,14 @@ async def resume_thread(thread_id: str, req: ResumeRequest):
 
 1. `yarn workspace @hitly/app dev` — HITL<sub><i>y</i></sub> on port 3001.
 2. `cd examples/langgraph && python -m src.server` — FastAPI server on port 2024.
-3. `curl -X POST http://127.0.0.1:2024/refund -d '{"order_id": "OR-1234", "amount": 123.45}'`
-4. Approve or reject in the inbox at http://localhost:3001/inbox.
+3. Open http://127.0.0.1:2024 in your browser to see the demo page.
+4. Click "Request Refund" to start the graph. When it pauses, decide in the HITL<sub><i>y</i></sub> inbox at http://localhost:3001/inbox.
+
+Alternatively, start threads via API:
+
+```bash
+curl -X POST http://127.0.0.1:2024/refund -H 'Content-Type: application/json' -d '{"order_id": "OR-1234", "amount": 123.45}'
+```
 
 ## Production
 
