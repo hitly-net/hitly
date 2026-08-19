@@ -16,6 +16,25 @@ from langchain_core.runnables import RunnableConfig
 from .hitly import HitlyApprovalConfig, notify_hitly_approval, verify_hitly_resume, HitlyResumeError
 
 
+# Evidence fields mirror Mastra example
+SYSTEM_ID = "refund-graph-prod"
+INVENTORY_ID = "ai-inv-refund-graph-v1"
+POLICY_ID = "refund-over-100"
+POLICY_RATIONALE = "Refunds over $100 require manager approval"
+TOOL_NAME = "send_refund"
+SENSITIVITY = ["financial"]
+DATA_CATEGORIES = ["transaction", "customer"]
+
+
+class RefundState(TypedDict):
+    """State for the refund graph."""
+    order_id: str
+    amount: float
+    approved: bool | None
+    refund_issued: bool
+    rejection_reason: str | None
+
+
 async def notify_node(state: RefundState, config: RunnableConfig) -> RefundState:
     """
     Notify HITLy that approval is required.
@@ -53,26 +72,7 @@ async def notify_node(state: RefundState, config: RunnableConfig) -> RefundState
     return state
 
 
-# Evidence fields mirror Mastra example
-SYSTEM_ID = "refund-graph-prod"
-INVENTORY_ID = "ai-inv-refund-graph-v1"
-POLICY_ID = "refund-over-100"
-POLICY_RATIONALE = "Refunds over $100 require manager approval"
-TOOL_NAME = "send_refund"
-SENSITIVITY = ["financial"]
-DATA_CATEGORIES = ["transaction", "customer"]
-
-
-class RefundState(TypedDict):
-    """State for the refund graph."""
-    order_id: str
-    amount: float
-    approved: bool | None
-    refund_issued: bool
-    rejection_reason: str | None
-
-
-async def notify_node(state: RefundState, config: RunnableConfig) -> RefundState:
+async def approval_node(state: RefundState, config: RunnableConfig) -> RefundState:
     """
     Pause for HITLy reviewer before issuing refund.
     
