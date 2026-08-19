@@ -40,7 +40,13 @@ If the project has more than one person who can decide, **Delegate** reassigns t
 
 A recorded decision is durable even if the origin resume fails. Status becomes `failed_resume`. Use **Retry resume** on the approval. If the origin can no longer accept a resume (for example Mastra `This workflow run was not suspended`), **Force cancel** closes the item without calling the origin. Status becomes `cancelled` (Closed filter).
 
-After a successful resume, the work item stores the full origin response (`resumeData` sent to the caller, HTTP status, and body — for Mastra workflows, the completed run result).
+After a successful resume, the work item stores the full origin response (`resumeData` sent to the caller, HTTP status, and body — for Mastra workflows, the completed run result). When evidence storage is enabled, the work item also displays a **View evidence receipt** link; see [Evidence Storage](/docs/envelope#evidence-storage) for how approval events are chained in the external store.
+
+<DocShot
+  src="/images/inbox-evidence-receipt.png"
+  alt="HITLy inbox work item after decision showing origin response JSON with View evidence receipt link"
+  caption="Decided work items with evidence storage show View evidence receipt"
+/>
 
 Expired approvals (`expiresAt`) stop accepting decisions. An hourly housekeeping job also flips overdue pending items to `expired`.
 
