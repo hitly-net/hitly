@@ -336,3 +336,193 @@ test('HttpEvidenceSink skips empty metadata object', async () => {
 
   assert.equal(capturedHeaders['X-Hitly-Metadata'], undefined)
 })
+
+test('S3EvidenceSink calls PutObject with correct SigV4 signature', async () => {
+  const { S3EvidenceSink } = await import('./evidence-sink')
+  const mockEvent: EvidenceEvent = {
+    spec: 'hitly.evidence.v1',
+    event_id: 'evt_123',
+    approval_id: 'apr_456',
+    event_type: 'requested',
+    seq: 1,
+    occurred_at: '2024-01-01T00:00:00.000Z',
+    origin: {
+      plugin: 'mastra',
+      projectId: 'prj_789',
+      runId: 'run_abc',
+    },
+    action: {
+      name: 'test',
+      args: {},
+      proposed_sha256: 'abc123',
+    },
+    retention: {
+      min_days: 180,
+    },
+    integrity: {
+      alg: 'sha256',
+      content_sha256: 'test_hash',
+    },
+  }
+
+  let capturedUrl = ''
+  let capturedHeaders: Record<string, string> = {}
+  let capturedBody = ''
+
+  global.fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    capturedUrl = String(url)
+    if (init?.headers) {
+      capturedHeaders = init.headers as Record<string, string>
+    }
+    if (init?.body) {
+      capturedBody = init.body as string
+    }
+    return new Response('', { status: 200 })
+  }
+
+  const sink = new S3EvidenceSink({
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    bucket: 'evidence',
+    accessKeyId: 'GK1234',
+    secretAccessKey: 'secret',
+    forcePathStyle: true,
+  })
+
+  const receipt = await sink.append(mockEvent)
+
+  assert.ok(capturedUrl.includes('/evidence/evt_123.json'))
+  assert.equal(capturedHeaders['content-type'], 'application/json')
+  assert.ok(capturedHeaders['x-amz-date'])
+  assert.ok(capturedHeaders['x-amz-content-sha256'])
+  assert.ok(capturedHeaders['authorization'])
+  assert.ok(capturedHeaders['authorization'].startsWith('AWS4-HMAC-SHA256'))
+  assert.ok(capturedHeaders['authorization'].includes('Credential=GK1234'))
+  assert.equal(JSON.parse(capturedBody).event_id, 'evt_123')
+  assert.ok(receipt.store_uri.includes('evidence/evt_123.json'))
+})
+
+test('S3EvidenceSink uses prefix for object key', async () => {
+  const { S3EvidenceSink } = await import('./evidence-sink')
+  const mockEvent: EvidenceEvent = {
+    spec: 'hitly.evidence.v1',
+    event_id: 'evt_123',
+    approval_id: 'apr_456',
+    event_type: 'requested',
+    seq: 1,
+    occurred_at: '2024-01-01T00:00:00.000Z',
+    origin: {
+      plugin: 'mastra',
+      projectId: 'prj_789',
+      runId: 'run_abc',
+    },
+    action: {
+      name: 'test',
+      args: {},
+      proposed_sha256: 'abc123',
+    },
+    retention: {
+      min_days: 180,
+    },
+    integrity: {
+      alg: 'sha256',
+      content_sha256: 'test_hash',
+    },
+  }
+
+  let capturedUrl = ''
+
+  global.fetch = async (url: string | URL | Request) => {
+    capturedUrl = String(url)
+    return new Response('', { status: 200 })
+  }
+
+  const sink = new S3EvidenceSink({
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    bucket: 'evidence',
+    accessKeyId: 'GK1234',
+    secretAccessKey: 'secret',
+    prefix: 'hitly/',
+    forcePathStyle: true,
+  })
+
+  const receipt = await sink.append(mockEvent)
+
+  assert.ok(capturedUrl.includes('/evidence/hitly/evt_123.json'))
+  assert.ok(receipt.store_uri.includes('evidence/hitly/evt_123.json'))
+})
+
+test('S3EvidenceSink throws on missing endpoint', async () => {
+  const { createEvidenceSink } = await import('./evidence-sink')
+
+  const sink = createEvidenceSink({
+    type: 's3',
+    region: 'local',
+    bucket: 'evidence',
+    accessKeyId: 'GK1234',
+    secretAccessKey: 'secret',
+  })
+
+  assert.equal(sink.id, 'none')
+})
+
+test('S3EvidenceSink throws on missing bucket', async () => {
+  const { createEvidenceSink } = await import('./evidence-sink')
+
+  const sink = createEvidenceSink({
+    type: 's3',
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    accessKeyId: 'GK1234',
+    secretAccessKey: 'secret',
+  })
+
+  assert.equal(sink.id, 'none')
+})
+
+test('S3EvidenceSink handles PutObject error', async () => {
+  const { S3EvidenceSink } = await import('./evidence-sink')
+  const mockEvent: EvidenceEvent = {
+    spec: 'hitly.evidence.v1',
+    event_id: 'evt_123',
+    approval_id: 'apr_456',
+    event_type: 'decided',
+    seq: 2,
+    occurred_at: '2024-01-01T00:00:00.000Z',
+    origin: {
+      plugin: 'mastra',
+      projectId: 'prj_789',
+      runId: 'run_abc',
+    },
+    action: {
+      name: 'test',
+      args: {},
+      proposed_sha256: 'abc123',
+    },
+    retention: {
+      min_days: 180,
+    },
+    integrity: {
+      alg: 'sha256',
+      content_sha256: 'test_hash',
+    },
+  }
+
+  global.fetch = async () => {
+    return new Response('Bucket not found', { status: 404 })
+  }
+
+  const sink = new S3EvidenceSink({
+    endpoint: 'http://127.0.0.1:3902',
+    region: 'local',
+    bucket: 'evidence',
+    accessKeyId: 'GK1234',
+    secretAccessKey: 'secret',
+    forcePathStyle: true,
+  })
+
+  await assert.rejects(async () => {
+    await sink.append(mockEvent)
+  }, /Evidence sink S3 PutObject failed/)
+})

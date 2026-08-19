@@ -14,11 +14,18 @@ export type ProjectConfigInput = {
   taskQueue: string
   address: string
   defaultAssigneeUserId: string | null
-  evidenceSinkType: 'none' | 'http'
+  evidenceSinkType: 'none' | 'http' | 's3'
   evidenceSinkUrl: string
   evidenceSinkAuthHeader: string
   evidenceSinkHeaders: string
   evidenceSinkMetadata: string
+  evidenceSinkS3Endpoint: string
+  evidenceSinkS3Region: string
+  evidenceSinkS3Bucket: string
+  evidenceSinkS3AccessKeyId: string
+  evidenceSinkS3SecretAccessKey: string
+  evidenceSinkS3Prefix: string
+  evidenceSinkS3ForcePathStyle: boolean
 }
 
 export function parseProjectConfig(input: Record<string, unknown>): ProjectConfigInput | { error: string } {
@@ -37,6 +44,13 @@ export function parseProjectConfig(input: Record<string, unknown>): ProjectConfi
   const evidenceSinkAuthHeader = typeof input.evidenceSinkAuthHeader === 'string' ? input.evidenceSinkAuthHeader.trim() : ''
   const evidenceSinkHeaders = typeof input.evidenceSinkHeaders === 'string' ? input.evidenceSinkHeaders.trim() : ''
   const evidenceSinkMetadata = typeof input.evidenceSinkMetadata === 'string' ? input.evidenceSinkMetadata.trim() : ''
+  const evidenceSinkS3Endpoint = typeof input.evidenceSinkS3Endpoint === 'string' ? input.evidenceSinkS3Endpoint.trim() : ''
+  const evidenceSinkS3Region = typeof input.evidenceSinkS3Region === 'string' ? input.evidenceSinkS3Region.trim() : ''
+  const evidenceSinkS3Bucket = typeof input.evidenceSinkS3Bucket === 'string' ? input.evidenceSinkS3Bucket.trim() : ''
+  const evidenceSinkS3AccessKeyId = typeof input.evidenceSinkS3AccessKeyId === 'string' ? input.evidenceSinkS3AccessKeyId.trim() : ''
+  const evidenceSinkS3SecretAccessKey = typeof input.evidenceSinkS3SecretAccessKey === 'string' ? input.evidenceSinkS3SecretAccessKey.trim() : ''
+  const evidenceSinkS3Prefix = typeof input.evidenceSinkS3Prefix === 'string' ? input.evidenceSinkS3Prefix.trim() : ''
+  const evidenceSinkS3ForcePathStyle = input.evidenceSinkS3ForcePathStyle === true || input.evidenceSinkS3ForcePathStyle === 'true'
 
   if (evidenceSinkMetadata) {
     try {
@@ -59,11 +73,18 @@ export function parseProjectConfig(input: Record<string, unknown>): ProjectConfi
     taskQueue,
     address,
     defaultAssigneeUserId: assignee || null,
-    evidenceSinkType: evidenceSinkType === 'http' ? 'http' : 'none',
+    evidenceSinkType: evidenceSinkType === 'http' ? 'http' : evidenceSinkType === 's3' ? 's3' : 'none',
     evidenceSinkUrl,
     evidenceSinkAuthHeader,
     evidenceSinkHeaders,
     evidenceSinkMetadata,
+    evidenceSinkS3Endpoint,
+    evidenceSinkS3Region,
+    evidenceSinkS3Bucket,
+    evidenceSinkS3AccessKeyId,
+    evidenceSinkS3SecretAccessKey,
+    evidenceSinkS3Prefix,
+    evidenceSinkS3ForcePathStyle,
   }
 }
 
@@ -105,25 +126,35 @@ export async function saveProjectConfig(projectId: string, input: ProjectConfigI
     sinkConfig = existing as Record<string, unknown>
   }
 
-  if (input.evidenceSinkUrl) sinkConfig.url = input.evidenceSinkUrl
-  if (input.evidenceSinkAuthHeader) sinkConfig.authHeader = input.evidenceSinkAuthHeader
-  if (input.evidenceSinkHeaders) {
-    const headers: Record<string, string> = {}
-    for (const line of input.evidenceSinkHeaders.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed) {
-        const colonIndex = trimmed.indexOf(':')
-        if (colonIndex > 0) {
-          const name = trimmed.slice(0, colonIndex).trim()
-          const value = trimmed.slice(colonIndex + 1).trim()
-          if (name) headers[name] = value
+  if (input.evidenceSinkType === 'http') {
+    if (input.evidenceSinkUrl) sinkConfig.url = input.evidenceSinkUrl
+    if (input.evidenceSinkAuthHeader) sinkConfig.authHeader = input.evidenceSinkAuthHeader
+    if (input.evidenceSinkHeaders) {
+      const headers: Record<string, string> = {}
+      for (const line of input.evidenceSinkHeaders.split('\n')) {
+        const trimmed = line.trim()
+        if (trimmed) {
+          const colonIndex = trimmed.indexOf(':')
+          if (colonIndex > 0) {
+            const name = trimmed.slice(0, colonIndex).trim()
+            const value = trimmed.slice(colonIndex + 1).trim()
+            if (name) headers[name] = value
+          }
         }
       }
+      sinkConfig.headers = headers
     }
-    sinkConfig.headers = headers
-  }
-  if (input.evidenceSinkMetadata) {
-    sinkConfig.metadata = JSON.parse(input.evidenceSinkMetadata)
+    if (input.evidenceSinkMetadata) {
+      sinkConfig.metadata = JSON.parse(input.evidenceSinkMetadata)
+    }
+  } else if (input.evidenceSinkType === 's3') {
+    if (input.evidenceSinkS3Endpoint) sinkConfig.endpoint = input.evidenceSinkS3Endpoint
+    if (input.evidenceSinkS3Region) sinkConfig.region = input.evidenceSinkS3Region
+    if (input.evidenceSinkS3Bucket) sinkConfig.bucket = input.evidenceSinkS3Bucket
+    if (input.evidenceSinkS3AccessKeyId) sinkConfig.accessKeyId = input.evidenceSinkS3AccessKeyId
+    if (input.evidenceSinkS3SecretAccessKey) sinkConfig.secretAccessKey = input.evidenceSinkS3SecretAccessKey
+    if (input.evidenceSinkS3Prefix) sinkConfig.prefix = input.evidenceSinkS3Prefix
+    sinkConfig.forcePathStyle = input.evidenceSinkS3ForcePathStyle
   }
 
   await database
