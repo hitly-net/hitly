@@ -1,7 +1,7 @@
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ApprovalEnvelope, DecisionPayload, EvidenceEvent, OriginRef } from '@hitly/core'
-import { buildOtelSpan } from './otel-trace'
+import { buildOtelSpan, exportOtelTrace } from './otel-trace'
 
 describe('OTEL trace mapper', () => {
   const mockEnvelope: ApprovalEnvelope = {
@@ -112,11 +112,13 @@ describe('OTEL trace mapper', () => {
       event: mockRequestedEvent,
       envelope: mockEnvelope,
       origin: mockOrigin,
+      workspaceId: 'wks_test',
     })
 
     assert.equal(trace.resourceSpans.length, 1)
     const resource = trace.resourceSpans[0]
     assert.ok(resource.resource.attributes.some(a => a.key === 'service.name' && a.value.stringValue === 'hitly'))
+    assert.ok(resource.resource.attributes.some(a => a.key === 'hitly.workspace_id' && a.value.stringValue === 'wks_test'))
     assert.ok(resource.resource.attributes.some(a => a.key === 'hitly.project_id' && a.value.stringValue === 'prj_123'))
 
     const span = resource.scopeSpans[0].spans[0]
@@ -144,6 +146,7 @@ describe('OTEL trace mapper', () => {
       envelope: mockEnvelope,
       origin: mockOrigin,
       payload,
+      workspaceId: 'wks_test',
     })
 
     const span = trace.resourceSpans[0].scopeSpans[0].spans[0]
@@ -159,6 +162,7 @@ describe('OTEL trace mapper', () => {
       event: mockResumedEvent,
       envelope: mockEnvelope,
       origin: mockOrigin,
+      workspaceId: 'wks_test',
     })
 
     const span = trace.resourceSpans[0].scopeSpans[0].spans[0]
@@ -171,6 +175,7 @@ describe('OTEL trace mapper', () => {
       event: mockResumeFailedEvent,
       envelope: mockEnvelope,
       origin: mockOrigin,
+      workspaceId: 'wks_test',
     })
 
     const span = trace.resourceSpans[0].scopeSpans[0].spans[0]
@@ -183,6 +188,7 @@ describe('OTEL trace mapper', () => {
       event: mockRequestedEvent,
       envelope: mockEnvelope,
       origin: mockOrigin,
+      workspaceId: 'wks_test',
     })
 
     const span = trace.resourceSpans[0].scopeSpans[0].spans[0]
@@ -202,6 +208,7 @@ describe('OTEL trace mapper', () => {
       event: mockRequestedEvent,
       envelope: envelopeWithoutTrace,
       origin: originWithoutTrace,
+      workspaceId: 'wks_test',
     })
 
     const span = trace.resourceSpans[0].scopeSpans[0].spans[0]
@@ -218,6 +225,7 @@ describe('OTEL trace mapper', () => {
       event: mockRequestedEvent,
       envelope: envelopeWithoutSpan,
       origin: originWithoutSpan,
+      workspaceId: 'wks_test',
     })
 
     const span = trace.resourceSpans[0].scopeSpans[0].spans[0]
@@ -229,6 +237,7 @@ describe('OTEL trace mapper', () => {
       event: mockRequestedEvent,
       envelope: mockEnvelope,
       origin: mockOrigin,
+      workspaceId: 'wks_test',
     })
 
     const span = trace.resourceSpans[0].scopeSpans[0].spans[0]
@@ -240,9 +249,204 @@ describe('OTEL trace mapper', () => {
       event: mockRequestedEvent,
       envelope: mockEnvelope,
       origin: mockOrigin,
+      workspaceId: 'wks_test',
     })
 
     const span = trace.resourceSpans[0].scopeSpans[0].spans[0]
     assert.ok(span.attributes.some(a => a.key === 'hitly.seq' && a.value.intValue === '1'))
+  })
+})
+
+describe('OTEL trace exporter', () => {
+  const mockEnvelope: ApprovalEnvelope = {
+    action: { name: 'send_refund', args: { amount: 100 } },
+    allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
+  }
+
+  const mockOrigin: OriginRef = {
+    plugin: 'mastra',
+    projectId: 'prj_123',
+    runId: 'run_123',
+    resumeHandle: {},
+  }
+
+  const mockDecidedEvent: EvidenceEvent = {
+    spec: 'hitly.evidence.v1',
+    event_id: 'evt_456',
+    approval_id: 'apr_123',
+    event_type: 'decided',
+    seq: 2,
+    occurred_at: '2024-01-01T00:01:00.000Z',
+    origin: { plugin: 'mastra', projectId: 'prj_123', runId: 'run_123' },
+    agent: {},
+    system: {},
+    policy: {},
+    action: { name: 'send_refund', args: { amount: 100 }, proposed_sha256: 'abc123' },
+    oversight: { reviewer_id: 'usr_123', decision: 'accept', decided_at: '2024-01-01T00:01:00.000Z' },
+    retention: { min_days: 180 },
+    integrity: { alg: 'sha256', content_sha256: 'ghi789' },
+  }
+
+  const mockPayload: DecisionPayload = { decision: 'accept' }
+
+  it('should not call fetch when endpoint list is empty', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = mock.fn(() => Promise.resolve(new Response('', { status: 200 })))
+    globalThis.fetch = fetchMock as any
+
+    const dbMock = {
+      select: () => ({
+        from: () => ({
+          where: () => Promise.resolve([]),
+        }),
+      }),
+    }
+
+    const requireDbMock = () => dbMock
+    const requireTenantWorkspaceIdMock = () => 'wks_123'
+
+    mock.module('./tenant', () => ({
+      requireDb: requireDbMock,
+      requireTenantWorkspaceId: requireTenantWorkspaceIdMock,
+    }))
+
+    await exportOtelTrace({
+      event: mockDecidedEvent,
+      envelope: mockEnvelope,
+      origin: mockOrigin,
+      payload: mockPayload,
+      workspaceId: 'wks_123',
+    })
+
+    assert.equal(fetchMock.mock.callCount(), 0, 'fetch should not be called when no endpoints are configured')
+
+    globalThis.fetch = originalFetch
+  })
+
+  it('should send trace to both endpoints when two are enabled', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchCalls: string[] = []
+    const fetchMock = mock.fn((url: string) => {
+      fetchCalls.push(url)
+      return Promise.resolve(new Response('', { status: 200 }))
+    })
+    globalThis.fetch = fetchMock as any
+
+    const dbMock = {
+      select: () => ({
+        from: () => ({
+          where: () =>
+            Promise.resolve([
+              {
+                id: 'ote_1',
+                workspaceId: 'wks_123',
+                name: 'Endpoint 1',
+                endpoint: 'http://endpoint1.test/v1/traces',
+                protocol: 'http/json',
+                headers: null,
+                enabled: true,
+              },
+              {
+                id: 'ote_2',
+                workspaceId: 'wks_123',
+                name: 'Endpoint 2',
+                endpoint: 'http://endpoint2.test/v1/traces',
+                protocol: 'http/json',
+                headers: null,
+                enabled: true,
+              },
+            ]),
+        }),
+      }),
+    }
+
+    const requireDbMock = () => dbMock
+    const decodeTenantJsonMock = () => Promise.resolve({})
+
+    mock.module('./tenant', () => ({
+      requireDb: requireDbMock,
+    }))
+
+    mock.module('./tenant-crypto', () => ({
+      decodeTenantJson: decodeTenantJsonMock,
+    }))
+
+    await exportOtelTrace({
+      event: mockDecidedEvent,
+      envelope: mockEnvelope,
+      origin: mockOrigin,
+      payload: mockPayload,
+      workspaceId: 'wks_123',
+    })
+
+    assert.equal(fetchMock.mock.callCount(), 2, 'fetch should be called twice for two endpoints')
+    assert.ok(fetchCalls.includes('http://endpoint1.test/v1/traces'), 'first endpoint should be called')
+    assert.ok(fetchCalls.includes('http://endpoint2.test/v1/traces'), 'second endpoint should be called')
+
+    globalThis.fetch = originalFetch
+  })
+
+  it('should not skip second endpoint when first returns 500', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchCalls: { url: string; success: boolean }[] = []
+    const fetchMock = mock.fn((url: string) => {
+      const is500 = url.includes('endpoint1')
+      fetchCalls.push({ url, success: !is500 })
+      return Promise.resolve(new Response('', { status: is500 ? 500 : 200 }))
+    })
+    globalThis.fetch = fetchMock as any
+
+    const dbMock = {
+      select: () => ({
+        from: () => ({
+          where: () =>
+            Promise.resolve([
+              {
+                id: 'ote_1',
+                workspaceId: 'wks_123',
+                name: 'Endpoint 1',
+                endpoint: 'http://endpoint1.test/v1/traces',
+                protocol: 'http/json',
+                headers: null,
+                enabled: true,
+              },
+              {
+                id: 'ote_2',
+                workspaceId: 'wks_123',
+                name: 'Endpoint 2',
+                endpoint: 'http://endpoint2.test/v1/traces',
+                protocol: 'http/json',
+                headers: null,
+                enabled: true,
+              },
+            ]),
+        }),
+      }),
+    }
+
+    const requireDbMock = () => dbMock
+    const decodeTenantJsonMock = () => Promise.resolve({})
+
+    mock.module('./tenant', () => ({
+      requireDb: requireDbMock,
+    }))
+
+    mock.module('./tenant-crypto', () => ({
+      decodeTenantJson: decodeTenantJsonMock,
+    }))
+
+    await exportOtelTrace({
+      event: mockDecidedEvent,
+      envelope: mockEnvelope,
+      origin: mockOrigin,
+      payload: mockPayload,
+      workspaceId: 'wks_123',
+    })
+
+    assert.equal(fetchMock.mock.callCount(), 2, 'fetch should be called twice even when first fails')
+    assert.ok(fetchCalls.some(c => c.url.includes('endpoint1') && !c.success), 'first endpoint should fail')
+    assert.ok(fetchCalls.some(c => c.url.includes('endpoint2') && c.success), 'second endpoint should succeed')
+
+    globalThis.fetch = originalFetch
   })
 })

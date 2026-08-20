@@ -89,6 +89,7 @@ export function buildOtelSpan(args: {
   envelope: ApprovalEnvelope
   origin: OriginRef
   payload?: DecisionPayload
+  workspaceId: string
 }): OtelTraceRequest {
   const traceId = w3cTraceId(args.origin.traceId || args.envelope.traceId) || generateTraceId()
   const parentSpanId = w3cSpanId(args.origin.spanId || args.envelope.spanId)
@@ -135,7 +136,7 @@ export function buildOtelSpan(args: {
     resource: {
       attributes: [
         { key: 'service.name', value: { stringValue: 'hitly' } },
-        { key: 'hitly.workspace_id', value: { stringValue: args.origin.projectId.split(':')[0] || '' } },
+        { key: 'hitly.workspace_id', value: { stringValue: args.workspaceId } },
         { key: 'hitly.project_id', value: { stringValue: args.origin.projectId } },
       ],
     },
@@ -196,7 +197,7 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
   try {
     const headers: Record<string, string> = {
       ...config.headers,
-      'Content-Type': config.protocol === 'http/json' ? 'application/json' : 'application/x-protobuf',
+      'Content-Type': 'application/json',
     }
 
     const body = JSON.stringify(trace)
@@ -244,6 +245,7 @@ export async function exportOtelTrace(args: {
     envelope: args.envelope,
     origin: args.origin,
     payload: args.payload,
+    workspaceId: args.workspaceId,
   })
 
   await Promise.allSettled(endpoints.map(config => postOtelTrace(config, trace)))

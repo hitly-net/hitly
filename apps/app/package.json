@@ -11,7 +11,7 @@
     "start": "next start --port 3001",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test actions/projects.test.ts lib/approvals.spine.test.ts lib/evidence-sink.test.ts"
+    "test": "tsx --test actions/projects.test.ts lib/approvals.spine.test.ts lib/evidence-sink.test.ts lib/otel-trace.test.ts"
   },
   "dependencies": {
     "@hitly/mail": "*",
