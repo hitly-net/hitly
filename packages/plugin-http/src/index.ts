@@ -43,7 +43,7 @@ export const httpPlugin: HitlyPlugin = {
         : undefined
     const editableFields =
       body.editableFields && typeof body.editableFields === 'object'
-        ? (body.editableFields as Record<string, unknown>)
+        ? (body.editableFields as Record<string, Record<string, unknown>>)
         : undefined
     const editReason =
       body.editReason && typeof body.editReason === 'object' ? (body.editReason as Record<string, unknown>) : undefined
@@ -56,8 +56,8 @@ export const httpPlugin: HitlyPlugin = {
       allowedActions: allowedActionsFor(allowedActionsPartial ?? { accept: true, reject: true }),
       contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : undefined,
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-      editableFields,
-      editReason,
+      editableFields: editableFields as any,
+      editReason: editReason as any,
       origin: {
         plugin: 'http',
         projectId: String(body.projectId ?? ''),

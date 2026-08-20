@@ -226,7 +226,7 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
       : undefined
   const editableFields =
     body.editableFields && typeof body.editableFields === 'object'
-      ? (body.editableFields as Record<string, unknown>)
+      ? (body.editableFields as Record<string, Record<string, unknown>>)
       : undefined
   const editReason =
     body.editReason && typeof body.editReason === 'object' ? (body.editReason as Record<string, unknown>) : undefined
@@ -249,8 +249,8 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
     attachments: attachmentList(suspendPayload.attachments) ?? attachmentList(body.attachments),
     resumeSchema: asRecord(body.resumeSchema),
     expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : undefined,
-    editableFields,
-    editReason,
+    editableFields: editableFields as any,
+    editReason: editReason as any,
     traceId,
     spanId,
     agentId: kind === 'agent' ? agentId : undefined,
