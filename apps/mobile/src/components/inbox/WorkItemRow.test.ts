@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { resultLabel } from './WorkItemRow.helpers'
 import type { WorkItemRow } from '../../types'
 
-test('WorkItemRow: decided + accept shows accepted', () => {
+test('WorkItemRow: decided + accept shows "decided: accept"', () => {
   const item: WorkItemRow = {
     id: 'apr_1',
     status: 'decided',
@@ -15,10 +15,10 @@ test('WorkItemRow: decided + accept shows accepted', () => {
     createdAt: '2026-08-19T12:00:00Z',
     expiresAt: null,
   }
-  assert.equal(resultLabel(item), 'accepted')
+  assert.equal(resultLabel(item), 'decided: accept')
 })
 
-test('WorkItemRow: decided + reject shows rejected', () => {
+test('WorkItemRow: decided + reject shows "decided: reject"', () => {
   const item: WorkItemRow = {
     id: 'apr_2',
     status: 'decided',
@@ -30,10 +30,10 @@ test('WorkItemRow: decided + reject shows rejected', () => {
     createdAt: '2026-08-19T12:00:00Z',
     expiresAt: null,
   }
-  assert.equal(resultLabel(item), 'rejected')
+  assert.equal(resultLabel(item), 'decided: reject')
 })
 
-test('WorkItemRow: failed_resume shows failed resume', () => {
+test('WorkItemRow: failed_resume shows "failed_resume"', () => {
   const item: WorkItemRow = {
     id: 'apr_3',
     status: 'failed_resume',
@@ -44,10 +44,10 @@ test('WorkItemRow: failed_resume shows failed resume', () => {
     createdAt: '2026-08-19T12:00:00Z',
     expiresAt: null,
   }
-  assert.equal(resultLabel(item), 'failed resume')
+  assert.equal(resultLabel(item), 'failed_resume')
 })
 
-test('WorkItemRow: pending shows pending', () => {
+test('WorkItemRow: pending shows "pending"', () => {
   const item: WorkItemRow = {
     id: 'apr_4',
     status: 'pending',

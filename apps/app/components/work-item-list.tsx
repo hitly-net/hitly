@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import type { PluginId } from '@hitly/core'
+import type { PluginId, Decision } from '@hitly/core'
 import { Badge, PluginMark } from '@hitly/ui'
+import { formatStatusLabel } from '@/lib/status-label'
 
 function ageLabel(createdAt: Date) {
   return createdAt.toISOString().slice(0, 16).replace('T', ' ')
@@ -15,6 +16,7 @@ export type WorkItemRow = {
   projectId: string
   projectName: string
   createdAt: Date
+  decision?: Decision | string | null
 }
 
 export function WorkItemList({
@@ -49,7 +51,7 @@ export function WorkItemList({
                     : 'secondary'
               }
             >
-              {item.status}
+              {formatStatusLabel(item.status, item.decision)}
             </Badge>
           </Link>
         </li>

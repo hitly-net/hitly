@@ -17,6 +17,7 @@ import { requireDb } from '@/lib/tenant'
 import { decodeTenantJson } from '@/lib/tenant-crypto'
 import { approvalHasExpired } from '@/lib/approval-expiry'
 import { loadEvidenceReceiptForDisplay } from '@/lib/evidence'
+import { formatStatusLabel } from '@/lib/status-label'
 
 function personLabel(person: { name: string | null; email: string }) {
   return person.name ? `${person.name} (${person.email})` : person.email
@@ -128,7 +129,7 @@ export async function WorkItemDetail({
                   : 'secondary'
           }
         >
-          {approval.status}
+          {formatStatusLabel(approval.status, latestDecision?.decision)}
         </Badge>
       </div>
       <div className="mt-4 flex max-w-2xl items-start justify-between gap-3">
