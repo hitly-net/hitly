@@ -198,7 +198,7 @@ Each evidence event is stored as a JSON file named `{event_id}.json`. The `store
 - Ensure Force Path Style is `true` in HITLy config
 - Verify the region in HITLy matches the Garage region (`local`)
 
-**Test evidence sink returns 5xx:**
+**Decide or PutObject returns 5xx:**
 - Check Garage logs: `docker compose logs garage`
 - Verify the bucket exists: `docker compose exec garage garage bucket list`
 
