@@ -5,6 +5,16 @@ import type { ApprovalDetail } from '../../types'
 import { colors } from '../../theme'
 import { PluginMark } from '../inbox/PluginMark'
 
+function formatStatusLabel(status: string, decision?: string | null): string {
+  if (status === 'decided' && decision) {
+    return `decided: ${decision}`
+  }
+  if (status === 'failed_resume') {
+    return 'failed_resume'
+  }
+  return status
+}
+
 export function StatusHeader({
   detail,
   onForceCancel,
@@ -15,6 +25,7 @@ export function StatusHeader({
   const triggerRef = useRef<View>(null)
   const [menu, setMenu] = useState<{ top: number; right: number } | null>(null)
   const showMenu = Boolean(onForceCancel) && detail.canCancel
+  const latestDecision = detail.decisions[0]?.decision
 
   function openMenu() {
     triggerRef.current?.measureInWindow((x, y, width, height) => {
@@ -29,7 +40,7 @@ export function StatusHeader({
       <View style={styles.body}>
         <Text style={styles.title}>{detail.actionName}</Text>
         <Text style={styles.meta}>
-          {detail.status} · {detail.projectName}
+          {formatStatusLabel(detail.status, latestDecision)} · {detail.projectName}
         </Text>
       </View>
       {showMenu ? (
