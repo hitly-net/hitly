@@ -711,21 +711,18 @@ test('edit without delta / final_sha256 is invalid', async () => {
   })
   assert.ok(ingestResult.ok)
 
-  // Try to decide with edit but no delta/final_sha256
   const payloadNoDelta = parseDecisionBody({
     decision: 'edit',
-    // Missing editedArgs and final_sha256
   })
-  assert.equal(payloadNoDelta, null, 'parseDecisionBody should reject edit without editedArgs/final_sha256')
+  assert.equal(payloadNoDelta, null, 'parseDecisionBody should reject edit without editedArgs')
 
-  // Valid edit should have both editedArgs and final_sha256
   const payloadWithDelta = parseDecisionBody({
     decision: 'edit',
     editedArgs: { amount: 50 },
-    final_sha256: 'abc123',
   })
-  assert.ok(payloadWithDelta, 'parseDecisionBody should accept edit with editedArgs and final_sha256')
+  assert.ok(payloadWithDelta, 'parseDecisionBody should accept edit with editedArgs')
   assert.equal(payloadWithDelta.decision, 'edit')
+  assert.deepEqual(payloadWithDelta.editedArgs, { amount: 50 })
 })
 
 test('evidence fields round-trip through ingest/decide', async () => {

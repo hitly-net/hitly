@@ -568,18 +568,17 @@ export async function retryResume(args: { approvalId: string; workspaceId?: stri
 export function parseDecisionBody(body: Record<string, unknown>): DecisionPayload | null {
   if (!isDecision(body.decision)) return null
   const decision = body.decision as Decision
-  
-  // Edit requires both editedArgs (delta) and final_sha256
-  if (decision === 'edit') {
-    const hasEditedArgs = body.editedArgs && typeof body.editedArgs === 'object'
-    const hasFinalSha = typeof body.final_sha256 === 'string' && body.final_sha256.length > 0
-    if (!hasEditedArgs || !hasFinalSha) return null
-  }
-  
+  const editedArgs =
+    body.editedArgs !== null && typeof body.editedArgs === 'object' && !Array.isArray(body.editedArgs)
+      ? (body.editedArgs as Record<string, unknown>)
+      : undefined
+
+  // Edit is the delta JSON from the reviewer. Hitly hashes it into evidence final_sha256.
+  if (decision === 'edit' && !editedArgs) return null
+
   return {
     decision,
-    editedArgs:
-      body.editedArgs && typeof body.editedArgs === 'object' ? (body.editedArgs as Record<string, unknown>) : undefined,
+    editedArgs,
     response: typeof body.response === 'string' ? body.response : undefined,
   }
 }

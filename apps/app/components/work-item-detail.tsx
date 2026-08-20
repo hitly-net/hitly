@@ -4,12 +4,12 @@ import { and, desc, eq } from 'drizzle-orm'
 import { isOpenApprovalStatus, type ApprovalEnvelope, type OriginRef, type PluginId } from '@hitly/core'
 import { approvals, decisionRecords, projectMemberships, users } from '@hitly/db/schema'
 import { Badge, PluginBadge, PluginMark } from '@hitly/ui'
-import { decideWorkItem, delegateWorkItem, retryWorkItem } from '@/actions/projects'
+import { delegateWorkItem, retryWorkItem } from '@/actions/projects'
 import { AppShell } from '@/components/app-shell'
 import { ContextMarkdown } from '@/components/context-markdown'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
-import { RefreshOnFocus, WorkItemDecisionButtons } from '@/components/work-item-client'
+import { RefreshOnFocus, WorkItemDecideForm } from '@/components/work-item-client'
 import { withAppTenant } from '@/lib/context'
 import { originFields, envelopeMetadata } from '@/lib/origin'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
@@ -285,24 +285,12 @@ export async function WorkItemDetail({
         <p className="mt-4 text-sm text-amber-700">This work item has expired.</p>
       ) : null}
       {canAct && !expired ? (
-        <form action={decideWorkItem.bind(null, approval.id)} className="mt-6 flex max-w-xl flex-col gap-3">
-          <input type="hidden" name="returnTo" value={returnTo} />
-          {allowed.edit ? (
-            <textarea
-              name="editedArgs"
-              placeholder='Edited args JSON, e.g. {"amount": 10}'
-              className="min-h-20 rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            />
-          ) : null}
-          {allowed.respond ? (
-            <input
-              name="response"
-              placeholder="Response"
-              className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            />
-          ) : null}
-          <WorkItemDecisionButtons allowed={allowed} />
-        </form>
+        <WorkItemDecideForm
+          approvalId={approval.id}
+          returnTo={returnTo}
+          allowed={allowed}
+          initialEditedArgs={JSON.stringify(envelope.action.args ?? {}, null, 2)}
+        />
       ) : null}
       {approval.status === 'failed_resume' && canDecide(access) ? (
         <form action={retryWorkItem.bind(null, approval.id)} className="mt-4">

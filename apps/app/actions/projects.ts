@@ -19,7 +19,7 @@ import { newId } from '@/lib/ids'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
 import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from '@/lib/rbac'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
-import { encodeTenantJson } from '@/lib/tenant-crypto'
+import { decodeTenantJson, encodeTenantJson } from '@/lib/tenant-crypto'
 
 function revalidateWorkItem(approvalId: string, projectId: string) {
   revalidatePath('/inbox')
@@ -407,7 +407,15 @@ export async function delegateWorkItem(approvalId: string, formData: FormData) {
   })
 }
 
-export async function decideWorkItem(approvalId: string, formData: FormData) {
+export async function decideWorkItem(
+  approvalId: string,
+  input: {
+    decision: string
+    response?: string
+    editedArgsJson?: string
+    returnTo?: string
+  },
+) {
   return withAppTenant(async ({ user, role, workspace }) => {
     const database = requireDb()
     const approvalRows = await database
@@ -423,25 +431,43 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
       workspaceRole: role,
     })
     if (!canDecide(access)) throw new Error('You cannot decide this work item')
-    const decision = String(formData.get('decision') ?? '')
-    const response = String(formData.get('response') ?? '').trim()
-    const editedRaw = String(formData.get('editedArgs') ?? '').trim()
+    const decision = String(input.decision ?? '')
+    const response = String(input.response ?? '').trim()
+    const editedRaw = String(input.editedArgsJson ?? '').trim()
     let editedArgs: Record<string, unknown> | undefined
     if (editedRaw) {
-      editedArgs = JSON.parse(editedRaw) as Record<string, unknown>
+      try {
+        const parsed = JSON.parse(editedRaw) as unknown
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          editedArgs = parsed as Record<string, unknown>
+        }
+      } catch {
+        throw new Error('Edited args must be valid JSON')
+      }
+    }
+    if (decision === 'edit' && !editedArgs) {
+      const envelope = await decodeTenantJson(workspace.id, approval.envelope)
+      const args = (envelope.action as { args?: unknown } | undefined)?.args
+      if (args && typeof args === 'object' && !Array.isArray(args)) {
+        editedArgs = args as Record<string, unknown>
+      }
     }
     const { decideApproval, parseDecisionBody } = await import('@/lib/approvals')
     const payload = parseDecisionBody({ decision, response: response || undefined, editedArgs })
-    if (!payload) throw new Error('Invalid decision')
+    if (!payload) {
+      throw new Error(decision === 'edit' ? 'Edit requires edited args JSON' : 'Invalid decision')
+    }
     const result = await decideApproval({ approvalId, actorUserId: user.id, payload, workspaceId: workspace.id })
+    const returnForm = new FormData()
+    if (input.returnTo) returnForm.set('returnTo', input.returnTo)
     if (result.error && result.status === 500) {
-      const returnPath = workItemReturnPath(formData, approval)
+      const returnPath = workItemReturnPath(returnForm, approval)
       const errorParam = encodeURIComponent(result.error)
       redirect(`${returnPath}?error=${errorParam}`)
     }
     throwUnlessConflict(result)
     revalidateWorkItem(approvalId, approval.projectId)
-    redirect(workItemReturnPath(formData, approval))
+    redirect(workItemReturnPath(returnForm, approval))
   })
 }
 

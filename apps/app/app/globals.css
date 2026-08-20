@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @source '../../../packages/ui/src';
+@custom-variant dark (&:where(.dark, .dark *));
 
 .markdown {
   @apply text-sm leading-6 text-zinc-700 dark:text-zinc-300;
