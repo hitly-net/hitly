@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { ApprovalEnvelope, DecisionPayload, EvidenceEvent, OriginRef } from '@hitly/core'
 import { buildOtelSpan, exportOtelTrace } from './otel-trace'
 import { ProtobufTraceSerializer } from '@opentelemetry/otlp-transformer'
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
 describe('OTEL trace mapper', () => {
   const mockEnvelope: ApprovalEnvelope = {
@@ -333,7 +334,7 @@ describe('OTEL trace exporter', () => {
       )
     )
 
-    const binaryBody = ProtobufTraceSerializer.serializeRequest(readableSpans as any)
+    const binaryBody = ProtobufTraceSerializer.serializeRequest(readableSpans as unknown as ReadableSpan[])
 
     // Assert: binary body is Uint8Array, not string
     assert.ok(binaryBody instanceof Uint8Array, 'Protobuf body must be Uint8Array')

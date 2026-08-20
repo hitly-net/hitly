@@ -246,7 +246,7 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
       )
 
       // Serialize to protobuf binary
-      body = ProtobufTraceSerializer.serializeRequest(readableSpans as any) ?? new Uint8Array(0)
+      body = ProtobufTraceSerializer.serializeRequest(readableSpans as unknown as ReadableSpan[]) ?? new Uint8Array(0)
       contentType = 'application/x-protobuf'
     } else {
       // http/json: serialize with JsonTraceSerializer
@@ -293,7 +293,7 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
         )
       )
 
-      body = JsonTraceSerializer.serializeRequest(readableSpans as any) ?? new Uint8Array(0)
+      body = JsonTraceSerializer.serializeRequest(readableSpans as unknown as ReadableSpan[]) ?? new Uint8Array(0)
       contentType = 'application/json'
     }
 
