@@ -26,6 +26,7 @@ import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 import { approvalHasExpired } from './approval-expiry'
 import { appendEvidence, buildDecidedEvent, buildRequestedEvent, buildResumedEvent, loadLatestReceipt } from './evidence'
+import { exportOtelTrace } from './otel-trace'
 
 export async function authenticateProjectKey(rawKey: string, projectId?: string) {
   const hashed = hashApiKey(rawKey)
@@ -276,6 +277,14 @@ export async function ingestApproval(args: {
         workspaceId: project.workspaceId,
         evidenceDurable: false,
       })
+      exportOtelTrace({
+        event: requestedEvent,
+        envelope: ingested,
+        origin: ingested.origin,
+        workspaceId: project.workspaceId,
+      }).catch((error) => {
+        console.error('[otel] Export failed (requested):', error)
+      })
     } catch (error) {
       await logProjectEvent({
         projectId: project.id,
@@ -368,6 +377,15 @@ export async function decideApproval(args: {
         workspaceId,
         evidenceDurable: true,
       })
+      exportOtelTrace({
+        event: decidedEvent,
+        envelope,
+        origin,
+        payload: args.payload,
+        workspaceId,
+      }).catch((error) => {
+        console.error('[otel] Export failed (decided):', error)
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Evidence sink append failed'
       await logProjectEvent({
@@ -425,6 +443,14 @@ export async function decideApproval(args: {
             workspaceId,
             evidenceDurable: false,
           })
+          exportOtelTrace({
+            event: resumedEvent,
+            envelope,
+            origin,
+            workspaceId,
+          }).catch((error) => {
+            console.error('[otel] Export failed (resumed):', error)
+          })
         } catch (error) {
           await logProjectEvent({
             workspaceId,
@@ -454,6 +480,14 @@ export async function decideApproval(args: {
             projectId: approval.projectId,
             workspaceId,
             evidenceDurable: false,
+          })
+          exportOtelTrace({
+            event: resumedEvent,
+            envelope,
+            origin,
+            workspaceId,
+          }).catch((error) => {
+            console.error('[otel] Export failed (resume_failed):', error)
           })
         } catch (error) {
           await logProjectEvent({

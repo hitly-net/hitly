@@ -385,6 +385,26 @@ export const evidenceReceipts = pgTable(
   ],
 )
 
+export const otelProtocolEnum = pgEnum('otel_protocol', ['http/protobuf', 'http/json'])
+
+export const workspaceOtelEndpoints = pgTable(
+  'workspace_otel_endpoints',
+  {
+    id: id().primaryKey(),
+    workspaceId: id('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 255 }).notNull(),
+    endpoint: text('endpoint').notNull(),
+    protocol: otelProtocolEnum('protocol').notNull().default('http/protobuf'),
+    headers: jsonb('headers').$type<Record<string, unknown>>(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [index('workspace_otel_endpoints_workspace_idx').on(table.workspaceId)],
+)
+
 /** Tables Cloud RLS pins to `app.workspace_id`. Control-plane identity tables are not listed. */
 export const TENANT_TABLES = [
   'projects',
@@ -396,4 +416,5 @@ export const TENANT_TABLES = [
   'approvals',
   'decision_records',
   'evidence_receipts',
+  'workspace_otel_endpoints',
 ] as const
