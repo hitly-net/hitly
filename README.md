@@ -21,41 +21,12 @@ Apache-2.0. Self-host this repo. Hosted cloud (billing, SSO) is waitlist-only at
 | HTTP, n8n, Make | `resumeUrl` | POST decision JSON |
 | Temporal | `condition()` | signal `hitly.decision` (`workflowId`) |
 
-Guides: [docs](https://hitly.net/docs). Samples: `examples/mastra`, `examples/langgraph`, `examples/hermes`, `examples/temporal`, `examples/n8n`, `examples/notion`.
+## Links
 
-## Self-host
+- [Documentation](https://hitly.net/docs)
+- [Self-host guide](https://hitly.net/docs/self-host) — local run, Postgres setup, editions
+- [Integrations](https://hitly.net/integrations) — [Mastra](https://hitly.net/integrations/mastra), [LangGraph](https://hitly.net/integrations/langgraph), [Hermes](https://hitly.net/integrations/hermes), [HTTP / n8n](https://hitly.net/integrations/http), [Temporal](https://hitly.net/integrations/temporal)
+- [AGENT.md](./AGENT.md) — wire an existing agent
+- Examples: `examples/mastra`, `examples/langgraph`, `examples/hermes`, `examples/temporal`, `examples/n8n`, `examples/notion`
 
-Inbox at http://localhost:3001.
-
-```bash
-yarn install
-cp apps/app/.env.example apps/app/.env.local
-yarn db:up
-yarn db:migrate
-yarn dev:app
-```
-
-Optional: `yarn dev:web` (marketing/docs on :3000), `yarn dev:mobile` (Expo reviewer), `yarn dev:mastra` (Studio demo on :4111).
-
-Postgres 16 via `yarn db:up` (port 5432). Full notes: [Self-host](https://hitly.net/docs/self-host). Wire an existing agent: [AGENT.md](./AGENT.md).
-
-## Editions
-
-| | Open-source server | HITLy Cloud |
-| --- | --- | --- |
-| License | Apache-2.0 | Proprietary |
-| Inbox, projects, plugins, audit, API keys | Yes | Yes |
-| Usage caps | None (self-hosted) | Plan-based |
-| Stripe / SSO | Not included | Private `@hitly/cloud` overlay |
-
-The public `@hitly/cloud` package in this repo is a stub. The hosted product replaces it via Yarn resolutions in [hitly-net/hitly-cloud](https://github.com/hitly-net/hitly-cloud).
-
-## Monorepo
-
-Yarn 1 workspaces + Turbo. Each package.json has `hitly.role` (`sdk` | `app` | `internal` | `edition-stub` | `example`). Only `sdk` packages (`@hitly/core`, `@hitly/plugin-*`) are future npm libraries; apps and `@hitly/cloud` are not.
-
-Agent skills for this repo: `.cursor/skills/hitly-coding`, `.cursor/skills/hitly-release`, `.cursor/skills/hitly-deployment`.
-
-## Database
-
-Postgres 16 via `yarn db:up` (port **5432**). If you previously ran MariaDB, start a new volume — this schema is not a dump-and-restore from MySQL.
+Inbox: http://localhost:3001
