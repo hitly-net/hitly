@@ -63,7 +63,7 @@ export default async function WorkspacePage() {
       </form>
 
       <div className="mt-12">
-        <h2 className="text-xl font-semibold">OTEL Endpoints</h2>
+        <h2 className="text-xl font-semibold">Workspace Exporters</h2>
         <p className="mt-2 text-sm text-zinc-500">
           Export approval lifecycle traces to OpenTelemetry collectors. See <a href="/docs/trace" className="underline">docs</a>.
         </p>
@@ -116,7 +116,7 @@ export default async function WorkspacePage() {
         {admin && (
           <details className="mt-4">
             <summary className="cursor-pointer text-sm font-medium text-zinc-900 dark:text-zinc-100">
-              Add OTEL Endpoint
+              Add Exporter
             </summary>
             <form action={addOtelEndpoint} className="mt-4 flex max-w-md flex-col gap-4 rounded-md border border-zinc-200 p-4 dark:border-zinc-700">
               <label className="flex flex-col gap-1">
