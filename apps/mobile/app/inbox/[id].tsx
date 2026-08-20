@@ -110,6 +110,7 @@ export default function WorkItemDetailScreen() {
       {detail.canAct && !expired ? (
         <DecisionBar
           allowed={allowed}
+          envelope={detail.envelope}
           onDecide={async (decision, extra) => {
             try {
               await client?.decide(detail.id, { decision, ...extra })

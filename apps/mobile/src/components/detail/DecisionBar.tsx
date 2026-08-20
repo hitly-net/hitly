@@ -1,29 +1,43 @@
 import { useState } from 'react'
 import { Pressable, Text, View, StyleSheet } from 'react-native'
-import type { AllowedActions, Decision } from '@hitly/core'
+import type { AllowedActions, Decision, EditableFieldSpec, EditReasonConfig } from '@hitly/core'
 import { colors } from '../../theme'
 import { EditArgsSheet } from './EditArgsSheet'
 import { RespondSheet } from './RespondSheet'
+import { canShowEdit } from './edit-helpers'
 
 export function DecisionBar({
   allowed,
   disabled,
+  envelope,
   onDecide,
 }: {
   allowed: AllowedActions
   disabled?: boolean
-  onDecide: (decision: Decision, extra?: { editedArgs?: Record<string, unknown>; response?: string }) => Promise<void>
+  envelope?: {
+    editableFields?: Record<string, EditableFieldSpec>
+    editReason?: EditReasonConfig
+    action: { args: Record<string, unknown> }
+  }
+  onDecide: (
+    decision: Decision,
+    extra?: { editedArgs?: Record<string, unknown>; response?: string; editReason?: string; editReasonText?: string },
+  ) => Promise<void>
 }) {
   const [editOpen, setEditOpen] = useState(false)
   const [respondOpen, setRespondOpen] = useState(false)
-  const [editText, setEditText] = useState('{}')
   const [response, setResponse] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const actions = (Object.entries(allowed) as [Decision, boolean][]).filter(([, on]) => on)
+  const showEdit = canShowEdit(allowed.edit, envelope?.editableFields)
 
-  async function run(decision: Decision, extra?: { editedArgs?: Record<string, unknown>; response?: string }) {
+  const actions = (Object.entries({ ...allowed, edit: showEdit }) as [Decision, boolean][]).filter(([, on]) => on)
+
+  async function run(
+    decision: Decision,
+    extra?: { editedArgs?: Record<string, unknown>; response?: string; editReason?: string; editReasonText?: string },
+  ) {
     setPending(true)
     setError(null)
     try {
@@ -59,20 +73,16 @@ export function DecisionBar({
           <Text style={styles.label}>{decision}</Text>
         </Pressable>
       ))}
-      <EditArgsSheet
-        visible={editOpen}
-        value={editText}
-        onChange={setEditText}
-        onClose={() => setEditOpen(false)}
-        onSubmit={() => {
-          try {
-            const parsed = JSON.parse(editText) as Record<string, unknown>
-            void run('edit', { editedArgs: parsed })
-          } catch {
-            /* keep sheet open */
-          }
-        }}
-      />
+      {showEdit && envelope ? (
+        <EditArgsSheet
+          visible={editOpen}
+          fields={envelope.editableFields!}
+          originalArgs={envelope.action.args}
+          editReasonConfig={envelope.editReason}
+          onClose={() => setEditOpen(false)}
+          onSubmit={(data) => void run('edit', data)}
+        />
+      ) : null}
       <RespondSheet
         visible={respondOpen}
         value={response}
