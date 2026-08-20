@@ -155,7 +155,7 @@ export function buildOtelSpan(args: {
   }
 }
 
-interface OtelEndpointConfig {
+export interface OtelEndpointConfig {
   name: string
   endpoint: string
   protocol: 'http/protobuf' | 'http/json'
@@ -333,8 +333,11 @@ export async function exportOtelTrace(args: {
   origin: OriginRef
   payload?: DecisionPayload
   workspaceId: string
+  loadEndpoints?: (workspaceId: string) => Promise<OtelEndpointConfig[]>
 }): Promise<void> {
-  const endpoints = await loadWorkspaceOtelEndpoints(args.workspaceId)
+  const endpoints = args.loadEndpoints
+    ? await args.loadEndpoints(args.workspaceId)
+    : await loadWorkspaceOtelEndpoints(args.workspaceId)
 
   if (endpoints.length === 0) {
     return

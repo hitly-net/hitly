@@ -31,14 +31,14 @@ Phoenix will be available at:
 
 ### 2. Configure HITL<sub><i>y</i></sub> Workspace
 
-In your HITL<sub><i>y</i></sub> workspace settings (Settings → Workspace → OTEL Endpoints):
+In your HITL<sub><i>y</i></sub> workspace settings (Settings → Workspace → Workspace Exporters):
 
 1. Click **Add OTEL Endpoint**
 2. Set:
    - **Name**: `Phoenix`
    - **Endpoint**: `http://127.0.0.1:6006/v1/traces`
    - **Protocol**: `http/protobuf` (default)
-   - **Headers**: (leave blank for local Phoenix)
+   - **Headers**: (none needed for local Phoenix)
    - **Enabled**: ✓ (checked)
 3. Save
 

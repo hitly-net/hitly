@@ -16,14 +16,14 @@ This is **observability**, not the evidence sink. Evidence events are written to
 
 ## Configuration
 
-Configure OTEL endpoints in **Settings → Workspace → OTEL Endpoints**:
+Configure OTEL endpoints in **Settings → Workspace → Workspace Exporters**:
 
 | Field | Description |
 |-------|-------------|
 | **Name** | Label for this endpoint (e.g. "Phoenix", "Honeycomb") |
 | **Endpoint** | OTLP/HTTP traces URL (e.g. `http://127.0.0.1:6006/v1/traces`) |
 | **Protocol** | `http/protobuf` (default) or `http/json` |
-| **Headers** | Optional auth headers (e.g. `Authorization: Bearer <token>`). Password fields in UI. Leave blank on later save to keep existing value. Stored encrypted. |
+| **Headers** | Optional auth headers (e.g. `Authorization: Bearer <token>`). Password fields in UI. Stored encrypted. |
 | **Enabled** | Toggle to enable/disable without deleting the endpoint |
 
 You can add multiple endpoints. HITL<sub><i>y</i></sub> fans out traces to all enabled endpoints independently. One 5xx does not skip the others.
@@ -97,7 +97,7 @@ In HITL<sub><i>y</i></sub> workspace settings, add:
 - **Name**: Phoenix
 - **Endpoint**: `http://127.0.0.1:6006/v1/traces`
 - **Protocol**: `http/protobuf`
-- **Headers**: (leave blank)
+- **Headers**: (none needed)
 
 Decide an approval, then refresh Phoenix. You should see `hitly.approval.decided` spans.
 

@@ -1,7 +1,7 @@
-import { describe, it } from 'node:test'
+import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ApprovalEnvelope, DecisionPayload, EvidenceEvent, OriginRef } from '@hitly/core'
-import { buildOtelSpan, exportOtelTrace } from './otel-trace'
+import { buildOtelSpan, exportOtelTrace, type OtelEndpointConfig } from './otel-trace'
 import { ProtobufTraceSerializer } from '@opentelemetry/otlp-transformer'
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
@@ -260,18 +260,29 @@ describe('OTEL trace mapper', () => {
 })
 
 describe('OTEL trace exporter', () => {
-  it('should import exportOtelTrace without error', () => {
-    assert.ok(typeof exportOtelTrace === 'function', 'exportOtelTrace should be a function')
+  const origFetch = globalThis.fetch
+  afterEach(() => {
+    globalThis.fetch = origFetch
   })
 
-  it('should encode protobuf as binary (not JSON)', () => {
-    // Minimal mocks for protobuf encoding test
+  function stubFetch(handler: (url: string) => { status: number }) {
+    const calls: Array<{ url: string; init: RequestInit }> = []
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, init: init ?? {} })
+      const { status } = handler(url)
+      return new Response('', { status }) as Response
+    }) as typeof fetch
+    return calls
+  }
+
+  it('should not fetch when endpoint list is empty', async () => {
+    const calls = stubFetch(() => ({ status: 200 }))
+
     const mockEnvelope: ApprovalEnvelope = {
       action: { name: 'test_action', args: {} },
       allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
       contextMarkdown: 'Test',
-      traceId: '12345678901234567890123456789012',
-      spanId: '1234567890123456',
     }
 
     const mockOrigin: OriginRef = {
@@ -280,88 +291,226 @@ describe('OTEL trace exporter', () => {
       runId: 'run_test',
       stepId: 'step_test',
       resumeHandle: {},
-      traceId: '12345678901234567890123456789012',
-      spanId: '1234567890123456',
     }
 
     const mockEvent: EvidenceEvent = {
       spec: 'hitly.evidence.v1',
       event_id: 'evt_test',
       approval_id: 'apr_test',
-      event_type: 'requested',
-      seq: 1,
-      occurred_at: '2024-01-01T00:00:00.000Z',
+      event_type: 'decided',
+      seq: 2,
+      occurred_at: '2024-01-01T00:01:00.000Z',
       origin: { plugin: 'http', projectId: 'prj_test', runId: 'run_test', stepId: 'step_test' },
       action: { name: 'test_action', args: {}, proposed_sha256: 'abc' },
+      oversight: { reviewer_id: 'usr_123', decision: 'accept', decided_at: '2024-01-01T00:01:00.000Z' },
       retention: { min_days: 180 },
-      integrity: { alg: 'sha256', content_sha256: 'def' },
+      integrity: { alg: 'sha256', prev_event_id: 'evt_prev', prev_content_sha256: 'prev', content_sha256: 'def' },
     }
 
-    // Test that protobuf encoding produces binary data
-    const trace = buildOtelSpan({
+    await exportOtelTrace({
       event: mockEvent,
       envelope: mockEnvelope,
       origin: mockOrigin,
+      payload: { decision: 'accept' },
       workspaceId: 'wks_test',
+      loadEndpoints: async () => [],
     })
 
-    // Convert to ReadableSpan format (same as postOtelTrace)
-    const readableSpans = trace.resourceSpans.flatMap(rs =>
-      rs.scopeSpans.flatMap(ss =>
-        ss.spans.map(span => ({
-          name: span.name,
-          kind: span.kind,
-          spanContext: () => ({
-            traceId: span.traceId,
-            spanId: span.spanId,
-            traceFlags: 1,
-          }),
-          parentSpanId: span.parentSpanId,
-          startTime: [0, 0],
-          endTime: [0, 0],
-          status: { code: 0 },
-          attributes: {},
-          links: [],
-          events: [],
-          duration: [0, 0],
-          ended: true,
-          resource: { attributes: {} },
-          instrumentationScope: { name: 'hitly', version: '1.0.0' },
-          droppedAttributesCount: 0,
-          droppedEventsCount: 0,
-          droppedLinksCount: 0,
-        }))
-      )
-    )
-
-    const binaryBody = ProtobufTraceSerializer.serializeRequest(readableSpans as unknown as ReadableSpan[])
-
-    // Assert: binary body is Uint8Array, not string
-    assert.ok(binaryBody instanceof Uint8Array, 'Protobuf body must be Uint8Array')
-    assert.ok(binaryBody.length > 0, 'Protobuf body must not be empty')
-
-    // Assert: binary body is NOT JSON
-    const bodyAsString = new TextDecoder().decode(binaryBody.slice(0, Math.min(100, binaryBody.length)))
-    assert.ok(!bodyAsString.startsWith('{'), 'Protobuf body must not start with JSON brace')
-    assert.ok(!bodyAsString.includes('"resourceSpans"'), 'Protobuf body must not contain JSON field names')
+    assert.equal(calls.length, 0, 'No fetch should be called with empty endpoint list')
   })
 
-  // Exporter behavior verification (code inspection):
-  //
-  // 1. Empty endpoint list = no fetch:
-  //    ✓ Verified in otel-trace.ts lines 239-241: early return when endpoints.length === 0
-  //
-  // 2. Two endpoints both get the same decide span:
-  //    ✓ Verified in otel-trace.ts line 251: Promise.allSettled(endpoints.map(...))
-  //    ✓ All endpoints receive the same trace object (line 243-249: single buildOtelSpan call)
-  //
-  // 3. One 500 does not skip the other:
-  //    ✓ Verified in otel-trace.ts lines 202-227: postOtelTrace catches errors and logs,
-  //      never throws. Promise.allSettled ensures all endpoints are attempted independently.
-  //
-  // Integration tests with DATABASE_URL would require test database setup.
-  // The critical behaviors are structurally guaranteed by:
-  // - Early return for empty list (no db query, no fetch)
-  // - Independent Promise.allSettled fan-out (all endpoints called in parallel)
-  // - Try/catch in postOtelTrace (errors logged, never thrown)
+  it('should send same decide span to two endpoints', async () => {
+    const calls = stubFetch(() => ({ status: 200 }))
+
+    const mockEnvelope: ApprovalEnvelope = {
+      action: { name: 'test_action', args: {} },
+      allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
+      contextMarkdown: 'Test',
+    }
+
+    const mockOrigin: OriginRef = {
+      plugin: 'http',
+      projectId: 'prj_test',
+      runId: 'run_test',
+      stepId: 'step_test',
+      resumeHandle: {},
+    }
+
+    const mockEvent: EvidenceEvent = {
+      spec: 'hitly.evidence.v1',
+      event_id: 'evt_test',
+      approval_id: 'apr_test',
+      event_type: 'decided',
+      seq: 2,
+      occurred_at: '2024-01-01T00:01:00.000Z',
+      origin: { plugin: 'http', projectId: 'prj_test', runId: 'run_test', stepId: 'step_test' },
+      action: { name: 'test_action', args: {}, proposed_sha256: 'abc' },
+      oversight: { reviewer_id: 'usr_123', decision: 'accept', decided_at: '2024-01-01T00:01:00.000Z' },
+      retention: { min_days: 180 },
+      integrity: { alg: 'sha256', prev_event_id: 'evt_prev', prev_content_sha256: 'prev', content_sha256: 'def' },
+    }
+
+    await exportOtelTrace({
+      event: mockEvent,
+      envelope: mockEnvelope,
+      origin: mockOrigin,
+      payload: { decision: 'accept' },
+      workspaceId: 'wks_test',
+      loadEndpoints: async () => [
+        {
+          name: 'Endpoint 1',
+          endpoint: 'http://endpoint1.test/v1/traces',
+          protocol: 'http/json',
+          enabled: true,
+        },
+        {
+          name: 'Endpoint 2',
+          endpoint: 'http://endpoint2.test/v1/traces',
+          protocol: 'http/json',
+          enabled: true,
+        },
+      ],
+    })
+
+    assert.equal(calls.length, 2, 'Both endpoints should be called')
+    assert.ok(calls[0].url.includes('endpoint1.test'), 'First endpoint URL should match')
+    assert.ok(calls[1].url.includes('endpoint2.test'), 'Second endpoint URL should match')
+
+    // Both bodies should contain the decide span name
+    const body1 = Buffer.from(calls[0].init.body as Uint8Array).toString('utf8')
+    const body2 = Buffer.from(calls[1].init.body as Uint8Array).toString('utf8')
+    assert.ok(body1.includes('hitly.approval.decided'), 'First body should contain decide span name')
+    assert.ok(body2.includes('hitly.approval.decided'), 'Second body should contain decide span name')
+  })
+
+  it('should not skip second endpoint when first returns 500', async () => {
+    const calls = stubFetch((url: string) => {
+      if (url.includes('fail.test')) {
+        return { status: 500 }
+      }
+      return { status: 200 }
+    })
+
+    const mockEnvelope: ApprovalEnvelope = {
+      action: { name: 'test_action', args: {} },
+      allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
+      contextMarkdown: 'Test',
+    }
+
+    const mockOrigin: OriginRef = {
+      plugin: 'http',
+      projectId: 'prj_test',
+      runId: 'run_test',
+      stepId: 'step_test',
+      resumeHandle: {},
+    }
+
+    const mockEvent: EvidenceEvent = {
+      spec: 'hitly.evidence.v1',
+      event_id: 'evt_test',
+      approval_id: 'apr_test',
+      event_type: 'decided',
+      seq: 2,
+      occurred_at: '2024-01-01T00:01:00.000Z',
+      origin: { plugin: 'http', projectId: 'prj_test', runId: 'run_test', stepId: 'step_test' },
+      action: { name: 'test_action', args: {}, proposed_sha256: 'abc' },
+      oversight: { reviewer_id: 'usr_123', decision: 'accept', decided_at: '2024-01-01T00:01:00.000Z' },
+      retention: { min_days: 180 },
+      integrity: { alg: 'sha256', prev_event_id: 'evt_prev', prev_content_sha256: 'prev', content_sha256: 'def' },
+    }
+
+    await exportOtelTrace({
+      event: mockEvent,
+      envelope: mockEnvelope,
+      origin: mockOrigin,
+      payload: { decision: 'accept' },
+      workspaceId: 'wks_test',
+      loadEndpoints: async () => [
+        {
+          name: 'Failing Endpoint',
+          endpoint: 'http://fail.test/v1/traces',
+          protocol: 'http/json',
+          enabled: true,
+        },
+        {
+          name: 'Healthy Endpoint',
+          endpoint: 'http://healthy.test/v1/traces',
+          protocol: 'http/json',
+          enabled: true,
+        },
+      ],
+    })
+
+    assert.equal(calls.length, 2, 'Both endpoints should be called despite 500')
+    assert.ok(calls.some(c => c.url.includes('fail.test')), 'Failing endpoint should be called')
+    assert.ok(calls.some(c => c.url.includes('healthy.test')), 'Healthy endpoint should be called')
+  })
+
+  it('should send binary protobuf (not JSON) for http/protobuf protocol', async () => {
+    const calls = stubFetch(() => ({ status: 200 }))
+
+    const mockEnvelope: ApprovalEnvelope = {
+      action: { name: 'test_action', args: {} },
+      allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
+      contextMarkdown: 'Test',
+    }
+
+    const mockOrigin: OriginRef = {
+      plugin: 'http',
+      projectId: 'prj_test',
+      runId: 'run_test',
+      stepId: 'step_test',
+      resumeHandle: {},
+    }
+
+    const mockEvent: EvidenceEvent = {
+      spec: 'hitly.evidence.v1',
+      event_id: 'evt_test',
+      approval_id: 'apr_test',
+      event_type: 'decided',
+      seq: 2,
+      occurred_at: '2024-01-01T00:01:00.000Z',
+      origin: { plugin: 'http', projectId: 'prj_test', runId: 'run_test', stepId: 'step_test' },
+      action: { name: 'test_action', args: {}, proposed_sha256: 'abc' },
+      oversight: { reviewer_id: 'usr_123', decision: 'accept', decided_at: '2024-01-01T00:01:00.000Z' },
+      retention: { min_days: 180 },
+      integrity: { alg: 'sha256', prev_event_id: 'evt_prev', prev_content_sha256: 'prev', content_sha256: 'def' },
+    }
+
+    await exportOtelTrace({
+      event: mockEvent,
+      envelope: mockEnvelope,
+      origin: mockOrigin,
+      payload: { decision: 'accept' },
+      workspaceId: 'wks_test',
+      loadEndpoints: async () => [
+        {
+          name: 'Protobuf Endpoint',
+          endpoint: 'http://protobuf.test/v1/traces',
+          protocol: 'http/protobuf',
+          enabled: true,
+        },
+      ],
+    })
+
+    assert.equal(calls.length, 1, 'One endpoint should be called')
+
+    const body = calls[0].init.body
+    assert.ok(Buffer.isBuffer(body) || body instanceof Uint8Array, 'Body should be binary')
+
+    const contentType = (calls[0].init.headers as Record<string, string>)?.['Content-Type']
+    assert.equal(contentType, 'application/x-protobuf', 'Content-Type should be application/x-protobuf')
+
+    // Assert body is NOT JSON
+    const bodyBuffer = Buffer.from(body as Uint8Array)
+    assert.notEqual(bodyBuffer.subarray(0, 1)[0], 0x7b, 'Body should not start with { (0x7b)')
+
+    let jsonParseThrew = false
+    try {
+      JSON.parse(bodyBuffer.toString('utf8'))
+    } catch {
+      jsonParseThrew = true
+    }
+    assert.ok(jsonParseThrew, 'Body should not be parseable as JSON')
+  })
 })
