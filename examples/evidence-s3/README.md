@@ -92,11 +92,9 @@ In your HITLy project settings (Config tab), set:
 
 Save the configuration.
 
-### 4. Test the Evidence Sink
+### 4. Verify the Configuration
 
-In your HITLy project config page, after saving the S3 configuration, click **Test Evidence Sink**. If successful, HITLy will POST a test evidence event to your Garage bucket.
-
-Alternatively, trigger a real approval flow in your agent and check that evidence events are stored.
+There is no **Test Evidence Sink** button for S3 yet (HTTP only). Confirm with a real decide, or list the bucket with the `aws` CLI.
 
 ### 5. Verify Stored Objects
 
