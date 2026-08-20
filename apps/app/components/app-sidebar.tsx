@@ -131,7 +131,7 @@ export function AppSidebar({ nav }: { nav: EditionNavItem[] }) {
             : 'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-900'
           if (item.external) {
             return (
-              <a key={item.href} href={item.href} title={item.label} className={className}>
+              <a key={item.href} href={item.href} title={item.label} className={className} target="_blank" rel="noopener noreferrer">
                 <Icon className="h-4 w-4 shrink-0" />
                 {collapsed ? <span className="sr-only">{item.label}</span> : item.label}
               </a>
