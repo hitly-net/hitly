@@ -338,23 +338,28 @@ test('validateEditReason: hidden dropdown', () => {
   assert.equal(result.error, 'Edit reason text is required')
 })
 
-test('validateEditReason: default options', () => {
+test('validateEditReason: omitted config validates with defaults', () => {
+  // Valid with defaults (optional controls)
   const result = validateEditReason({
     editReason: 'customer_request',
-    editReasonConfig: {
-      dropdown: {},
-    },
+    editReasonText: 'Customer requested',
+    editReasonConfig: undefined,
   })
-
   assert.equal(result, null)
 
+  // Invalid: dropdown value not in defaults
   const resultInvalid = validateEditReason({
     editReason: 'not_in_defaults',
-    editReasonConfig: {
-      dropdown: {},
-    },
+    editReasonConfig: undefined,
   })
-
   assert.ok(resultInvalid)
   assert.ok(resultInvalid.error.includes('must be one of'))
+
+  // Invalid: text too long (default maxLength 2000)
+  const resultTooLong = validateEditReason({
+    editReasonText: 'a'.repeat(2001),
+    editReasonConfig: undefined,
+  })
+  assert.ok(resultTooLong)
+  assert.equal(resultTooLong.error, 'Edit reason text exceeds maximum length 2000')
 })

@@ -425,13 +425,21 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     if (!canDecide(access)) throw new Error('You cannot decide this work item')
     const decision = String(formData.get('decision') ?? '')
     const response = String(formData.get('response') ?? '').trim()
+    const editReason = String(formData.get('editReason') ?? '').trim()
+    const editReasonText = String(formData.get('editReasonText') ?? '').trim()
     const editedRaw = String(formData.get('editedArgs') ?? '').trim()
     let editedArgs: Record<string, unknown> | undefined
     if (editedRaw) {
       editedArgs = JSON.parse(editedRaw) as Record<string, unknown>
     }
     const { decideApproval, parseDecisionBody } = await import('@/lib/approvals')
-    const payload = parseDecisionBody({ decision, response: response || undefined, editedArgs })
+    const payload = parseDecisionBody({
+      decision,
+      response: response || undefined,
+      editedArgs,
+      editReason: editReason || undefined,
+      editReasonText: editReasonText || undefined,
+    })
     if (!payload) throw new Error('Invalid decision')
     const result = await decideApproval({ approvalId, actorUserId: user.id, payload, workspaceId: workspace.id })
     if (result.error && result.status === 500) {

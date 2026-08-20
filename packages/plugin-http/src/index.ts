@@ -36,14 +36,28 @@ export const httpPlugin: HitlyPlugin = {
     const args = asRecord(body.args)
     const metadata = asRecord(body.metadata)
     const pageId = optionalString(metadata.pageId) ?? optionalString(args.pageId)
+
+    const allowedActionsPartial =
+      body.allowedActions && typeof body.allowedActions === 'object'
+        ? (body.allowedActions as Record<string, boolean>)
+        : undefined
+    const editableFields =
+      body.editableFields && typeof body.editableFields === 'object'
+        ? (body.editableFields as Record<string, unknown>)
+        : undefined
+    const editReason =
+      body.editReason && typeof body.editReason === 'object' ? (body.editReason as Record<string, unknown>) : undefined
+
     return {
       action: {
         name: String(body.actionName ?? 'http-callback'),
         args,
       },
-      allowedActions: allowedActionsFor({ accept: true, reject: true }),
+      allowedActions: allowedActionsFor(allowedActionsPartial ?? { accept: true, reject: true }),
       contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : undefined,
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      editableFields,
+      editReason,
       origin: {
         plugin: 'http',
         projectId: String(body.projectId ?? ''),

@@ -392,7 +392,7 @@ export async function decideApproval(args: {
         origin,
         payload: {
           ...args.payload,
-          editedArgs: mergedArgs !== envelope.action.args ? mergedArgs : undefined,
+          editedArgs: editedDelta, // Store only the delta in evidence
         },
         reviewerId: args.actorUserId,
         seq: latest.seq + 1,
@@ -440,7 +440,7 @@ export async function decideApproval(args: {
           },
           {
             ...args.payload,
-            editedArgs: mergedArgs !== envelope.action.args ? mergedArgs : undefined,
+            editedArgs: mergedArgs !== envelope.action.args ? mergedArgs : undefined, // Send merged args to origin
           },
           secured ? { plugin: approval.plugin, ...secured.project.credentials } : undefined,
         )
@@ -617,6 +617,7 @@ const DEFAULT_EDIT_REASON_OPTIONS = [
 /**
  * Validate edit reason fields against the envelope's editReason config.
  * Returns null on success or { error, status } on failure.
+ * When config is omitted, validates with default optional controls.
  */
 export function validateEditReason(args: {
   editReason?: string
@@ -625,10 +626,9 @@ export function validateEditReason(args: {
 }): { error: string; status: 400 } | null {
   const { editReason, editReasonText, editReasonConfig } = args
 
-  if (!editReasonConfig) return null
-
-  const dropdownConfig = editReasonConfig.dropdown === false ? null : editReasonConfig.dropdown ?? {}
-  const textConfig = editReasonConfig.text === false ? null : editReasonConfig.text ?? {}
+  // Default: both controls optional when config is omitted
+  const dropdownConfig = editReasonConfig?.dropdown === false ? null : editReasonConfig?.dropdown ?? {}
+  const textConfig = editReasonConfig?.text === false ? null : editReasonConfig?.text ?? {}
 
   // Validate dropdown
   if (dropdownConfig) {
@@ -770,11 +770,10 @@ export function parseDecisionBody(body: Record<string, unknown>): DecisionPayloa
   if (!isDecision(body.decision)) return null
   const decision = body.decision as Decision
   
-  // Edit requires both editedArgs (delta) and final_sha256
+  // Edit requires editedArgs (we'll compute final_sha256 server-side)
   if (decision === 'edit') {
     const hasEditedArgs = body.editedArgs && typeof body.editedArgs === 'object'
-    const hasFinalSha = typeof body.final_sha256 === 'string' && body.final_sha256.length > 0
-    if (!hasEditedArgs || !hasFinalSha) return null
+    if (!hasEditedArgs) return null
   }
   
   return {
