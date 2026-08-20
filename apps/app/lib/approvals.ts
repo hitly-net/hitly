@@ -398,6 +398,7 @@ export async function decideApproval(args: {
         seq: latest.seq + 1,
         prevEventId: latest.prevEventId ?? '',
         prevContentSha256: latest.prevContentSha256 ?? '',
+        mergedArgs, // Pass merged args for final_sha256 computation
       })
       decidedEventId = decidedEvent.event_id
       decidedContentSha256 = decidedEvent.integrity.content_sha256

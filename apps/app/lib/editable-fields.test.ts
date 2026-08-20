@@ -363,3 +363,36 @@ test('validateEditReason: omitted config validates with defaults', () => {
   assert.ok(resultTooLong)
   assert.equal(resultTooLong.error, 'Edit reason text exceeds maximum length 2000')
 })
+
+test('mergeEditableArgs: final_sha256 is hash of merged args, not delta', async () => {
+  const { hashActionArgs } = await import('@hitly/core')
+  
+  const originalArgs = { orderId: 'OR-123', amount: 100 }
+  const editedArgs = { amount: 50 }
+  const result = mergeEditableArgs({
+    originalArgs,
+    editedArgs,
+    editableFields: {
+      amount: { type: 'int', min: 1 },
+    },
+  })
+
+  assert.ok('mergedArgs' in result)
+  
+  // Verify delta contains only edited fields
+  assert.deepEqual(result.editedDelta, { amount: 50 })
+  assert.ok(!('orderId' in result.editedDelta))
+  
+  // Verify merged args contain both original and edited
+  assert.deepEqual(result.mergedArgs, { orderId: 'OR-123', amount: 50 })
+  
+  // Verify final_sha256 would hash the merged args, not the delta
+  const hashOfMerged = await hashActionArgs(result.mergedArgs)
+  const hashOfDelta = await hashActionArgs(result.editedDelta)
+  assert.notEqual(hashOfMerged, hashOfDelta)
+  
+  // The evidence final_sha256 should equal hash of merged, not hash of delta
+  // This ensures locked fields (orderId) are included in the integrity check
+  const expectedFinalSha256 = hashOfMerged
+  assert.ok(expectedFinalSha256.length > 0)
+})

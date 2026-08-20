@@ -90,6 +90,7 @@ export async function buildDecidedEvent(args: {
   seq: number
   prevEventId: string
   prevContentSha256: string
+  mergedArgs?: Record<string, unknown>
 }): Promise<EvidenceEvent> {
   const occurredAt = new Date().toISOString()
   const proposedSha256 = await hashActionArgs(args.envelope.action.args)
@@ -103,7 +104,7 @@ export async function buildDecidedEvent(args: {
     args.payload.decision === 'edit' && args.payload.editedArgs
       ? {
           ...actionBase,
-          final_sha256: await hashActionArgs(args.payload.editedArgs),
+          final_sha256: await hashActionArgs(args.mergedArgs ?? args.payload.editedArgs),
           delta: args.payload.editedArgs,
         }
       : {
