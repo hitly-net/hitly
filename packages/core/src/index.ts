@@ -56,6 +56,25 @@ export interface ApprovalAttachment {
   contentType?: string
 }
 
+export interface EditableFieldSpec {
+  type: 'string' | 'int' | 'float' | 'bool' | 'enum' | 'array'
+  label?: string
+  minLength?: number
+  maxLength?: number
+  min?: number
+  max?: number
+  step?: number
+  options?: Array<string | { value: string; text: string }>
+  items?: 'string' | 'int' | 'float'
+  minItems?: number
+  maxItems?: number
+}
+
+export interface EditReasonConfig {
+  dropdown?: false | { required?: boolean; options?: Array<string | { value: string; text: string }>; label?: string }
+  text?: false | { required?: boolean; maxLength?: number; label?: string }
+}
+
 export interface ApprovalEnvelope {
   action: ActionRequest
   allowedActions: AllowedActions
@@ -68,6 +87,10 @@ export interface ApprovalEnvelope {
   attachments?: ApprovalAttachment[]
   resumeSchema?: Record<string, unknown>
   expiresAt?: string
+  /** Allowlist of editable action.args fields with type validation. Key = field name, value = type + rules. */
+  editableFields?: Record<string, EditableFieldSpec>
+  /** Edit reason capture (dropdown and/or text). Not merged into action.args. */
+  editReason?: EditReasonConfig
   /** Evidence fields for audit trail (optional at ingest) */
   traceId?: string
   spanId?: string
@@ -110,6 +133,8 @@ export interface DecisionPayload {
   decision: Decision
   editedArgs?: Record<string, unknown>
   response?: string
+  editReason?: string
+  editReasonText?: string
 }
 
 /** Origin HTTP/result payload stored on the inbox item after resume. */

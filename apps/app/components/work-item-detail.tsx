@@ -7,6 +7,7 @@ import { Badge, PluginBadge, PluginMark } from '@hitly/ui'
 import { decideWorkItem, delegateWorkItem, retryWorkItem } from '@/actions/projects'
 import { AppShell } from '@/components/app-shell'
 import { ContextMarkdown } from '@/components/context-markdown'
+import { EditableFieldsForm } from '@/components/editable-fields-form'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
 import { RefreshOnFocus, WorkItemDecisionButtons } from '@/components/work-item-client'
@@ -101,6 +102,8 @@ export async function WorkItemDetail({
   const originRows = originFields(origin)
   const metadata = envelopeMetadata(envelope, origin)
   const allowed = envelope.allowedActions
+  const hasEditableFields = envelope.editableFields && Object.keys(envelope.editableFields).length > 0
+  const showEditControl = allowed.edit && hasEditableFields
   const canAct = canDecide(access) && isOpenApprovalStatus(approval.status)
   const expired = approvalHasExpired(approval)
   const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status)
@@ -287,11 +290,11 @@ export async function WorkItemDetail({
       {canAct && !expired ? (
         <form action={decideWorkItem.bind(null, approval.id)} className="mt-6 flex max-w-xl flex-col gap-3">
           <input type="hidden" name="returnTo" value={returnTo} />
-          {allowed.edit ? (
-            <textarea
-              name="editedArgs"
-              placeholder='Edited args JSON, e.g. {"amount": 10}'
-              className="min-h-20 rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          {showEditControl ? (
+            <EditableFieldsForm
+              fields={envelope.editableFields!}
+              originalArgs={envelope.action.args}
+              editReasonConfig={envelope.editReason}
             />
           ) : null}
           {allowed.respond ? (
@@ -301,7 +304,7 @@ export async function WorkItemDetail({
               className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
             />
           ) : null}
-          <WorkItemDecisionButtons allowed={allowed} />
+          <WorkItemDecisionButtons allowed={{ ...allowed, edit: showEditControl }} />
         </form>
       ) : null}
       {approval.status === 'failed_resume' && canDecide(access) ? (

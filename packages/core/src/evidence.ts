@@ -45,6 +45,9 @@ export interface EvidenceOversight {
   reviewer_id?: string
   decision?: Decision
   decided_at?: string
+  response?: string
+  edit_reason?: string
+  edit_reason_text?: string
 }
 
 export interface EvidenceRetention {

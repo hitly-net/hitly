@@ -92,6 +92,10 @@ export const sendRefundTool = createTool({
           stepId: agent?.toolCallId ?? 'send-refund',
           stepName: 'send-refund',
           action: { name: 'send-refund', args: { orderId, amount } },
+          allowedActions: { accept: true, reject: true, edit: true },
+          editableFields: {
+            amount: { type: 'int', min: 1, label: 'Refund amount' },
+          },
           // Evidence fields for audit trail
           systemId: 'refund-agent-prod',
           inventoryId: 'ai-inv-refund-agent-v2',

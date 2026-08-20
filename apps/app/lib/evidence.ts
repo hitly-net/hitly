@@ -143,6 +143,9 @@ export async function buildDecidedEvent(args: {
       reviewer_id: args.reviewerId,
       decision: args.payload.decision,
       decided_at: occurredAt,
+      response: args.payload.response,
+      edit_reason: args.payload.editReason,
+      edit_reason_text: args.payload.editReasonText,
     },
     retention: {
       min_days: 180,
