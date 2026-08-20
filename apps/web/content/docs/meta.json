@@ -1,4 +1,4 @@
 {
   "title": "Docs",
-  "pages": ["index", "self-host", "inbox", "envelope", "s3", "api", "projects", "governance", "mobile"]
+  "pages": ["index", "self-host", "inbox", "envelope", "trace", "s3", "api", "projects", "governance", "mobile"]
 }

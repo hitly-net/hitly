@@ -1,0 +1,159 @@
+---
+title: Trace Export
+description: Export HITL approval lifecycle as OpenTelemetry traces to Phoenix, Tempo, Honeycomb, or any OTEL-compliant backend.
+---
+
+HITL<sub><i>y</i></sub> can export approval lifecycle events (requested, decided, resumed, resume_failed) as OpenTelemetry traces to zero or more OTLP/HTTP endpoints configured per workspace.
+
+This is **observability**, not the evidence sink. Evidence events are written to [HTTP](/docs/envelope#evidence-storage) or [S3](/docs/s3) sinks configured per project. OTEL trace export is **fail-open**: 5xx or timeout never blocks approval ingestion or decision. Evidence sinks are **fail-closed** on `decided` (resume does not proceed if the evidence sink fails).
+
+## Why OTEL Trace Export
+
+- **Visual timeline**: See approval lifecycle events in Phoenix, Grafana Tempo, Honeycomb, or any OTEL-compliant UI.
+- **Correlation**: Link HITL<sub><i>y</i></sub> approval spans to your agent/workflow traces via `traceId` and `spanId`.
+- **Alerting**: Configure OTEL backend alerts on approval latency, failure rates, or decision patterns.
+- **No PII**: OTEL spans never include raw `action.args` or full payloads.
+
+## Configuration
+
+Configure OTEL endpoints in **Settings → Workspace → Workspace Exporters**:
+
+| Field | Description |
+|-------|-------------|
+| **Name** | Label for this endpoint (e.g. "Phoenix", "Honeycomb") |
+| **Endpoint** | OTLP/HTTP traces URL (e.g. `http://127.0.0.1:6006/v1/traces`) |
+| **Protocol** | `http/protobuf` (default) or `http/json` |
+| **Headers** | Optional auth headers (e.g. `Authorization: Bearer <token>`). Stored encrypted. |
+| **Enabled** | Toggle to enable/disable without deleting the endpoint |
+
+You can add multiple endpoints. HITL<sub><i>y</i></sub> fans out traces to all enabled endpoints independently. One 5xx does not skip the others.
+
+Zero endpoints is valid (no export).
+
+## What Gets Exported
+
+On each approval lifecycle event (requested, decided, resumed, resume_failed), HITL<sub><i>y</i></sub> POSTs an OTLP trace to all enabled endpoints.
+
+### Resource Attributes
+
+```json
+{
+  "service.name": "hitly",
+  "hitly.workspace_id": "<workspace-id>",
+  "hitly.project_id": "<project-id>"
+}
+```
+
+### Span Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `hitly.approval_id` | Approval ID |
+| `hitly.plugin` | Plugin ID (mastra, http, langgraph, temporal, hermes) |
+| `hitly.action_name` | Action name |
+| `hitly.status` | Event type (requested, decided, resumed, resume_failed) |
+| `hitly.event_type` | Same as status |
+| `hitly.event_id` | Evidence event ID |
+| `hitly.seq` | Event sequence number |
+| `hitly.decision` | Decision (when event_type is decided) |
+| `hitly.agent_id` | Agent ID (when present) |
+| `hitly.system_id` | AI system ID being governed (when present) |
+| `hitly.risk_tier` | Risk tier (when present) |
+| `hitly.policy_id` | Policy ID (when present) |
+| `hitly.content_sha256` | Evidence event content hash |
+
+**Note**: Raw `action.args` are **never** exported to OTEL traces. For full evidence payloads with action args, oversight context, and integrity hashes, use the [HTTP](/docs/envelope#evidence-storage) or [S3](/docs/s3) evidence sinks.
+
+### Trace ID and Span ID
+
+HITL<sub><i>y</i></sub> uses the envelope/origin `traceId` if W3C-valid (32 hex characters), otherwise generates a new trace ID. Envelope/origin `spanId` is set as `parentSpanId` (16 hex characters).
+
+This links HITL<sub><i>y</i></sub> approval spans to your agent/workflow traces when the origin framework (Mastra, LangGraph, Temporal, your HTTP origin) provides `traceId` and `spanId`.
+
+### Span Name
+
+Span name is `hitly.approval.<event_type>`:
+- `hitly.approval.requested`
+- `hitly.approval.decided`
+- `hitly.approval.resumed`
+- `hitly.approval.resume_failed`
+
+Alternatively, you could model the approval as one parent span from `requested` to `resumed` with child spans at `decided` and resume outcome. v1 exports each event as a separate span.
+
+## Examples
+
+### Local Phoenix
+
+See `examples/phoenix` for a local Phoenix setup via Docker Compose.
+
+```bash
+cd examples/phoenix
+docker compose up -d
+```
+
+Phoenix UI: `http://127.0.0.1:6006`
+
+In HITL<sub><i>y</i></sub> workspace settings, add:
+- **Name**: Phoenix
+- **Endpoint**: `http://127.0.0.1:6006/v1/traces`
+- **Protocol**: `http/protobuf`
+- **Headers**: (none needed)
+
+Decide an approval, then refresh Phoenix. You should see `hitly.approval.decided` spans.
+
+### Honeycomb
+
+For Honeycomb, use:
+- **Endpoint**: `https://api.honeycomb.io/v1/traces`
+- **Headers**: `x-honeycomb-team: <your-api-key>`
+
+### Grafana Tempo
+
+For Tempo, use:
+- **Endpoint**: `https://<your-tempo-instance>/v1/traces`
+- **Headers**: `Authorization: Basic <base64-credentials>` (if auth required)
+
+### OpenTelemetry Collector
+
+You can point HITL<sub><i>y</i></sub> at an OTEL collector, which then routes traces to multiple backends (Tempo, Jaeger, Honeycomb, etc.).
+
+- **Endpoint**: `http://<collector-host>:4318/v1/traces`
+- **Protocol**: `http/protobuf` (default for OTLP/HTTP)
+
+## Fail-Open Behavior
+
+OTEL export is **fail-open**:
+- 5xx, timeout (>5s), or network error: HITL<sub><i>y</i></sub> logs the error and continues.
+- **Approval ingestion and decision are never blocked** by OTEL export failures.
+- One endpoint 5xx does not skip the others. Fan-out is independent.
+
+This is different from the evidence sink:
+- **Evidence sink** (HTTP or S3) is **fail-closed** on `decided`. If the evidence sink returns 5xx or times out when storing the `decided` event, HITL<sub><i>y</i></sub> does **not** resume the origin. The approval stays in `pending` or `failed_resume` (depending on where the failure occurred) and the reviewer sees an error.
+
+## Protocol
+
+HITL<sub><i>y</i></sub> v1 supports **OTLP/HTTP** only:
+- `http/protobuf` (default, most efficient)
+- `http/json` (for OTEL backends that only accept JSON)
+
+gRPC is not supported yet.
+
+## Security
+
+Headers are encrypted at rest.
+
+For production:
+- Use HTTPS endpoints when exporting over the public internet.
+- Store auth tokens as headers (e.g. `Authorization: Bearer <token>`).
+- Rotate tokens periodically.
+
+## Sampling
+
+HITL<sub><i>y</i></sub> does not sample. It exports every approval lifecycle event. If you need sampling, configure it at the OTEL backend or collector.
+
+## See Also
+
+- [Envelope](/docs/envelope) (evidence fields: `traceId`, `spanId`, `agentId`, `systemId`, etc.)
+- [S3](/docs/s3) (evidence sink with full payloads, integrity hashes, fail-closed on decided)
+- [Evidence HTTP Sink](/docs/envelope#http-sink-configuration) (custom audit log endpoints)
+- [Phoenix Example](/examples/phoenix/README.md)
