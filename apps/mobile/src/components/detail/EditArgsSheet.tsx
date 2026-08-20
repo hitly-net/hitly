@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Modal, Pressable, ScrollView, Switch, Text, TextInput, View, StyleSheet } from 'react-native'
 import type { EditableFieldSpec, EditReasonConfig } from '@hitly/core'
 import { colors } from '../../theme'
+import { buildEditSubmit } from './edit-helpers'
 
 const DEFAULT_EDIT_REASON_OPTIONS = [
   'customer_request',
@@ -85,11 +86,13 @@ export function EditArgsSheet({
   const mergedArgs = { ...originalArgs, ...values }
 
   function handleSubmit() {
-    onSubmit({
-      editedArgs: values,
+    const payload = buildEditSubmit({
+      values,
+      fields,
       editReason: editReason || undefined,
       editReasonText: editReasonText || undefined,
     })
+    onSubmit(payload)
   }
 
   return (

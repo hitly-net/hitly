@@ -4,6 +4,7 @@ import type { AllowedActions, Decision, EditableFieldSpec, EditReasonConfig } fr
 import { colors } from '../../theme'
 import { EditArgsSheet } from './EditArgsSheet'
 import { RespondSheet } from './RespondSheet'
+import { canShowEdit } from './edit-helpers'
 
 export function DecisionBar({
   allowed,
@@ -29,10 +30,7 @@ export function DecisionBar({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const hasEditableFields = Boolean(
-    envelope?.editableFields && Object.keys(envelope.editableFields).length > 0,
-  )
-  const showEdit = allowed.edit && hasEditableFields
+  const showEdit = canShowEdit(allowed.edit, envelope?.editableFields)
 
   const actions = (Object.entries({ ...allowed, edit: showEdit }) as [Decision, boolean][]).filter(([, on]) => on)
 
