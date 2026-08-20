@@ -102,7 +102,7 @@ export async function WorkItemDetail({
   const originRows = originFields(origin)
   const metadata = envelopeMetadata(envelope, origin)
   const allowed = envelope.allowedActions
-  const hasEditableFields = envelope.editableFields && Object.keys(envelope.editableFields).length > 0
+  const hasEditableFields = Boolean(envelope.editableFields && Object.keys(envelope.editableFields).length > 0)
   const showEditControl = allowed.edit && hasEditableFields
   const canAct = canDecide(access) && isOpenApprovalStatus(approval.status)
   const expired = approvalHasExpired(approval)
