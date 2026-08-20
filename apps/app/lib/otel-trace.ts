@@ -3,6 +3,8 @@ import { workspaceOtelEndpoints } from '@hitly/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { requireDb } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
+import { ProtobufTraceSerializer, JsonTraceSerializer } from '@opentelemetry/otlp-transformer'
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
 export interface OtelSpan {
   traceId: string
@@ -195,12 +197,110 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
   const timeout = setTimeout(() => controller.abort(), 5000)
 
   try {
-    const headers: Record<string, string> = {
-      ...config.headers,
-      'Content-Type': 'application/json',
+    let body: string | Uint8Array
+    let contentType: string
+
+    if (config.protocol === 'http/protobuf') {
+      // Convert OTLP structure to ReadableSpan-like format for serializer
+      const readableSpans: ReadableSpan[] = trace.resourceSpans.flatMap(rs =>
+        rs.scopeSpans.flatMap(ss =>
+          ss.spans.map(span => ({
+            name: span.name,
+            kind: span.kind,
+            spanContext: () => ({
+              traceId: span.traceId,
+              spanId: span.spanId,
+              traceFlags: 1,
+            }),
+            parentSpanId: span.parentSpanId,
+            startTime: span.startTimeUnixNano ? [0, Number(span.startTimeUnixNano)] : [0, 0],
+            endTime: span.endTimeUnixNano ? [0, Number(span.endTimeUnixNano)] : [0, 0],
+            status: { code: 0 },
+            attributes: Object.fromEntries(
+              span.attributes.map(attr => [
+                attr.key,
+                attr.value.stringValue ?? attr.value.intValue ?? attr.value.boolValue ?? null
+              ])
+            ),
+            links: [],
+            events: [],
+            duration: [0, 0],
+            ended: true,
+            resource: {
+              attributes: Object.fromEntries(
+                rs.resource.attributes.map(attr => [
+                  attr.key,
+                  attr.value.stringValue ?? attr.value.intValue ?? attr.value.boolValue ?? null
+                ])
+              ),
+            },
+            instrumentationScope: {
+              name: ss.scope.name,
+              version: ss.scope.version,
+            },
+            droppedAttributesCount: 0,
+            droppedEventsCount: 0,
+            droppedLinksCount: 0,
+          } as ReadableSpan))
+        )
+      )
+
+      // Serialize to protobuf binary
+      body = ProtobufTraceSerializer.serializeRequest(readableSpans)
+      contentType = 'application/x-protobuf'
+    } else {
+      // http/json: serialize with JsonTraceSerializer
+      const readableSpans: ReadableSpan[] = trace.resourceSpans.flatMap(rs =>
+        rs.scopeSpans.flatMap(ss =>
+          ss.spans.map(span => ({
+            name: span.name,
+            kind: span.kind,
+            spanContext: () => ({
+              traceId: span.traceId,
+              spanId: span.spanId,
+              traceFlags: 1,
+            }),
+            parentSpanId: span.parentSpanId,
+            startTime: span.startTimeUnixNano ? [0, Number(span.startTimeUnixNano)] : [0, 0],
+            endTime: span.endTimeUnixNano ? [0, Number(span.endTimeUnixNano)] : [0, 0],
+            status: { code: 0 },
+            attributes: Object.fromEntries(
+              span.attributes.map(attr => [
+                attr.key,
+                attr.value.stringValue ?? attr.value.intValue ?? attr.value.boolValue ?? null
+              ])
+            ),
+            links: [],
+            events: [],
+            duration: [0, 0],
+            ended: true,
+            resource: {
+              attributes: Object.fromEntries(
+                rs.resource.attributes.map(attr => [
+                  attr.key,
+                  attr.value.stringValue ?? attr.value.intValue ?? attr.value.boolValue ?? null
+                ])
+              ),
+            },
+            instrumentationScope: {
+              name: ss.scope.name,
+              version: ss.scope.version,
+            },
+            droppedAttributesCount: 0,
+            droppedEventsCount: 0,
+            droppedLinksCount: 0,
+          } as ReadableSpan))
+        )
+      )
+
+      body = JsonTraceSerializer.serializeRequest(readableSpans)
+      contentType = 'application/json'
     }
 
-    const body = JSON.stringify(trace)
+    const headers: Record<string, string> = {
+      ...config.headers,
+      'Content-Type': contentType,
+    }
 
     const response = await fetch(config.endpoint, {
       method: 'POST',

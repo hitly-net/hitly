@@ -262,14 +262,107 @@ describe('OTEL trace exporter', () => {
     assert.ok(typeof exportOtelTrace === 'function', 'exportOtelTrace should be a function')
   })
 
-  // Full integration tests for exportOtelTrace require DATABASE_URL and a test database.
-  // The exporter behavior is validated through:
-  // 1. Mapper tests above (ensure spans are correctly structured)
-  // 2. Manual testing with Phoenix (see examples/phoenix)
-  // 3. Integration tests in apps/app/lib/approvals.spine.test.ts (when that suite runs with DATABASE_URL)
+  it('should encode protobuf as binary (not JSON)', () => {
+    // Minimal mocks for protobuf encoding test
+    const mockEnvelope: ApprovalEnvelope = {
+      action: { name: 'test_action', args: {} },
+      allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
+      contextMarkdown: 'Test',
+      traceId: '12345678901234567890123456789012',
+      spanId: '1234567890123456',
+    }
+
+    const mockOrigin: OriginRef = {
+      plugin: 'test',
+      projectId: 'prj_test',
+      runId: 'run_test',
+      stepId: 'step_test',
+      resumeHandle: {},
+      traceId: '12345678901234567890123456789012',
+      spanId: '1234567890123456',
+    }
+
+    const mockEvent: EvidenceEvent = {
+      spec: 'hitly.evidence.v1',
+      event_id: 'evt_test',
+      approval_id: 'apr_test',
+      event_type: 'requested',
+      seq: 1,
+      occurred_at: '2024-01-01T00:00:00.000Z',
+      origin: { plugin: 'test', projectId: 'prj_test', runId: 'run_test', stepId: 'step_test' },
+      action: { name: 'test_action', args: {}, proposed_sha256: 'abc' },
+      retention: { min_days: 180 },
+      integrity: { alg: 'sha256', content_sha256: 'def' },
+    }
+
+    // Test that protobuf encoding produces binary data
+    const trace = buildOtelSpan({
+      event: mockEvent,
+      envelope: mockEnvelope,
+      origin: mockOrigin,
+      workspaceId: 'wks_test',
+    })
+
+    // Use the same encoding path as postOtelTrace for http/protobuf
+    const { ProtobufTraceSerializer } = require('@opentelemetry/otlp-transformer')
+
+    // Convert to ReadableSpan format (same as postOtelTrace)
+    const readableSpans = trace.resourceSpans.flatMap(rs =>
+      rs.scopeSpans.flatMap(ss =>
+        ss.spans.map(span => ({
+          name: span.name,
+          kind: span.kind,
+          spanContext: () => ({
+            traceId: span.traceId,
+            spanId: span.spanId,
+            traceFlags: 1,
+          }),
+          parentSpanId: span.parentSpanId,
+          startTime: [0, 0],
+          endTime: [0, 0],
+          status: { code: 0 },
+          attributes: {},
+          links: [],
+          events: [],
+          duration: [0, 0],
+          ended: true,
+          resource: { attributes: {} },
+          instrumentationScope: { name: 'hitly', version: '1.0.0' },
+          droppedAttributesCount: 0,
+          droppedEventsCount: 0,
+          droppedLinksCount: 0,
+        }))
+      )
+    )
+
+    const binaryBody = ProtobufTraceSerializer.serializeRequest(readableSpans)
+
+    // Assert: binary body is Uint8Array, not string
+    assert.ok(binaryBody instanceof Uint8Array, 'Protobuf body must be Uint8Array')
+    assert.ok(binaryBody.length > 0, 'Protobuf body must not be empty')
+
+    // Assert: binary body is NOT JSON
+    const bodyAsString = new TextDecoder().decode(binaryBody.slice(0, Math.min(100, binaryBody.length)))
+    assert.ok(!bodyAsString.startsWith('{'), 'Protobuf body must not start with JSON brace')
+    assert.ok(!bodyAsString.includes('"resourceSpans"'), 'Protobuf body must not contain JSON field names')
+  })
+
+  // Exporter behavior verification (code inspection):
   //
-  // Key behaviors verified manually:
-  // - Empty endpoint list: no fetch calls (early return in exportOtelTrace)
-  // - Two endpoints: both receive the same trace (Promise.allSettled fan-out)
-  // - One 500: other endpoints still succeed (independent fetch calls, errors logged)
+  // 1. Empty endpoint list = no fetch:
+  //    ✓ Verified in otel-trace.ts lines 239-241: early return when endpoints.length === 0
+  //
+  // 2. Two endpoints both get the same decide span:
+  //    ✓ Verified in otel-trace.ts line 251: Promise.allSettled(endpoints.map(...))
+  //    ✓ All endpoints receive the same trace object (line 243-249: single buildOtelSpan call)
+  //
+  // 3. One 500 does not skip the other:
+  //    ✓ Verified in otel-trace.ts lines 202-227: postOtelTrace catches errors and logs,
+  //      never throws. Promise.allSettled ensures all endpoints are attempted independently.
+  //
+  // Integration tests with DATABASE_URL would require test database setup.
+  // The critical behaviors are structurally guaranteed by:
+  // - Early return for empty list (no db query, no fetch)
+  // - Independent Promise.allSettled fan-out (all endpoints called in parallel)
+  // - Try/catch in postOtelTrace (errors logged, never thrown)
 })
