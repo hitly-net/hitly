@@ -19,6 +19,27 @@ interface ApprovalEnvelope {
   resumeSchema?: Record<string, unknown>
   expiresAt?: string
 
+  // Typed editable fields (allowlist + validation)
+  editableFields?: Record<string, {
+    type: 'string' | 'int' | 'float' | 'bool' | 'enum' | 'array'
+    label?: string
+    minLength?: number
+    maxLength?: number
+    min?: number
+    max?: number
+    step?: number
+    options?: Array<string | { value: string; text: string }>
+    items?: 'string' | 'int' | 'float'
+    minItems?: number
+    maxItems?: number
+  }>
+
+  // Edit reason capture (not part of action.args)
+  editReason?: {
+    dropdown?: false | { required?: boolean; options?: Array<string | { value: string; text: string }>; label?: string }
+    text?: false | { required?: boolean; maxLength?: number; label?: string }
+  }
+
   // Evidence fields (optional, persisted when present)
   traceId?: string
   spanId?: string
@@ -55,7 +76,131 @@ interface OriginRef {
 
 `resumeHandle` is opaque per plugin (Mastra base URL + run/step ids, Hermes request/task ids, HTTP `resumeUrl` + optional `metadata`, LangGraph thread id, Temporal workflow id). Origin credentials live on the **project**.
 
-HTTP ingest may include `metadata` (a JSON object). It is stored on the envelope and echoed unchanged on the resume POST for both accept and reject, next to `decision` and the HITL<sub><i>y</i></sub> `id`.
+HTTP ingest may include `metadata` (a JSON object). It is stored on the envelope and echoed unchanged on the resume POST for both accept and reject, next to `decision` and the HITLy `id`.
+
+## Typed Editable Fields
+
+When `allowedActions.edit` is true, the origin can declare which fields the reviewer may edit and how they are validated. `editableFields` is a dictionary where each key is an `action.args` field name and the value defines its type and constraints.
+
+**Keys not listed in `editableFields` are locked** and cannot be edited, even if the client sends them. If `allowedActions.edit` is true but `editableFields` is missing or empty, HITLy **fail-closes**: the Edit button is hidden in the UI, and any `edit` decision returns HTTP 400.
+
+### Field Types
+
+- **`string`**: Text input. Supports `minLength`, `maxLength`, `label`.
+- **`int`**: Integer input. Supports `min`, `max`, `label`.
+- **`float`**: Decimal input. Supports `min`, `max`, `step`, `label`.
+- **`bool`**: Checkbox. Supports `label`.
+- **`enum`**: Dropdown picker. Requires `options` (array of strings or `{ value, text }` objects). Empty `options` → 400.
+- **`array`**: Add/remove list of items. Requires `items` (`'string' | 'int' | 'float'`). Supports `minItems`, `maxItems`, `label`.
+
+### Example: Refund with Editable Amount
+
+```ts
+{
+  action: { name: 'send_refund', args: { orderId: 'OR-123', amount: 100 } },
+  allowedActions: { accept: true, reject: true, edit: true },
+  editableFields: {
+    amount: { type: 'int', min: 1, max: 500, label: 'Refund amount' }
+  }
+}
+```
+
+The reviewer sees a form with a single `amount` field (number input with min/max). `orderId` is locked and shown read-only in the args block.
+
+If the reviewer edits `amount` to 50, the decide POST must include:
+
+```json
+{
+  "decision": "edit",
+  "editedArgs": { "amount": 50 },
+  "final_sha256": "<sha256 of merged args>"
+}
+```
+
+HITLy merges locked fields (`orderId`) with the edited fields (`amount`) and validates:
+
+- Extra keys (e.g., `orderId` in `editedArgs` when only `amount` is editable) → HTTP 400
+- Type mismatch (string in `int`, NaN, array of objects) → HTTP 400
+- Out-of-range or invalid values → HTTP 400
+
+The origin receives the **merged args** (`{ orderId: 'OR-123', amount: 50 }`). The evidence `decided` event stores only the **allowlisted delta** in `editedArgs`, and `final_sha256` is the hash of the merged args.
+
+### Enum Options
+
+`enum` options support both shorthand strings and labeled objects:
+
+```ts
+editableFields: {
+  refundType: {
+    type: 'enum',
+    options: ['full', 'partial'],  // value = label
+    label: 'Refund type'
+  },
+  reason: {
+    type: 'enum',
+    options: [
+      { value: 'damaged', text: 'Item damaged' },
+      { value: 'late', text: 'Delivery late' }
+    ],
+    label: 'Reason'
+  }
+}
+```
+
+The UI picker shows `text` (or the string itself). The `editedArgs` POST always contains the `value`.
+
+## Edit Reason
+
+When `allowedActions.edit` is true, the origin can optionally capture **why** the reviewer edited the action. Edit reason is **not** part of `action.args` and is stored separately in the decision payload and evidence.
+
+### Configuration
+
+```ts
+editReason?: {
+  dropdown?: false | { required?: boolean; options?: Array<string | { value: string; text: string }>; label?: string }
+  text?: false | { required?: boolean; maxLength?: number; label?: string }
+}
+```
+
+- **Omit `editReason`**: Both dropdown and text are shown, optional, with default dropdown options.
+- **Dropdown**: Set to `false` to hide, or configure with `required`, custom `options`, and `label`. Default options: `customer_request`, `pricing_correction`, `policy_exception`, `other`.
+- **Text**: Set to `false` to hide, or configure with `required`, `maxLength` (default 2000), and `label`.
+
+### Example
+
+```ts
+{
+  action: { name: 'send_refund', args: { orderId: 'OR-123', amount: 100 } },
+  allowedActions: { accept: true, reject: true, edit: true },
+  editableFields: {
+    amount: { type: 'int', min: 1, label: 'Amount' }
+  },
+  editReason: {
+    dropdown: { required: true, options: ['customer_escalation', 'manager_override', 'other'] },
+    text: { maxLength: 500, label: 'Additional details' }
+  }
+}
+```
+
+The reviewer must select a dropdown reason and may optionally provide text. The decide POST includes:
+
+```json
+{
+  "decision": "edit",
+  "editedArgs": { "amount": 50 },
+  "editReason": "customer_escalation",
+  "editReasonText": "Customer threatened chargeback",
+  "final_sha256": "<sha256 of merged args>"
+}
+```
+
+Validation rules:
+
+- Required dropdown or text field left blank → HTTP 400
+- Dropdown value not in `options` → HTTP 400
+- Text exceeds `maxLength` → HTTP 400
+
+Edit reason is persisted in the `DecisionPayload` and the evidence `decided` event under `oversight.edit_reason` and `oversight.edit_reason_text`. It is **not** merged into `action.args` or included in `final_sha256`.
 
 ## Evidence Fields
 

@@ -10,6 +10,8 @@ import {
   type ChannelType,
   type Decision,
   type DecisionPayload,
+  type EditableFieldSpec,
+  type EditReasonConfig,
   type OriginRef,
   type ResumeResponse,
 } from '@hitly/core'
@@ -335,6 +337,40 @@ export async function decideApproval(args: {
       return { error: `Decision ${args.payload.decision} is not allowed`, status: 400 as const }
     }
 
+    // Fail-closed: if edit is allowed but editableFields is missing or empty, reject
+    if (args.payload.decision === 'edit') {
+      const hasEditableFields = envelope.editableFields && Object.keys(envelope.editableFields).length > 0
+      if (!hasEditableFields) {
+        return { error: 'Edit decision requires editableFields to be defined', status: 400 as const }
+      }
+
+      // Validate edit reason
+      const reasonValidation = validateEditReason({
+        editReason: args.payload.editReason,
+        editReasonText: args.payload.editReasonText,
+        editReasonConfig: envelope.editReason,
+      })
+      if (reasonValidation) {
+        return reasonValidation
+      }
+    }
+
+    // Merge and validate edited args against allowlist
+    let mergedArgs = envelope.action.args
+    let editedDelta: Record<string, unknown> | undefined
+    if (args.payload.decision === 'edit' && args.payload.editedArgs && envelope.editableFields) {
+      const mergeResult = mergeEditableArgs({
+        originalArgs: envelope.action.args,
+        editedArgs: args.payload.editedArgs,
+        editableFields: envelope.editableFields,
+      })
+      if ('error' in mergeResult) {
+        return mergeResult
+      }
+      mergedArgs = mergeResult.mergedArgs
+      editedDelta = mergeResult.editedDelta
+    }
+
     const origin = asOrigin(approval.origin)
     const projectRows = await database
       .select()
@@ -354,11 +390,15 @@ export async function decideApproval(args: {
         approvalId: approval.id,
         envelope,
         origin,
-        payload: args.payload,
+        payload: {
+          ...args.payload,
+          editedArgs: editedDelta, // Store only the delta in evidence
+        },
         reviewerId: args.actorUserId,
         seq: latest.seq + 1,
         prevEventId: latest.prevEventId ?? '',
         prevContentSha256: latest.prevContentSha256 ?? '',
+        mergedArgs, // Pass merged args for final_sha256 computation
       })
       decidedEventId = decidedEvent.event_id
       decidedContentSha256 = decidedEvent.integrity.content_sha256
@@ -399,7 +439,10 @@ export async function decideApproval(args: {
               metadata: envelopeMetadata(envelope, origin),
             },
           },
-          args.payload,
+          {
+            ...args.payload,
+            editedArgs: mergedArgs !== envelope.action.args ? mergedArgs : undefined, // Send merged args to origin
+          },
           secured ? { plugin: approval.plugin, ...secured.project.credentials } : undefined,
         )
         if (originResponse) resumeResponse = originResponse
@@ -565,15 +608,173 @@ export async function retryResume(args: { approvalId: string; workspaceId?: stri
   })
 }
 
+const DEFAULT_EDIT_REASON_OPTIONS = [
+  'customer_request',
+  'pricing_correction',
+  'policy_exception',
+  'other',
+]
+
+/**
+ * Validate edit reason fields against the envelope's editReason config.
+ * Returns null on success or { error, status } on failure.
+ * When config is omitted, validates with default optional controls.
+ */
+export function validateEditReason(args: {
+  editReason?: string
+  editReasonText?: string
+  editReasonConfig?: EditReasonConfig
+}): { error: string; status: 400 } | null {
+  const { editReason, editReasonText, editReasonConfig } = args
+
+  // Default: both controls optional when config is omitted
+  const dropdownConfig = editReasonConfig?.dropdown === false ? null : editReasonConfig?.dropdown ?? {}
+  const textConfig = editReasonConfig?.text === false ? null : editReasonConfig?.text ?? {}
+
+  // Validate dropdown
+  if (dropdownConfig) {
+    if (dropdownConfig.required && (!editReason || !editReason.trim())) {
+      return { error: 'Edit reason dropdown is required', status: 400 }
+    }
+    if (editReason) {
+      const options = dropdownConfig.options ?? DEFAULT_EDIT_REASON_OPTIONS
+      const allowedValues = options.map((opt) => (typeof opt === 'string' ? opt : opt.value))
+      if (!allowedValues.includes(editReason)) {
+        return { error: `Edit reason must be one of: ${allowedValues.join(', ')}`, status: 400 }
+      }
+    }
+  }
+
+  // Validate text
+  if (textConfig) {
+    const maxLength = textConfig.maxLength ?? 2000
+    if (textConfig.required && (!editReasonText || !editReasonText.trim())) {
+      return { error: 'Edit reason text is required', status: 400 }
+    }
+    if (editReasonText && editReasonText.length > maxLength) {
+      return { error: `Edit reason text exceeds maximum length ${maxLength}`, status: 400 }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Merge and validate edited args against the envelope's editableFields allowlist.
+ * Returns { mergedArgs, editedDelta } on success or { error, status } on failure.
+ */
+export function mergeEditableArgs(args: {
+  originalArgs: Record<string, unknown>
+  editedArgs: Record<string, unknown>
+  editableFields: Record<string, EditableFieldSpec>
+}): { mergedArgs: Record<string, unknown>; editedDelta: Record<string, unknown> } | { error: string; status: 400 } {
+  const { originalArgs, editedArgs, editableFields } = args
+  const allowedKeys = Object.keys(editableFields)
+
+  const editedDelta: Record<string, unknown> = {}
+  const mergedArgs = { ...originalArgs }
+
+  for (const key of Object.keys(editedArgs)) {
+    if (!allowedKeys.includes(key)) {
+      return { error: `Field "${key}" is not editable`, status: 400 }
+    }
+    const field = editableFields[key]!
+    const value = editedArgs[key]
+
+    if (field.type === 'string') {
+      if (typeof value !== 'string') {
+        return { error: `Field "${key}" must be a string`, status: 400 }
+      }
+      if (field.minLength !== undefined && value.length < field.minLength) {
+        return { error: `Field "${key}" is below min length ${field.minLength}`, status: 400 }
+      }
+      if (field.maxLength !== undefined && value.length > field.maxLength) {
+        return { error: `Field "${key}" exceeds max length ${field.maxLength}`, status: 400 }
+      }
+      editedDelta[key] = value
+      mergedArgs[key] = value
+    } else if (field.type === 'int') {
+      if (typeof value !== 'number' || !Number.isInteger(value) || !Number.isFinite(value)) {
+        return { error: `Field "${key}" must be an integer`, status: 400 }
+      }
+      if (field.min !== undefined && value < field.min) {
+        return { error: `Field "${key}" is below minimum ${field.min}`, status: 400 }
+      }
+      if (field.max !== undefined && value > field.max) {
+        return { error: `Field "${key}" exceeds maximum ${field.max}`, status: 400 }
+      }
+      editedDelta[key] = value
+      mergedArgs[key] = value
+    } else if (field.type === 'float') {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return { error: `Field "${key}" must be a finite number`, status: 400 }
+      }
+      if (field.min !== undefined && value < field.min) {
+        return { error: `Field "${key}" is below minimum ${field.min}`, status: 400 }
+      }
+      if (field.max !== undefined && value > field.max) {
+        return { error: `Field "${key}" exceeds maximum ${field.max}`, status: 400 }
+      }
+      editedDelta[key] = value
+      mergedArgs[key] = value
+    } else if (field.type === 'bool') {
+      if (typeof value !== 'boolean') {
+        return { error: `Field "${key}" must be a boolean`, status: 400 }
+      }
+      editedDelta[key] = value
+      mergedArgs[key] = value
+    } else if (field.type === 'enum') {
+      if (typeof value !== 'string') {
+        return { error: `Field "${key}" must be a string`, status: 400 }
+      }
+      if (!field.options || field.options.length === 0) {
+        return { error: `Field "${key}" has no valid options`, status: 400 }
+      }
+      const allowedValues = field.options.map((opt) =>
+        typeof opt === 'string' ? opt : opt.value
+      )
+      if (!allowedValues.includes(value)) {
+        return { error: `Field "${key}" must be one of: ${allowedValues.join(', ')}`, status: 400 }
+      }
+      editedDelta[key] = value
+      mergedArgs[key] = value
+    } else if (field.type === 'array') {
+      if (!Array.isArray(value)) {
+        return { error: `Field "${key}" must be an array`, status: 400 }
+      }
+      if (field.minItems !== undefined && value.length < field.minItems) {
+        return { error: `Field "${key}" requires at least ${field.minItems} items`, status: 400 }
+      }
+      if (field.maxItems !== undefined && value.length > field.maxItems) {
+        return { error: `Field "${key}" exceeds maximum ${field.maxItems} items`, status: 400 }
+      }
+      for (const item of value) {
+        if (field.items === 'string' && typeof item !== 'string') {
+          return { error: `Field "${key}" must contain only strings`, status: 400 }
+        }
+        if (field.items === 'int' && (typeof item !== 'number' || !Number.isInteger(item) || !Number.isFinite(item))) {
+          return { error: `Field "${key}" must contain only integers`, status: 400 }
+        }
+        if (field.items === 'float' && (typeof item !== 'number' || !Number.isFinite(item))) {
+          return { error: `Field "${key}" must contain only finite numbers`, status: 400 }
+        }
+      }
+      editedDelta[key] = value
+      mergedArgs[key] = value
+    }
+  }
+
+  return { mergedArgs, editedDelta }
+}
+
 export function parseDecisionBody(body: Record<string, unknown>): DecisionPayload | null {
   if (!isDecision(body.decision)) return null
   const decision = body.decision as Decision
   
-  // Edit requires both editedArgs (delta) and final_sha256
+  // Edit requires editedArgs (we'll compute final_sha256 server-side)
   if (decision === 'edit') {
     const hasEditedArgs = body.editedArgs && typeof body.editedArgs === 'object'
-    const hasFinalSha = typeof body.final_sha256 === 'string' && body.final_sha256.length > 0
-    if (!hasEditedArgs || !hasFinalSha) return null
+    if (!hasEditedArgs) return null
   }
   
   return {
@@ -581,6 +782,8 @@ export function parseDecisionBody(body: Record<string, unknown>): DecisionPayloa
     editedArgs:
       body.editedArgs && typeof body.editedArgs === 'object' ? (body.editedArgs as Record<string, unknown>) : undefined,
     response: typeof body.response === 'string' ? body.response : undefined,
+    editReason: typeof body.editReason === 'string' ? body.editReason : undefined,
+    editReasonText: typeof body.editReasonText === 'string' ? body.editReasonText : undefined,
   }
 }
 
