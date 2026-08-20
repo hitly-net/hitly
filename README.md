@@ -1,29 +1,47 @@
-# Hitly
+# HITLy
 
-Apache-2.0 human-in-the-loop inbox for Mastra, Hermes, HTTP, n8n. LangGraph and Temporal coming soon.
+HITLy is the human-in-the-loop inbox for Mastra, LangGraph, Hermes Agent, HTTP / n8n / Make, and Temporal.
 
-Self-host this repo. Cloud-only features (Stripe billing, usage metering, SSO) live in a private overlay package — they are not env-var flags in this tree. `cloud.hitly.net` is reserved for a hosted offering (waitlist-only); join the waitlist at [hitly.net](https://hitly.net).
+The origin keeps its pause. A reviewer decides in HITLy. The original run resumes with a signed payload so the model cannot approve itself. Use it when an agent would send, spend, or write.
 
-- `hitly.net` — marketing + docs (`apps/web`, port 3000)
-- `http://localhost:3001` — self-hosted inbox (`apps/app`, `yarn dev:app`)
-- iOS / Android reviewer — Expo app (`apps/mobile`, `yarn dev:mobile`)
+Apache-2.0. Self-host this repo. Hosted cloud (billing, SSO) is waitlist-only at [hitly.net](https://hitly.net).
+
+## What you can do
+
+- Put send, spend, and write behind an inbox card, not a chat prompt
+- Resume the same Mastra run, LangGraph thread, Hermes command, or HTTP Wait
+- Keep an audit: requested, decided, resumed
+- Review in the web inbox or the Expo app
+
+| Origin | Pause | Resume |
+| --- | --- | --- |
+| Mastra | `suspend()` | `run.resume()` / `bail()` |
+| LangGraph | `interrupt()` | `Command({ resume })` |
+| Hermes Agent | approval transport / `kanban_block` | POST `{ decision, id, metadata }` to `resumeUrl` |
+| HTTP, n8n, Make | `resumeUrl` | POST decision JSON |
+| Temporal | `condition()` | signal `hitly.decision` (`workflowId`) |
+
+Guides: [docs](https://hitly.net/docs). Samples: `examples/mastra`, `examples/langgraph`, `examples/hermes`, `examples/temporal`, `examples/n8n`, `examples/notion`.
+
+## Self-host
+
+Inbox at http://localhost:3001.
 
 ```bash
 yarn install
 cp apps/app/.env.example apps/app/.env.local
 yarn db:up
 yarn db:migrate
-yarn dev:web
 yarn dev:app
-yarn dev:mastra  # optional Studio demo at http://localhost:4111
 ```
 
+Optional: `yarn dev:web` (marketing/docs on :3000), `yarn dev:mobile` (Expo reviewer), `yarn dev:mastra` (Studio demo on :4111).
 
-Developer guides: `/docs`, `/integrations/http`, `/integrations/n8n`. Self-host notes: `/docs/self-host`. Implementing Hitly in an existing app: [`AGENT.md`](./AGENT.md). HTTP recipes: [`examples/n8n`](./examples/n8n/n8n.md), [`examples/notion`](./examples/notion/notion.md).
+Postgres 16 via `yarn db:up` (port 5432). Full notes: [Self-host](https://hitly.net/docs/self-host). Wire an existing agent: [AGENT.md](./AGENT.md).
 
 ## Editions
 
-| | Open-source server | Hitly Cloud |
+| | Open-source server | HITLy Cloud |
 | --- | --- | --- |
 | License | Apache-2.0 | Proprietary |
 | Inbox, projects, plugins, audit, API keys | Yes | Yes |
