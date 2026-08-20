@@ -43,6 +43,9 @@ export interface MastraIngestPayload {
   toolName?: string
   sensitivity?: string[]
   dataCategories?: string[]
+  allowedActions?: Record<string, boolean>
+  editableFields?: Record<string, unknown>
+  editReason?: Record<string, unknown>
 }
 
 export interface MastraWorkflowResumeHandle {
@@ -217,12 +220,23 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
   const sensitivity = stringList(body.sensitivity)
   const dataCategories = stringList(body.dataCategories)
 
+  const allowedActionsPartial =
+    body.allowedActions && typeof body.allowedActions === 'object'
+      ? (body.allowedActions as Record<string, boolean>)
+      : undefined
+  const editableFields =
+    body.editableFields && typeof body.editableFields === 'object'
+      ? (body.editableFields as Record<string, unknown>)
+      : undefined
+  const editReason =
+    body.editReason && typeof body.editReason === 'object' ? (body.editReason as Record<string, unknown>) : undefined
+
   return {
     action: {
       name: String(action.name ?? stepId),
       args: asRecord(action.args ?? suspendPayload),
     },
-    allowedActions: allowedActionsFor({
+    allowedActions: allowedActionsFor(allowedActionsPartial ?? {
       accept: true,
       reject: true,
       edit: Boolean(body.resumeSchema),
@@ -235,6 +249,8 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
     attachments: attachmentList(suspendPayload.attachments) ?? attachmentList(body.attachments),
     resumeSchema: asRecord(body.resumeSchema),
     expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : undefined,
+    editableFields,
+    editReason,
     traceId,
     spanId,
     agentId: kind === 'agent' ? agentId : undefined,
@@ -385,6 +401,9 @@ export interface HitlyApprovalStepConfig {
   toolName?: string
   sensitivity?: string[]
   dataCategories?: string[]
+  allowedActions?: Record<string, boolean>
+  editableFields?: Record<string, unknown>
+  editReason?: Record<string, unknown>
 }
 
 /**
@@ -437,6 +456,9 @@ export async function notifyHitlyApproval(
       toolName: config.toolName,
       sensitivity: config.sensitivity,
       dataCategories: config.dataCategories,
+      allowedActions: config.allowedActions,
+      editableFields: config.editableFields,
+      editReason: config.editReason,
     } satisfies MastraIngestPayload),
   })
 
