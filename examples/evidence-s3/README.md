@@ -1,5 +1,7 @@
 # S3 Evidence Storage with Garage
 
+See [S3 evidence](/docs/s3) for configuration, production settings, and fail-closed behavior.
+
 This example demonstrates using an S3-compatible storage backend for HITLy evidence events. It uses [Garage](https://garagehq.deuxfleurs.fr/), a lightweight, open-source, S3-compatible object storage server designed for self-hosting and geo-distributed deployments.
 
 Garage is ideal for local development and simulates production S3 environments (AWS S3, Cloudflare R2, on-premises Ceph/Cloudian) without requiring cloud credentials.

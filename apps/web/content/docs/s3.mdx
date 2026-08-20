@@ -1,0 +1,85 @@
+---
+title: S3 evidence
+description: Store hitly.evidence.v1 events in S3-compatible object storage.
+---
+
+HITL<sub><i>y</i></sub> keeps a receipt index only. The payload lives in a sink you own. **S3** is a first-class sink: AWS S3, Cloudflare R2, Garage, or on-prem Ceph/Cloudian. The **HTTP** sink stays the OSS reference receiver — see [Envelope](/docs/envelope#evidence-storage) and `examples/evidence-http`.
+
+Do not use MinIO. The community repo is archived; they push proprietary AIStor. The local stand-in is Garage.
+
+## What S3 stores
+
+Each evidence event is one object: `{event_id}.json` (or `{prefix}/{event_id}.json`). HITL<sub><i>y</i></sub> authenticates with SigV4 PutObject. `store_uri` is the http(s) object URL, never `file://`.
+
+| Event | Sink failure |
+| --- | --- |
+| `requested` | Fail-open. Ingest continues. |
+| `decided` | **Fail-closed.** Origin is not resumed. Item stays pending. |
+| `resumed` / `resume_failed` | Fail-open. |
+
+`type=s3` with a missing endpoint, bucket, or keys throws. Decide stays pending.
+
+## Configure a project
+
+Self-host Config: `http://localhost:3001/projects/:id/config`.
+
+| Field | What to set |
+| --- | --- |
+| Evidence sink type | `S3` |
+| Endpoint | S3 API URL. Garage: `http://127.0.0.1:3902`. AWS: `https://s3.eu-west-1.amazonaws.com`. |
+| Region | `local` (Garage), `us-east-1` / `eu-west-1` (AWS), `auto` (R2) |
+| Bucket | Dedicated evidence bucket. Not mixed with app assets. |
+| Access key / secret | Encrypted on the project. Password fields. Leave blank on later saves to keep. |
+| Prefix | Optional, e.g. `hitly/` |
+| Force path-style | Defaults **on** when the endpoint is not `amazonaws.com`. Garage and most on-prem need `example.com/bucket/key`, not `bucket.example.com/key`. |
+
+Credentials live on the project, not on the origin `.env`.
+
+There is no **Test Evidence Sink** button for S3 yet (HTTP only). Confirm with a real decide, or list the bucket.
+
+## Local: Garage
+
+`examples/evidence-s3` is the local S3 stand-in.
+
+```bash
+cd examples/evidence-s3
+docker compose up -d
+docker compose exec garage garage key new hitly-evidence
+docker compose exec garage garage bucket create evidence
+docker compose exec garage garage bucket allow --read --write evidence --key GK...
+```
+
+S3 API listens at `http://127.0.0.1:3902`. Set the project fields above (region `local`, bucket `evidence`, path-style on).
+
+```bash
+aws --endpoint-url http://127.0.0.1:3902 --region local s3 ls s3://evidence/
+```
+
+Full walkthrough: [`examples/evidence-s3/README.md`](https://github.com/hitly-net/hitly/blob/main/examples/evidence-s3/README.md).
+
+## Production
+
+**AWS S3.** Dedicated bucket, versioning on, Block Public Access. Endpoint `https://s3.{region}.amazonaws.com`. IAM: PutObject only. Path-style off (virtual-host is the AWS default).
+
+**Cloudflare R2.** Endpoint `https://{account-id}.r2.cloudflarestorage.com`. Region `auto`. R2 has no Object Lock — do not require it.
+
+**On-prem (Ceph, Cloudian).** Your S3 API URL. Path-style on unless the vendor says otherwise.
+
+Enterprise WORM is customer S3 Object Lock, not this sink.
+
+## Fail-closed
+
+If PutObject fails on `decided` (4xx, 5xx, or hang over 5s), HITL<sub><i>y</i></sub> does not POST resume. The item stays pending. Fix the bucket, then decide again.
+
+## Receipts
+
+HITL<sub><i>y</i></sub> stores `event_id`, `content_sha256`, `store_uri`, `stored_at`. **View evidence receipt** shows for http(s) `store_uri` only. S3 http(s) URLs qualify.
+
+## What this page is not
+
+- Not a replacement for the HTTP sink
+- Not MinIO
+- Not Object Lock / WORM
+- Not a hosted Cloud login. Runnable examples stay on localhost.
+
+Schema and HTTP sink: [Envelope](/docs/envelope#evidence-storage).

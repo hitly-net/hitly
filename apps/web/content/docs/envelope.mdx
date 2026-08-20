@@ -145,25 +145,7 @@ See `examples/evidence-http` for a reference HTTP receiver.
 
 ### S3 Sink Configuration
 
-- **S3 Endpoint**: S3-compatible endpoint URL (e.g., `http://127.0.0.1:3902` for Garage, `https://s3.eu-west-1.amazonaws.com` for AWS)
-- **S3 Region**: Region name (e.g., `local`, `us-east-1`, `eu-west-1`, `auto` for Cloudflare R2)
-- **S3 Bucket**: Bucket name (dedicated to evidence; not mixed with application assets)
-- **S3 Access Key ID**: IAM or service account access key
-- **S3 Secret Access Key**: Corresponding secret key
-- **S3 Prefix**: Optional prefix for object keys (e.g., `hitly/` to organize events under a folder)
-- **Force Path Style**: Defaults to enabled for non-AWS endpoints (Garage, R2, on-premises S3). Uses `example.com/bucket/key` instead of virtual-host `bucket.example.com/key`.
-
-Each evidence event is stored as a JSON file named `{event_id}.json` (or `{prefix}/{event_id}.json` if prefix is set). The `store_uri` in the receipt is the HTTPS URL to that S3 object.
-
-HITLy uses AWS Signature Version 4 (SigV4) to authenticate PutObject requests. Credentials are encrypted in the project configuration.
-
-**Supported S3-compatible services:**
-- **AWS S3**: Enable versioning and Block Public Access. Use a dedicated bucket for evidence.
-- **Cloudflare R2**: Set region to `auto`. R2 does not support Object Lock (community request only); do not require Object Lock.
-- **Garage** (local development): See `examples/evidence-s3` for a docker compose setup.
-- **On-premises S3** (Ceph, Cloudian): Set `forcePathStyle: true`.
-
-See `examples/evidence-s3` for a Garage docker compose setup and configuration guide.
+See [S3 evidence](/docs/s3) for S3 configuration fields, local setup with Garage, production settings (AWS S3, Cloudflare R2, on-premises Ceph/Cloudian), and `examples/evidence-s3`.
 
 HITLy stores a **receipt index only**, not the payload as system of record. Evidence lifecycle:
 
