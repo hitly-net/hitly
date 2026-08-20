@@ -1,5 +1,7 @@
 # S3 Evidence Storage with Garage
 
+See [S3 evidence](/docs/s3) for configuration, production settings, and fail-closed behavior.
+
 This example demonstrates using an S3-compatible storage backend for HITLy evidence events. It uses [Garage](https://garagehq.deuxfleurs.fr/), a lightweight, open-source, S3-compatible object storage server designed for self-hosting and geo-distributed deployments.
 
 Garage is ideal for local development and simulates production S3 environments (AWS S3, Cloudflare R2, on-premises Ceph/Cloudian) without requiring cloud credentials.
@@ -90,11 +92,9 @@ In your HITLy project settings (Config tab), set:
 
 Save the configuration.
 
-### 4. Test the Evidence Sink
+### 4. Verify the Configuration
 
-In your HITLy project config page, after saving the S3 configuration, click **Test Evidence Sink**. If successful, HITLy will POST a test evidence event to your Garage bucket.
-
-Alternatively, trigger a real approval flow in your agent and check that evidence events are stored.
+There is no **Test Evidence Sink** button for S3 yet (HTTP only). Confirm with a real decide, or list the bucket with the `aws` CLI.
 
 ### 5. Verify Stored Objects
 
@@ -198,7 +198,7 @@ Each evidence event is stored as a JSON file named `{event_id}.json`. The `store
 - Ensure Force Path Style is `true` in HITLy config
 - Verify the region in HITLy matches the Garage region (`local`)
 
-**Test evidence sink returns 5xx:**
+**Decide or PutObject returns 5xx:**
 - Check Garage logs: `docker compose logs garage`
 - Verify the bucket exists: `docker compose exec garage garage bucket list`
 
