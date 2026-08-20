@@ -1,7 +1,8 @@
-import { describe, it, mock } from 'node:test'
+import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ApprovalEnvelope, DecisionPayload, EvidenceEvent, OriginRef } from '@hitly/core'
 import { buildOtelSpan, exportOtelTrace } from './otel-trace'
+import { ProtobufTraceSerializer } from '@opentelemetry/otlp-transformer'
 
 describe('OTEL trace mapper', () => {
   const mockEnvelope: ApprovalEnvelope = {
@@ -302,9 +303,6 @@ describe('OTEL trace exporter', () => {
       origin: mockOrigin,
       workspaceId: 'wks_test',
     })
-
-    // Use the same encoding path as postOtelTrace for http/protobuf
-    const { ProtobufTraceSerializer } = require('@opentelemetry/otlp-transformer')
 
     // Convert to ReadableSpan format (same as postOtelTrace)
     const readableSpans = trace.resourceSpans.flatMap(rs =>
