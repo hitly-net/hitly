@@ -112,12 +112,12 @@ export function buildOtelSpan(args: {
   ].filter((attr): attr is NonNullable<typeof attr> => attr !== null)
 
   if (args.event.event_type === 'decided' && args.payload) {
-    attributes.push(stringAttr('hitly.decision', args.payload.decision) as any)
+    const decisionAttr = stringAttr('hitly.decision', args.payload.decision)
+    if (decisionAttr) attributes.push(decisionAttr)
   }
 
-  if (args.event.integrity?.content_sha256) {
-    attributes.push(stringAttr('hitly.content_sha256', args.event.integrity.content_sha256) as any)
-  }
+  const contentHashAttr = stringAttr('hitly.content_sha256', args.event.integrity?.content_sha256)
+  if (contentHashAttr) attributes.push(contentHashAttr)
 
   const span: OtelSpan = {
     traceId,
