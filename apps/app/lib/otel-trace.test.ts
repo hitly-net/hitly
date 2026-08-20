@@ -274,7 +274,7 @@ describe('OTEL trace exporter', () => {
     }
 
     const mockOrigin: OriginRef = {
-      plugin: 'test',
+      plugin: 'http',
       projectId: 'prj_test',
       runId: 'run_test',
       stepId: 'step_test',
@@ -290,7 +290,7 @@ describe('OTEL trace exporter', () => {
       event_type: 'requested',
       seq: 1,
       occurred_at: '2024-01-01T00:00:00.000Z',
-      origin: { plugin: 'test', projectId: 'prj_test', runId: 'run_test', stepId: 'step_test' },
+      origin: { plugin: 'http', projectId: 'prj_test', runId: 'run_test', stepId: 'step_test' },
       action: { name: 'test_action', args: {}, proposed_sha256: 'abc' },
       retention: { min_days: 180 },
       integrity: { alg: 'sha256', content_sha256: 'def' },
@@ -333,7 +333,7 @@ describe('OTEL trace exporter', () => {
       )
     )
 
-    const binaryBody = ProtobufTraceSerializer.serializeRequest(readableSpans)
+    const binaryBody = ProtobufTraceSerializer.serializeRequest(readableSpans as any)
 
     // Assert: binary body is Uint8Array, not string
     assert.ok(binaryBody instanceof Uint8Array, 'Protobuf body must be Uint8Array')

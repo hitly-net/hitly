@@ -197,12 +197,12 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
   const timeout = setTimeout(() => controller.abort(), 5000)
 
   try {
-    let body: string | Uint8Array
+    let body: Uint8Array
     let contentType: string
 
     if (config.protocol === 'http/protobuf') {
       // Convert OTLP structure to ReadableSpan-like format for serializer
-      const readableSpans: ReadableSpan[] = trace.resourceSpans.flatMap(rs =>
+      const readableSpans = trace.resourceSpans.flatMap(rs =>
         rs.scopeSpans.flatMap(ss =>
           ss.spans.map(span => ({
             name: span.name,
@@ -219,7 +219,7 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
             attributes: Object.fromEntries(
               span.attributes.map(attr => [
                 attr.key,
-                attr.value.stringValue ?? attr.value.intValue ?? attr.value.boolValue ?? null
+                attr.value.stringValue ?? null
               ])
             ),
             links: [],
@@ -230,7 +230,7 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
               attributes: Object.fromEntries(
                 rs.resource.attributes.map(attr => [
                   attr.key,
-                  attr.value.stringValue ?? attr.value.intValue ?? attr.value.boolValue ?? null
+                  attr.value.stringValue ?? null
                 ])
               ),
             },
@@ -241,16 +241,16 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
             droppedAttributesCount: 0,
             droppedEventsCount: 0,
             droppedLinksCount: 0,
-          } as ReadableSpan))
+          }))
         )
       )
 
       // Serialize to protobuf binary
-      body = ProtobufTraceSerializer.serializeRequest(readableSpans)
+      body = ProtobufTraceSerializer.serializeRequest(readableSpans as any) ?? new Uint8Array(0)
       contentType = 'application/x-protobuf'
     } else {
       // http/json: serialize with JsonTraceSerializer
-      const readableSpans: ReadableSpan[] = trace.resourceSpans.flatMap(rs =>
+      const readableSpans = trace.resourceSpans.flatMap(rs =>
         rs.scopeSpans.flatMap(ss =>
           ss.spans.map(span => ({
             name: span.name,
@@ -267,7 +267,7 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
             attributes: Object.fromEntries(
               span.attributes.map(attr => [
                 attr.key,
-                attr.value.stringValue ?? attr.value.intValue ?? attr.value.boolValue ?? null
+                attr.value.stringValue ?? null
               ])
             ),
             links: [],
@@ -278,7 +278,7 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
               attributes: Object.fromEntries(
                 rs.resource.attributes.map(attr => [
                   attr.key,
-                  attr.value.stringValue ?? attr.value.intValue ?? attr.value.boolValue ?? null
+                  attr.value.stringValue ?? null
                 ])
               ),
             },
@@ -289,11 +289,11 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
             droppedAttributesCount: 0,
             droppedEventsCount: 0,
             droppedLinksCount: 0,
-          } as ReadableSpan))
+          }))
         )
       )
 
-      body = JsonTraceSerializer.serializeRequest(readableSpans)
+      body = JsonTraceSerializer.serializeRequest(readableSpans as any) ?? new Uint8Array(0)
       contentType = 'application/json'
     }
 
@@ -305,7 +305,7 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
     const response = await fetch(config.endpoint, {
       method: 'POST',
       headers,
-      body,
+      body: body as BodyInit,
       signal: controller.signal,
     })
 
