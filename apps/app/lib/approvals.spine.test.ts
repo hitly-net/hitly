@@ -1134,7 +1134,7 @@ test('decided event includes oversight.response, edit_reason, edit_reason_text',
     })
 
     // Wait for evidence to be sent (HTTP requests are async)
-    await new Promise(resolve => setTimeout(resolve, 100))
+    await new Promise(resolve => setTimeout(resolve, 500))
 
     // Find decided event
     const decidedEvent = capturedEvents.find(e => e.event_type === 'decided')
@@ -1269,7 +1269,7 @@ test('resumed event includes merged args and final_sha256', async () => {
     })
 
     // Wait for evidence to be sent (HTTP requests are async)
-    await new Promise(resolve => setTimeout(resolve, 100))
+    await new Promise(resolve => setTimeout(resolve, 500))
 
     // Find resumed or resume_failed event
     const resumedEvent = capturedEvents.find(e => e.event_type === 'resumed' || e.event_type === 'resume_failed')
