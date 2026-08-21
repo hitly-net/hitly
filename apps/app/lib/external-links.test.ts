@@ -36,7 +36,8 @@ test('normalizeExternalLinks handles mixed arrays', () => {
     { url: 'https://example.com/ticket/456', label: 'Support Ticket' },
     { url: 'https://example.com/policy/789' },
   ]
-  const result = normalizeExternalLinks(input as any)
+  // Type cast needed because normalizeExternalLinks expects homogeneous arrays at the API boundary
+  const result = normalizeExternalLinks(input as unknown as string[] | ExternalLink[])
   assert.deepEqual(result, [
     { url: 'https://example.com/order/123' },
     { url: 'https://example.com/ticket/456', label: 'Support Ticket' },
@@ -52,7 +53,8 @@ test('normalizeExternalLinks filters empty URLs and trims', () => {
     { url: '', label: 'Empty URL' },
     { url: '   ', label: 'Whitespace URL' },
   ]
-  const result = normalizeExternalLinks(input as any)
+  // Type cast needed because normalizeExternalLinks expects homogeneous arrays at the API boundary
+  const result = normalizeExternalLinks(input as unknown as string[] | ExternalLink[])
   assert.deepEqual(result, [
     { url: 'https://example.com/order/123' },
     { url: 'https://example.com/ticket/456', label: 'Support Ticket' },
