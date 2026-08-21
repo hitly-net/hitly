@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 import { switchWorkspace } from '@/actions/workspace'
-import { SignOutButton } from '@/components/sign-out-button'
+import { UserMenu } from '@/components/user-menu'
 import {
   toolbarBackHref,
   toolbarPage,
@@ -80,9 +80,8 @@ export function AppToolbar({
           </option>
         ))}
       </select>
-      <div className="ml-auto flex items-center gap-3 text-sm">
-        <Link href="/settings/profile">{userName}</Link>
-        <SignOutButton />
+      <div className="ml-auto">
+        <UserMenu userName={userName} />
       </div>
     </header>
   )
