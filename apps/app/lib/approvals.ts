@@ -479,6 +479,7 @@ export async function decideApproval(args: {
             prevEventId: decidedEventId ?? '',
             prevContentSha256: decidedContentSha256 ?? '',
             success: !failed,
+            mergedArgs,
           })
           await appendEvidence({
             event: resumedEvent,
@@ -517,6 +518,7 @@ export async function decideApproval(args: {
             prevEventId: decidedEventId ?? '',
             prevContentSha256: decidedContentSha256 ?? '',
             success: false,
+            mergedArgs,
           })
           await appendEvidence({
             event: resumedEvent,

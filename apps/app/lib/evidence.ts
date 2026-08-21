@@ -175,9 +175,24 @@ export async function buildResumedEvent(args: {
   prevEventId: string
   prevContentSha256: string
   success: boolean
+  mergedArgs?: Record<string, unknown>
 }): Promise<EvidenceEvent> {
   const occurredAt = new Date().toISOString()
   const proposedSha256 = await hashActionArgs(args.envelope.action.args)
+  const finalArgs = args.mergedArgs ?? args.envelope.action.args
+
+  const action =
+    args.mergedArgs && args.mergedArgs !== args.envelope.action.args
+      ? {
+          name: args.envelope.action.name,
+          args: finalArgs,
+          final_sha256: await hashActionArgs(finalArgs),
+        }
+      : {
+          name: args.envelope.action.name,
+          args: finalArgs,
+          proposed_sha256: proposedSha256,
+        }
 
   const event: EvidenceEvent = {
     spec: EVIDENCE_SPEC_VERSION,
@@ -206,11 +221,7 @@ export async function buildResumedEvent(args: {
       policyRationale: args.origin.policyRationale ?? args.envelope.policyRationale,
       riskTier: args.origin.riskTier ?? args.envelope.riskTier,
     },
-    action: {
-      name: args.envelope.action.name,
-      args: args.envelope.action.args,
-      proposed_sha256: proposedSha256,
-    },
+    action,
     retention: {
       min_days: 180,
       expires_at: args.envelope.expiresAt,

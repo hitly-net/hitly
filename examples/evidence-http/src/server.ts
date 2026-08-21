@@ -44,6 +44,9 @@ interface EvidenceEvent {
     reviewer_id?: string
     decision?: string
     decided_at?: string
+    response?: string
+    edit_reason?: string
+    edit_reason_text?: string
   }
   retention?: {
     min_days?: number
@@ -237,6 +240,21 @@ function renderEventHtml(event: EvidenceEvent, baseUrl: string): string {
       <div class="full">
         <div class="label">Decided At</div>
         <div class="value mono">${escapeHtml(event.oversight.decided_at)}</div>
+      </div>` : ''}
+      ${event.oversight.response ? `
+      <div class="full">
+        <div class="label">Response</div>
+        <pre>${escapeHtml(event.oversight.response)}</pre>
+      </div>` : ''}
+      ${event.oversight.edit_reason ? `
+      <div>
+        <div class="label">Edit Reason</div>
+        <div class="value">${escapeHtml(event.oversight.edit_reason)}</div>
+      </div>` : ''}
+      ${event.oversight.edit_reason_text ? `
+      <div class="full">
+        <div class="label">Edit Reason Text</div>
+        <pre>${escapeHtml(event.oversight.edit_reason_text)}</pre>
       </div>` : ''}
     </div>
   </div>` : ''}
