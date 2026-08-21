@@ -3,6 +3,7 @@ import {
   type ApprovalEnvelope,
   type ConnectionCredentials,
   type DecisionPayload,
+  type ExternalLink,
   type HitlyPlugin,
   type OriginRef,
   type ResumeResponse,
@@ -16,6 +17,24 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+function externalLinkList(value: unknown): ExternalLink[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: ExternalLink[] = []
+  for (const item of value) {
+    if (typeof item === 'string' && item.trim()) {
+      out.push({ url: item.trim() })
+    } else if (item && typeof item === 'object') {
+      const record = asRecord(item)
+      const url = optionalString(record.url)
+      if (url) {
+        const label = optionalString(record.label)
+        out.push(label ? { url, label } : { url })
+      }
+    }
+  }
+  return out.length > 0 ? out : undefined
 }
 
 /**
@@ -55,6 +74,7 @@ export const httpPlugin: HitlyPlugin = {
       },
       allowedActions: allowedActionsFor(allowedActionsPartial ?? { accept: true, reject: true }),
       contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : undefined,
+      externalUrls: externalLinkList(body.externalUrls),
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       editableFields: editableFields as any,
       editReason: editReason as any,

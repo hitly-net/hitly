@@ -14,7 +14,7 @@ interface ApprovalEnvelope {
   allowedActions: Record<Decision, boolean>
   contextMarkdown?: string
   metadata?: Record<string, unknown>
-  externalUrls?: string[]
+  externalUrls?: { url: string; label?: string }[]
   attachments?: { name: string; url?: string; contentType?: string }[]
   resumeSchema?: Record<string, unknown>
   expiresAt?: string
@@ -258,6 +258,67 @@ await notifyHitlyApproval(
 ```
 
 Evidence events are written to the configured HTTP sink (see [Evidence Storage](#evidence-storage) below) as `hitly.evidence.v1` JSON.
+
+## External URLs (Decision Context)
+
+The `externalUrls` field provides reviewers with by-reference links to external decision context: order pages, support tickets, policies, customer profiles, and other resources that should inform the decision. HITLy displays these links in the work item detail but **does not fetch or proxy** the remote content.
+
+### Format
+
+`externalUrls` accepts either a simple string array (legacy) or an array of objects with optional labels:
+
+```ts
+// Simple URLs (backward compatible)
+externalUrls: [
+  'https://example.com/orders/OR-123',
+  'https://example.com/tickets/TK-456'
+]
+
+// With labels (recommended)
+externalUrls: [
+  { url: 'https://example.com/orders/OR-123', label: 'Order #123' },
+  { url: 'https://example.com/tickets/TK-456', label: 'Support Ticket' },
+  { url: 'https://example.com/policies/refund-policy' }  // label is optional
+]
+```
+
+Reviewers see labeled links in the work item detail. Clicking a link opens it in a new tab (`target="_blank" rel="noopener noreferrer"`).
+
+### Evidence
+
+Evidence events hash the **URL list and labels** (by-reference metadata only), not the remote page bytes. The `decided` event includes the same `externalUrls` array that was present at ingest. HITLy does not fetch, store, or verify the remote content—it is the integrator's responsibility to ensure links remain accessible for the evidence retention period.
+
+### Example: Mastra with External URLs
+
+```ts
+import { notifyHitlyApproval } from '@hitly/plugin-mastra'
+
+await notifyHitlyApproval(
+  {
+    // ... config fields omitted for brevity
+    action: { name: 'send_refund', args: { orderId, amount } },
+  },
+  {
+    runId: String(runId),
+    suspendPayload: {
+      reason: `Refund of ${amount} for ${orderId}`,
+      externalUrls: [
+        { url: `https://shop.example.com/orders/${orderId}`, label: `Order ${orderId}` },
+        { url: 'https://shop.example.com/policies/refund', label: 'Refund Policy' },
+        `https://zendesk.example.com/tickets/${ticketId}`  // plain string also works
+      ],
+    },
+  },
+)
+```
+
+### Out of Scope
+
+HITLy does **not** support:
+- File attachments (declared via `attachments`, but fetch/upload is not implemented)
+- Proxying or virus-scanning remote URLs
+- SSO or authentication to remote pages
+- Assigning work items based on external URL patterns
 
 ## Evidence Storage
 

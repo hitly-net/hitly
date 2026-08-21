@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react'
 import { Linking, Pressable, Text, View, StyleSheet } from 'react-native'
 import { lexer, type Token, type Tokens } from 'marked'
-import type { ApprovalAttachment } from '@hitly/core'
+import { normalizeExternalLinks, type ApprovalAttachment, type ExternalLink } from '@hitly/core'
 import { colors } from '../../theme'
 
 function openUrl(url?: string) {
@@ -163,13 +163,13 @@ export function ContextMarkdown({
   attachments,
 }: {
   value?: string
-  externalUrls?: string[]
+  externalUrls?: ExternalLink[]
   attachments?: ApprovalAttachment[]
 }) {
   const markdown = value?.trim()
-  const urls = externalUrls?.filter((url) => url.trim()) ?? []
+  const links = normalizeExternalLinks(externalUrls)
   const files = attachments?.filter((file) => file.name.trim()) ?? []
-  const empty = !markdown && urls.length === 0 && files.length === 0
+  const empty = !markdown && links.length === 0 && files.length === 0
   let body: ReactNode = null
   if (markdown) {
     try {
@@ -184,12 +184,12 @@ export function ContextMarkdown({
       <Text style={styles.cardTitle}>Context</Text>
       {empty ? <Text style={styles.muted}>No context provided.</Text> : null}
       {body}
-      {urls.length > 0 ? (
+      {links.length > 0 ? (
         <View style={styles.meta}>
           <Text style={styles.metaTitle}>Links</Text>
-          {urls.map((url) => (
-            <Pressable key={url} onPress={() => openUrl(url)}>
-              <Text style={styles.link}>{url}</Text>
+          {links.map((link) => (
+            <Pressable key={link.url} onPress={() => openUrl(link.url)}>
+              <Text style={styles.link}>{link.label || link.url}</Text>
             </Pressable>
           ))}
         </View>

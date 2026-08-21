@@ -4,6 +4,7 @@ import {
   type ApprovalEnvelope,
   type ConnectionCredentials,
   type DecisionPayload,
+  type ExternalLink,
   type HitlyPlugin,
   type OriginRef,
   type ResumeResponse,
@@ -92,6 +93,24 @@ function attachmentList(value: unknown): ApprovalAttachment[] | undefined {
       url: optionalString(record.url),
       contentType: optionalString(record.contentType),
     })
+  }
+  return out.length > 0 ? out : undefined
+}
+
+function externalLinkList(value: unknown): ExternalLink[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: ExternalLink[] = []
+  for (const item of value) {
+    if (typeof item === 'string' && item.trim()) {
+      out.push({ url: item.trim() })
+    } else if (item && typeof item === 'object') {
+      const record = asRecord(item)
+      const url = optionalString(record.url)
+      if (url) {
+        const label = optionalString(record.label)
+        out.push(label ? { url, label } : { url })
+      }
+    }
   }
   return out.length > 0 ? out : undefined
 }
@@ -245,7 +264,7 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
       optionalString(suspendPayload.contextMarkdown) ??
       optionalString(body.contextMarkdown) ??
       optionalString(suspendPayload.reason),
-    externalUrls: stringList(suspendPayload.externalUrls) ?? stringList(body.externalUrls),
+    externalUrls: externalLinkList(suspendPayload.externalUrls) ?? externalLinkList(body.externalUrls),
     attachments: attachmentList(suspendPayload.attachments) ?? attachmentList(body.attachments),
     resumeSchema: asRecord(body.resumeSchema),
     expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : undefined,
