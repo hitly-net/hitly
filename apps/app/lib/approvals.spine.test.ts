@@ -1126,12 +1126,13 @@ test('decided event includes oversight.response, edit_reason, edit_reason_text',
     })
     assert.ok(payload)
 
-    await decideApproval({
+    const decideResult = await decideApproval({
       approvalId: ingestResult.approval.id,
       actorUserId: userAdmin.id,
       payload,
       workspaceId: workspaceA.id,
     })
+    assert.ok(!('error' in decideResult), `Decide should not error: ${'error' in decideResult ? decideResult.error : ''}`)
 
     // Poll for decided event with timeout
     let decidedEvent: Record<string, unknown> | undefined
@@ -1265,12 +1266,13 @@ test('resumed event includes merged args and final_sha256', async () => {
     })
     assert.ok(payload)
 
-    await decideApproval({
+    const decideResult = await decideApproval({
       approvalId: ingestResult.approval.id,
       actorUserId: userAdmin.id,
       payload,
       workspaceId: workspaceA.id,
     })
+    assert.ok(!('error' in decideResult), `Decide should not error: ${'error' in decideResult ? decideResult.error : ''}`)
 
     // Poll for resumed or resume_failed event with timeout
     let resumedEvent: Record<string, unknown> | undefined
