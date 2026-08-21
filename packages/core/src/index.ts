@@ -56,6 +56,11 @@ export interface ApprovalAttachment {
   contentType?: string
 }
 
+export interface ExternalLink {
+  url: string
+  label?: string
+}
+
 export interface EditableFieldSpec {
   type: 'string' | 'int' | 'float' | 'bool' | 'enum' | 'array'
   label?: string
@@ -81,8 +86,8 @@ export interface ApprovalEnvelope {
   contextMarkdown?: string
   /** Opaque origin bag. HTTP echoes this unchanged on accept and reject. */
   metadata?: Record<string, unknown>
-  /** Reviewer links from the origin (tickets, orders, policies). */
-  externalUrls?: string[]
+  /** Reviewer links from the origin (tickets, orders, policies). Each link has a required url and optional label. */
+  externalUrls?: ExternalLink[]
   /** Declared files for the reviewer. Fetch/upload is not implemented yet. */
   attachments?: ApprovalAttachment[]
   resumeSchema?: Record<string, unknown>
@@ -206,6 +211,22 @@ export function isChannelType(value: unknown): value is ChannelType {
 
 export function allowedActionsFor(partial?: Partial<AllowedActions>): AllowedActions {
   return { ...DEFAULT_ALLOWED_ACTIONS, ...partial }
+}
+
+export function normalizeExternalLinks(externalUrls?: string[] | ExternalLink[]): ExternalLink[] {
+  if (!externalUrls || externalUrls.length === 0) return []
+  return externalUrls
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { url: item.trim() }
+      }
+      const normalized: ExternalLink = { url: item.url.trim() }
+      if (item.label?.trim()) {
+        normalized.label = item.label.trim()
+      }
+      return normalized
+    })
+    .filter((link) => link.url)
 }
 
 export function isWorkspaceAdmin(role: WorkspaceRole): boolean {

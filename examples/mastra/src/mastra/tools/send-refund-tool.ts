@@ -10,12 +10,22 @@ const refundInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Markdown brief for the Hitly reviewer. Omit to use the default one-line summary. Prefer a longer explanation: why the refund, customer/order facts, and any policy notes.',
+      'Markdown brief for the HITLy reviewer. Omit to use the default one-line summary. Prefer a longer explanation: why the refund, customer/order facts, and any policy notes.',
     ),
   externalUrls: z
-    .array(z.string())
+    .array(
+      z.union([
+        z.string(),
+        z.object({
+          url: z.string(),
+          label: z.string().optional(),
+        }),
+      ]),
+    )
     .optional()
-    .describe('Links the reviewer should open (order, ticket, policy). Use full https URLs.'),
+    .describe(
+      'Links the reviewer should open (order, ticket, policy). Use full https URLs. May include optional label: { url: "...", label: "Order #123" }',
+    ),
   attachments: z
     .array(
       z.object({
@@ -25,7 +35,7 @@ const refundInputSchema = z.object({
       }),
     )
     .optional()
-    .describe('Declared files for the reviewer. Hitly does not fetch attachments yet; pass a name (and url if you have one).'),
+    .describe('Declared files for the reviewer. HITLy does not fetch attachments yet; pass a name (and url if you have one).'),
 })
 
 type AgentToolContext = {
@@ -63,7 +73,9 @@ export const sendRefundTool = createTool({
     const orderId = resumeData?.orderId ?? inputData.orderId
     const amount = resumeData?.amount ?? inputData.amount
     const contextMarkdown = inputData.contextMarkdown?.trim() || `Refund of ${amount} for ${orderId}.`
-    const externalUrls = inputData.externalUrls?.map((url) => url.trim()).filter(Boolean)
+    const externalUrls = inputData.externalUrls
+      ?.map((item) => (typeof item === 'string' ? item.trim() : item.url.trim() ? item : null))
+      .filter(Boolean) as Array<string | { url: string; label?: string }> | undefined
     const attachments = inputData.attachments?.filter((file) => file.name.trim())
 
     if (resumeData) {

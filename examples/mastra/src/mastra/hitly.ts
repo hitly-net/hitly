@@ -1,5 +1,5 @@
 import { notifyHitlyApproval, type HitlyApprovalStepConfig } from '@hitly/plugin-mastra'
-import type { ApprovalAttachment } from '@hitly/core'
+import type { ApprovalAttachment, ExternalLink } from '@hitly/core'
 
 export function hitlyConfig(): Pick<
   HitlyApprovalStepConfig,
@@ -9,7 +9,7 @@ export function hitlyConfig(): Pick<
   const projectId = process.env.HITLY_PROJECT_ID ?? ''
   if (!apiKey || !projectId) {
     throw new Error(
-      'Set HITLY_API_KEY and HITLY_PROJECT_ID in examples/mastra/.env (copy them from the Hitly project page).',
+      'Set HITLY_API_KEY and HITLY_PROJECT_ID in examples/mastra/.env (copy them from the HITLy project page).',
     )
   }
   return {
@@ -24,7 +24,7 @@ export async function notifyHitly(args: {
   config: Omit<HitlyApprovalStepConfig, 'apiUrl' | 'apiKey' | 'projectId' | 'mastraBaseUrl'>
   runId: string
   contextMarkdown: string
-  externalUrls?: string[]
+  externalUrls?: Array<string | ExternalLink>
   attachments?: ApprovalAttachment[]
 }) {
   await notifyHitlyApproval(
