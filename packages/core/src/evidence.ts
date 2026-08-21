@@ -83,6 +83,7 @@ export interface EvidenceEvent {
   toolName?: string
   sensitivity?: string[]
   dataCategories?: string[]
+  externalUrls?: Array<{ url: string; label?: string }>
 }
 
 export interface AppendReceipt {

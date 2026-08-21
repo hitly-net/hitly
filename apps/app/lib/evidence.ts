@@ -75,6 +75,7 @@ export async function buildRequestedEvent(args: {
     toolName: args.origin.toolName ?? args.envelope.toolName,
     sensitivity: args.envelope.sensitivity,
     dataCategories: args.envelope.dataCategories,
+    externalUrls: args.envelope.externalUrls,
   }
 
   event.integrity.content_sha256 = await hashEvidenceContent(event)
@@ -161,6 +162,7 @@ export async function buildDecidedEvent(args: {
     toolName: args.origin.toolName ?? args.envelope.toolName,
     sensitivity: args.envelope.sensitivity,
     dataCategories: args.envelope.dataCategories,
+    externalUrls: args.envelope.externalUrls,
   }
 
   event.integrity.content_sha256 = await hashEvidenceContent(event)
@@ -235,6 +237,7 @@ export async function buildResumedEvent(args: {
     toolName: args.origin.toolName ?? args.envelope.toolName,
     sensitivity: args.envelope.sensitivity,
     dataCategories: args.envelope.dataCategories,
+    externalUrls: args.envelope.externalUrls,
   }
 
   event.integrity.content_sha256 = await hashEvidenceContent(event)
