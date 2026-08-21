@@ -1101,6 +1101,12 @@ test('decided event includes oversight.response, edit_reason, edit_reason_text',
         name: 'send-refund',
         args: { amount: 77, orderId: 'order-123' },
       },
+      allowedActions: {
+        accept: true,
+        reject: true,
+        edit: true,
+        ignore: false,
+      },
       editableFields: {
         amount: { type: 'int', min: 1, max: 1000 },
       },
@@ -1247,6 +1253,12 @@ test('resumed event includes merged args and final_sha256', async () => {
       action: {
         name: 'send-refund',
         args: { amount: 77, orderId: 'order-456' },
+      },
+      allowedActions: {
+        accept: true,
+        reject: true,
+        edit: true,
+        ignore: false,
       },
       editableFields: {
         amount: { type: 'int', min: 1, max: 1000 },
