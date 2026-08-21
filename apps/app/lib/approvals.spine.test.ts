@@ -1024,3 +1024,297 @@ test('two projects, two sink URLs: A events only to A listener, B sees zero', as
   // Project A's listener (port 19999) should see zero events from B
   assert.equal(eventsReceivedByA.length, 0, 'Project A listener should not receive Project B events')
 })
+
+test('decided event includes oversight.response, edit_reason, edit_reason_text', async () => {
+  // Create a project with HTTP sink that stores events to memory for inspection
+  const capturedEvents: Record<string, unknown>[] = []
+  const http = await import('node:http')
+  const captureServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.includes('/evidence')) {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        try {
+          const event = JSON.parse(body)
+          if (event.event_type !== 'ping') {
+            capturedEvents.push(event)
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            event_id: event.event_id,
+            content_sha256: event.integrity.content_sha256,
+            store_uri: `http://localhost:19997/evidence/${event.event_id}`,
+            stored_at: new Date().toISOString(),
+          }))
+        } catch {
+          res.writeHead(400)
+          res.end()
+        }
+      })
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  await new Promise<void>((resolve) => {
+    captureServer.listen(19997, () => {
+      console.log('[test] Capture server listening on port 19997')
+      resolve()
+    })
+  })
+
+  try {
+    const projectCapture = {
+      id: newId('prj'),
+      workspaceId: workspaceA.id,
+      name: 'Project Capture',
+    }
+    await db.insert(projects).values({
+      ...projectCapture,
+      plugin: 'mastra',
+      credentials: {},
+      evidenceSinkType: 'http',
+      evidenceSinkConfig: { 
+        url: 'http://localhost:19997/evidence', 
+        authHeader: 'Bearer test' 
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    const keyCaptureGen = generateApiKey()
+    const apiKeyCapture = { raw: keyCaptureGen.raw, hashed: keyCaptureGen.hashed, id: newId('key') }
+    await db.insert(projectApiKeys).values({
+      id: apiKeyCapture.id,
+      projectId: projectCapture.id,
+      workspaceId: workspaceA.id,
+      hashedKey: apiKeyCapture.hashed,
+      prefix: keyCaptureGen.prefix,
+      name: 'Test Key Capture',
+      createdAt: new Date(),
+    })
+
+    // Ingest with editableFields
+    const mastraPayload = buildMastraPayload({
+      projectId: projectCapture.id,
+      action: {
+        name: 'send-refund',
+        args: { amount: 77, orderId: 'order-123' },
+      },
+      allowedActions: {
+        accept: true,
+        reject: true,
+        edit: true,
+        ignore: false,
+      },
+      editableFields: {
+        amount: { type: 'int', min: 1, max: 1000 },
+      },
+      editReason: {
+        dropdown: { required: true, options: ['customer_request', 'pricing_correction', 'other'] },
+        text: { required: true, maxLength: 500 },
+      },
+    })
+
+    const ingestResult = await ingestApproval({
+      apiKey: apiKeyCapture.raw,
+      body: mastraPayload,
+    })
+    assert.ok(ingestResult.ok)
+
+    // Decide with edit + reason + response
+    const payload = parseDecisionBody({
+      decision: 'edit',
+      editedArgs: { amount: 70 },
+      editReason: 'pricing_correction',
+      editReasonText: 'Corrected amount based on customer complaint',
+      response: 'Approved with adjustment',
+    })
+    assert.ok(payload)
+
+    const decideResult = await decideApproval({
+      approvalId: ingestResult.approval.id,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+    })
+    assert.ok(!('error' in decideResult), `Decide should not error: ${'error' in decideResult ? decideResult.error : ''}`)
+
+    // Poll for decided event with timeout
+    let decidedEvent: Record<string, unknown> | undefined
+    const pollStart = Date.now()
+    while (!decidedEvent && Date.now() - pollStart < 2000) {
+      decidedEvent = capturedEvents.find(e => e.event_type === 'decided')
+      if (!decidedEvent) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+    }
+    assert.ok(decidedEvent, `Decided event should exist (captured ${capturedEvents.length} events: ${capturedEvents.map(e => e.event_type).join(', ')})`)
+
+    // Assert oversight fields
+    const oversight = decidedEvent.oversight as Record<string, unknown> | undefined
+    assert.ok(oversight, 'Oversight should exist')
+    assert.equal(oversight.decision, 'edit', 'Decision should be edit')
+    assert.equal(oversight.response, 'Approved with adjustment', 'Response should be present')
+    assert.equal(oversight.edit_reason, 'pricing_correction', 'Edit reason should be present')
+    assert.equal(oversight.edit_reason_text, 'Corrected amount based on customer complaint', 'Edit reason text should be present')
+
+    // Assert action delta and final_sha256
+    const action = decidedEvent.action as Record<string, unknown> | undefined
+    assert.ok(action, 'Action should exist')
+    assert.deepEqual(action.delta, { amount: 70 }, 'Delta should show edited amount')
+    assert.ok(action.final_sha256, 'Final SHA256 should be computed')
+
+    // Cleanup
+    await db.delete(projectApiKeys).where(eq(projectApiKeys.id, apiKeyCapture.id))
+    await db.delete(projects).where(eq(projects.id, projectCapture.id))
+  } finally {
+    await new Promise<void>((resolve) => {
+      captureServer.close(() => {
+        console.log('[test] Capture server closed')
+        resolve()
+      })
+    })
+  }
+})
+
+test('resumed event includes merged args and final_sha256', async () => {
+  // Create a project with HTTP sink that stores events to memory for inspection
+  const capturedEvents: Record<string, unknown>[] = []
+  const http = await import('node:http')
+  const captureServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.includes('/evidence')) {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        try {
+          const event = JSON.parse(body)
+          if (event.event_type !== 'ping') {
+            capturedEvents.push(event)
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            event_id: event.event_id,
+            content_sha256: event.integrity.content_sha256,
+            store_uri: `http://localhost:19996/evidence/${event.event_id}`,
+            stored_at: new Date().toISOString(),
+          }))
+        } catch {
+          res.writeHead(400)
+          res.end()
+        }
+      })
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  await new Promise<void>((resolve) => {
+    captureServer.listen(19996, () => {
+      console.log('[test] Capture server listening on port 19996')
+      resolve()
+    })
+  })
+
+  try {
+    const projectCapture = {
+      id: newId('prj'),
+      workspaceId: workspaceA.id,
+      name: 'Project Capture Resumed',
+    }
+    await db.insert(projects).values({
+      ...projectCapture,
+      plugin: 'mastra',
+      credentials: {},
+      evidenceSinkType: 'http',
+      evidenceSinkConfig: { 
+        url: 'http://localhost:19996/evidence', 
+        authHeader: 'Bearer test' 
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    const keyCaptureGen = generateApiKey()
+    const apiKeyCapture = { raw: keyCaptureGen.raw, hashed: keyCaptureGen.hashed, id: newId('key') }
+    await db.insert(projectApiKeys).values({
+      id: apiKeyCapture.id,
+      projectId: projectCapture.id,
+      workspaceId: workspaceA.id,
+      hashedKey: apiKeyCapture.hashed,
+      prefix: keyCaptureGen.prefix,
+      name: 'Test Key Capture Resumed',
+      createdAt: new Date(),
+    })
+
+    // Ingest with editableFields
+    const mastraPayload = buildMastraPayload({
+      projectId: projectCapture.id,
+      action: {
+        name: 'send-refund',
+        args: { amount: 77, orderId: 'order-456' },
+      },
+      allowedActions: {
+        accept: true,
+        reject: true,
+        edit: true,
+        ignore: false,
+      },
+      editableFields: {
+        amount: { type: 'int', min: 1, max: 1000 },
+      },
+    })
+
+    const ingestResult = await ingestApproval({
+      apiKey: apiKeyCapture.raw,
+      body: mastraPayload,
+    })
+    assert.ok(ingestResult.ok)
+
+    // Decide with edit (resume will fail since origin is not reachable, but we capture the event)
+    const payload = parseDecisionBody({
+      decision: 'edit',
+      editedArgs: { amount: 70 },
+    })
+    assert.ok(payload)
+
+    const decideResult = await decideApproval({
+      approvalId: ingestResult.approval.id,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+    })
+    assert.ok(!('error' in decideResult), `Decide should not error: ${'error' in decideResult ? decideResult.error : ''}`)
+
+    // Poll for resumed or resume_failed event with timeout
+    let resumedEvent: Record<string, unknown> | undefined
+    const pollStart = Date.now()
+    while (!resumedEvent && Date.now() - pollStart < 2000) {
+      resumedEvent = capturedEvents.find(e => e.event_type === 'resumed' || e.event_type === 'resume_failed')
+      if (!resumedEvent) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+    }
+    assert.ok(resumedEvent, `Resumed/resume_failed event should exist (captured ${capturedEvents.length} events: ${capturedEvents.map(e => e.event_type).join(', ')})`)
+
+    // Assert action has merged args (70, not 77)
+    const action = resumedEvent.action as Record<string, unknown> | undefined
+    assert.ok(action, 'Action should exist')
+    const args = action.args as Record<string, unknown> | undefined
+    assert.ok(args, 'Args should exist')
+    assert.equal(args.amount, 70, 'Amount should be merged value (70)')
+    assert.equal(args.orderId, 'order-456', 'OrderId should be preserved')
+    assert.ok(action.final_sha256, 'Final SHA256 should be computed for merged args')
+
+    // Cleanup
+    await db.delete(projectApiKeys).where(eq(projectApiKeys.id, apiKeyCapture.id))
+    await db.delete(projects).where(eq(projects.id, projectCapture.id))
+  } finally {
+    await new Promise<void>((resolve) => {
+      captureServer.close(() => {
+        console.log('[test] Capture server closed')
+        resolve()
+      })
+    })
+  }
+})
