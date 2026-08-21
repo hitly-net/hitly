@@ -1133,12 +1133,16 @@ test('decided event includes oversight.response, edit_reason, edit_reason_text',
       workspaceId: workspaceA.id,
     })
 
-    // Wait for evidence to be sent (HTTP requests are async)
-    await new Promise(resolve => setTimeout(resolve, 500))
-
-    // Find decided event
-    const decidedEvent = capturedEvents.find(e => e.event_type === 'decided')
-    assert.ok(decidedEvent, 'Decided event should exist')
+    // Poll for decided event with timeout
+    let decidedEvent: Record<string, unknown> | undefined
+    const pollStart = Date.now()
+    while (!decidedEvent && Date.now() - pollStart < 2000) {
+      decidedEvent = capturedEvents.find(e => e.event_type === 'decided')
+      if (!decidedEvent) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+    }
+    assert.ok(decidedEvent, `Decided event should exist (captured ${capturedEvents.length} events: ${capturedEvents.map(e => e.event_type).join(', ')})`)
 
     // Assert oversight fields
     const oversight = decidedEvent.oversight as Record<string, unknown> | undefined
@@ -1268,12 +1272,16 @@ test('resumed event includes merged args and final_sha256', async () => {
       workspaceId: workspaceA.id,
     })
 
-    // Wait for evidence to be sent (HTTP requests are async)
-    await new Promise(resolve => setTimeout(resolve, 500))
-
-    // Find resumed or resume_failed event
-    const resumedEvent = capturedEvents.find(e => e.event_type === 'resumed' || e.event_type === 'resume_failed')
-    assert.ok(resumedEvent, 'Resumed/resume_failed event should exist')
+    // Poll for resumed or resume_failed event with timeout
+    let resumedEvent: Record<string, unknown> | undefined
+    const pollStart = Date.now()
+    while (!resumedEvent && Date.now() - pollStart < 2000) {
+      resumedEvent = capturedEvents.find(e => e.event_type === 'resumed' || e.event_type === 'resume_failed')
+      if (!resumedEvent) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+    }
+    assert.ok(resumedEvent, `Resumed/resume_failed event should exist (captured ${capturedEvents.length} events: ${capturedEvents.map(e => e.event_type).join(', ')})`)
 
     // Assert action has merged args (70, not 77)
     const action = resumedEvent.action as Record<string, unknown> | undefined
