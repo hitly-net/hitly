@@ -1133,6 +1133,9 @@ test('decided event includes oversight.response, edit_reason, edit_reason_text',
       workspaceId: workspaceA.id,
     })
 
+    // Wait for evidence to be sent (HTTP requests are async)
+    await new Promise(resolve => setTimeout(resolve, 100))
+
     // Find decided event
     const decidedEvent = capturedEvents.find(e => e.event_type === 'decided')
     assert.ok(decidedEvent, 'Decided event should exist')
@@ -1264,6 +1267,9 @@ test('resumed event includes merged args and final_sha256', async () => {
       payload,
       workspaceId: workspaceA.id,
     })
+
+    // Wait for evidence to be sent (HTTP requests are async)
+    await new Promise(resolve => setTimeout(resolve, 100))
 
     // Find resumed or resume_failed event
     const resumedEvent = capturedEvents.find(e => e.event_type === 'resumed' || e.event_type === 'resume_failed')
