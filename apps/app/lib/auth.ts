@@ -8,6 +8,7 @@ import { db } from './db'
 import { isTrustedAppOrigin } from './cors'
 import { sendMail } from './mail'
 import { bootstrapUserWorkspaces } from './workspace'
+import { isSignupEnabled } from './signup'
 
 const appUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
@@ -46,6 +47,12 @@ export const auth = db
       databaseHooks: {
         user: {
           create: {
+            before: async (user) => {
+              if (!isSignupEnabled()) {
+                throw new Error('Account creation is currently disabled. Contact us for early access.')
+              }
+              return { data: user }
+            },
             after: async (user) => {
               await bootstrapUserWorkspaces({
                 id: user.id,
