@@ -62,6 +62,12 @@ export function createHitlyClient(options: ClientOptions) {
       if (!data.ok || data.product !== 'hitly') throw new Error('Not a HITLy instance')
       return data
     },
+    async signupStatus() {
+      const response = await fetch(`${options.baseUrl}/api/v1/signup-status`, { headers: { accept: 'application/json' } })
+      if (!response.ok) return { signupEnabled: true }
+      const data = (await response.json()) as { signupEnabled?: boolean }
+      return { signupEnabled: data.signupEnabled ?? true }
+    },
     async signIn(email: string, password: string) {
       const data = await request<{ token: string; user: SessionUser }>('/api/auth/sign-in/email', {
         method: 'POST',

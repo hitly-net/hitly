@@ -5,7 +5,7 @@ import { colors } from '../../src/theme'
 import { useSession } from '../../src/providers/SessionProvider'
 
 export default function LoginScreen() {
-  const { instance, signIn, consumePendingLink } = useSession()
+  const { instance, signupEnabled, signIn, consumePendingLink } = useSession()
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -54,9 +54,11 @@ export default function LoginScreen() {
       >
         <Text style={styles.primaryLabel}>{pending ? 'Signing in…' : 'Sign in'}</Text>
       </Pressable>
-      <Link href="/(auth)/signup" style={styles.link}>
-        Create an account
-      </Link>
+      {signupEnabled ? (
+        <Link href="/(auth)/signup" style={styles.link}>
+          Create an account
+        </Link>
+      ) : null}
     </View>
   )
 }
