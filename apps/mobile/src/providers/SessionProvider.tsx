@@ -19,6 +19,7 @@ type SessionContextValue = {
   workspaces: WorkspaceRow[]
   pendingLink: AttentionLink | null
   mismatch: AttentionLink | null
+  signupEnabled: boolean
   client: ReturnType<typeof createHitlyClient> | null
   chooseCloud: () => Promise<void>
   chooseHosted: (url: string) => Promise<void>
@@ -54,11 +55,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([])
   const [pendingLink, setPendingLinkState] = useState<AttentionLink | null>(null)
   const [mismatch, setMismatch] = useState<AttentionLink | null>(null)
+  const [signupEnabled, setSignupEnabled] = useState(true)
 
   const persistInstance = useCallback(async (next: InstanceConfig | null) => {
     setInstance(next)
-    if (next) await setItem(INSTANCE_KEY, JSON.stringify(next))
-    else await deleteItem(INSTANCE_KEY)
+    if (next) {
+      await setItem(INSTANCE_KEY, JSON.stringify(next))
+      const api = createHitlyClient({ baseUrl: next.baseUrl })
+      const status = await api.signupStatus().catch(() => ({ signupEnabled: true }))
+      setSignupEnabled(status.signupEnabled)
+    } else {
+      await deleteItem(INSTANCE_KEY)
+      setSignupEnabled(true)
+    }
   }, [])
 
   const persistAuth = useCallback(async (nextToken: string | null, nextUser: SessionUser | null) => {
@@ -204,6 +213,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     workspaces,
     pendingLink,
     mismatch,
+    signupEnabled,
     client,
     chooseCloud,
     chooseHosted,
