@@ -123,6 +123,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setUser(storedUser)
       setWorkspaceId(storedWorkspace)
       setPendingLinkState(storedPending)
+      if (storedInstance) {
+        const api = createHitlyClient({ baseUrl: storedInstance.baseUrl })
+        const status = await api.signupStatus().catch(() => ({ signupEnabled: true }))
+        if (!cancelled) setSignupEnabled(status.signupEnabled)
+      }
       setReady(true)
     })()
     return () => {

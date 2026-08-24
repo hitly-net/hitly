@@ -5,13 +5,28 @@ import { colors } from '../../src/theme'
 import { useSession } from '../../src/providers/SessionProvider'
 
 export default function SignupScreen() {
-  const { instance, signUp, consumePendingLink } = useSession()
+  const { instance, signupEnabled, signUp, consumePendingLink } = useSession()
   const router = useRouter()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+
+  if (!signupEnabled) {
+    return (
+      <View style={styles.screen}>
+        <Text style={styles.title}>Account creation disabled</Text>
+        <Text style={styles.sub}>{instance?.label ?? 'HITLy'}</Text>
+        <Text style={styles.message}>
+          This instance does not allow public account creation. Contact the administrator for access.
+        </Text>
+        <Pressable style={styles.primary} onPress={() => router.replace('/(auth)/login')}>
+          <Text style={styles.primaryLabel}>Back to login</Text>
+        </Pressable>
+      </View>
+    )
+  }
 
   return (
     <View style={styles.screen}>
@@ -64,6 +79,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: colors.bg },
   title: { fontSize: 24, fontWeight: '700', color: colors.text },
   sub: { marginTop: 8, marginBottom: 24, fontSize: 15, color: colors.muted },
+  message: { marginBottom: 24, fontSize: 15, color: colors.text, lineHeight: 22 },
   input: {
     height: 44,
     borderWidth: 1,
