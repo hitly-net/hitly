@@ -1,11 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-
-function isCloudHost(host: string | null): boolean {
-  if (!host) return false
-  const hostWithoutPort = host.split(':')[0]
-  return hostWithoutPort === 'cloud.hitly.net' || hostWithoutPort === 'www.cloud.hitly.net'
-}
+import { isCloudHost } from '@/lib/host'
 
 export function middleware(request: NextRequest) {
   const host = request.headers.get('host')
