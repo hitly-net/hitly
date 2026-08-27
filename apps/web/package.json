@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "next start --port 3000",
     "lint": "eslint",
+    "test": "tsx --test lib/host.test.ts",
     "typecheck": "tsc --noEmit",
     "postinstall": "fumadocs-mdx"
   },
