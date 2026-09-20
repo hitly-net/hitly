@@ -9,29 +9,27 @@ import { test } from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-test('workspace settings form has key={workspace.id} to force remount on workspace change', async () => {
+test('workspace settings page has exactly one key={workspace.id} wrapper to force remount', async () => {
   const pagePath = join(__dirname, 'page.tsx')
   const content = await readFile(pagePath, 'utf-8')
 
-  // Verify the form element includes key={workspace.id}
-  const formMatch = content.match(/<form[^>]*key={workspace\.id}[^>]*>/)
-  assert.ok(
-    formMatch,
-    'Form element must have key={workspace.id} to remount when workspace changes. ' +
-    'Without this key, defaultValue props on uncontrolled inputs will not re-apply after soft navigation.',
+  // Find all occurrences of key={workspace.id}
+  const keyMatches = content.match(/key={workspace\.id}/g) || []
+  
+  assert.strictEqual(
+    keyMatches.length,
+    1,
+    `Expected exactly 1 occurrence of key={workspace.id}, found ${keyMatches.length}. ` +
+    'React keys must be unique among siblings - duplicate keys break reconciliation. ' +
+    'Use a single wrapper div with key={workspace.id} around all content that needs to remount.',
   )
-})
 
-test('workspace exporters section has key={workspace.id} to refresh on workspace change', async () => {
-  const pagePath = join(__dirname, 'page.tsx')
-  const content = await readFile(pagePath, 'utf-8')
-
-  // Find the exporters section div and verify it has key={workspace.id}
-  // The section starts with "Workspace Exporters" heading
-  const exportersSectionMatch = content.match(/<div[^>]*key={workspace\.id}[^>]*>\s*<h2[^>]*>Workspace Exporters<\/h2>/)
+  // Verify the wrapper contains both the form and exporters section
+  const wrapperMatch = content.match(/<div key={workspace\.id}>[\s\S]*?<h1[^>]*>Workspace<\/h1>[\s\S]*?<form[\s\S]*?<\/form>[\s\S]*?Workspace Exporters[\s\S]*?<\/div>\s*<\/div>/)
   assert.ok(
-    exportersSectionMatch,
-    'Workspace Exporters section must have key={workspace.id} to refresh endpoints list when workspace changes. ' +
-    'listOtelEndpoints is workspace-scoped and must bind to the new workspace.',
+    wrapperMatch,
+    'The key={workspace.id} wrapper must contain both the settings form and the exporters section. ' +
+    'Without this wrapper, defaultValue props on uncontrolled inputs will not re-apply after soft navigation, ' +
+    'and workspace-scoped OTEL endpoints will not refresh.',
   )
 })
