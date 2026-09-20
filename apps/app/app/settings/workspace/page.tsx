@@ -16,7 +16,7 @@ export default async function WorkspacePage() {
     <AppShell>
       <h1 className="text-2xl font-semibold">Workspace</h1>
       <p className="mt-2 text-sm text-zinc-500">Name, timezone, and the default SLA for work items in this workspace.</p>
-      <form action={updateWorkspace} className="mt-6 flex max-w-md flex-col gap-4">
+      <form key={workspace.id} action={updateWorkspace} className="mt-6 flex max-w-md flex-col gap-4">
         <label className="flex flex-col gap-1">
           <span className="text-sm text-zinc-500">Name</span>
           <input
@@ -62,7 +62,7 @@ export default async function WorkspacePage() {
         )}
       </form>
 
-      <div className="mt-12">
+      <div key={workspace.id} className="mt-12">
         <h2 className="text-xl font-semibold">Workspace Exporters</h2>
         <p className="mt-2 text-sm text-zinc-500">
           Export approval lifecycle traces to OpenTelemetry collectors. See <a href="/docs/trace" className="underline">docs</a>.
