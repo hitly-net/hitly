@@ -2,6 +2,7 @@ import { hermesPlugin } from '@hitly/plugin-hermes'
 import { httpPlugin } from '@hitly/plugin-http'
 import { langgraphPlugin } from '@hitly/plugin-langgraph'
 import { mastraPlugin } from '@hitly/plugin-mastra'
+import { openshellPlugin } from '@hitly/plugin-openshell'
 import { temporalPlugin } from '@hitly/plugin-temporal'
 import type { HitlyPlugin, PluginId } from '@hitly/core'
 
@@ -11,6 +12,7 @@ export const plugins: Record<PluginId, HitlyPlugin> = {
   langgraph: langgraphPlugin,
   temporal: temporalPlugin,
   hermes: hermesPlugin,
+  openshell: openshellPlugin,
 }
 
 export function getPlugin(id: PluginId): HitlyPlugin {

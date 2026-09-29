@@ -15,6 +15,7 @@ export const PLUGIN_BRANDS: Record<PluginId, PluginBrand> = {
   langgraph: { id: 'langgraph', label: 'LangGraph', bg: '#1C3C3C', fg: '#FFFFFF' },
   temporal: { id: 'temporal', label: 'Temporal', bg: '#000000', fg: '#FFFFFF' },
   hermes: { id: 'hermes', label: 'Hermes', bg: '#1A1408', fg: '#E8C547' },
+  openshell: { id: 'openshell', label: 'OpenShell', bg: '#0A0A0A', fg: '#76B900' },
 }
 
 function MarkSvg({ children, ...props }: SVGProps<SVGSVGElement>) {
@@ -75,12 +76,23 @@ function HermesMark(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+function OpenShellMark(props: SVGProps<SVGSVGElement>) {
+  return (
+    <MarkSvg {...props} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M4 10h16M10 4v16" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
+    </MarkSvg>
+  )
+}
+
 const ICONS: Record<PluginId, (props: SVGProps<SVGSVGElement>) => ReactElement> = {
   mastra: MastraMark,
   http: HttpMark,
   langgraph: LangGraphMark,
   temporal: TemporalMark,
   hermes: HermesMark,
+  openshell: OpenShellMark,
 }
 
 export function pluginBrand(plugin: string): PluginBrand {
