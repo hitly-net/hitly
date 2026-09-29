@@ -173,10 +173,12 @@ POLL_INTERVAL_MS=5000
 - Verify sandbox configured for `proposal_approval_mode=manual` (human-review mode)
   - Check: `openshell sandbox get <sandbox-id>` or gateway admin console
   - **Note:** No "blocking" mode on 0.1.2; only `manual` or `auto`
-- Test `trigger-async-demo.sh` inside the sandbox:
-  - Run script → Permission denied (fail-fast) + draft created
-  - Accept in HITLy → retry script → succeeds
-- Update internal demo runbook with **async flow** (fail-fast + retry after Accept)
+- Test honest 0.1.2 recording path:
+  1. Run script → Permission denied (fail-fast) + draft created
+  2. Accept in HITLy
+  3. **Verify policy updated:** `openshell policy get <sandbox> --full`
+  4. Optional: retry script → succeeds (new curl, not same process)
+- Update internal demo runbook with **honest async flow** (fail-fast + policy verify + optional retry)
 
 ### 3. Start HITLy
 
@@ -328,7 +330,7 @@ The script will:
 - Check for curl (errors if missing, shows workaround)
 - Display expected flow (fail-fast on 0.1.2)
 - Run curl (fails immediately with Permission denied)
-- Guide user to Accept in HITLy and retry
+- Guide user to Accept in HITLy, verify policy, then retry (new curl)
 
 **Expected output (OpenShell 0.1.2 fail-fast):**
 
@@ -406,18 +408,27 @@ Poller detects the draft within 5 seconds:
 - HITLy calls `ApproveDraftChunk`
 - OpenShell approves the chunk and updates policy
 
-**Terminal 4 (sandbox) — OpenShell 0.1.2:**
+**Verify policy updated:**
 
-The original curl has **already failed** (exit code 7, Permission denied ~0s).
-
-**Re-run the request:**
+The original curl has **already failed** (exit code 7, Permission denied ~0s). First, verify the policy was updated:
 
 ```bash
+# Show policy change
+openshell policy get <sandbox> --full
+
+# OR: verify draft approved
+openshell draft list --sandbox <sandbox> --status approved
+```
+
+**Optional: New request after Accept** (once curl in sandbox image):
+
+```bash
+# Run a NEW curl (not in-flight resume)
 ./trigger-async-demo.sh https://api.anthropic.com/v1/models
 # OR: curl -v https://api.anthropic.com/v1/models
 ```
 
-**Retry succeeds:**
+**New curl succeeds:**
 
 ```json
 {
@@ -426,24 +437,32 @@ The original curl has **already failed** (exit code 7, Permission denied ~0s).
 ```
 
 **Demo narrative for 0.1.2:**
-- "Request denied → draft in HITLy → Accept → policy approved → retry succeeds"
-- "On OpenShell 0.1.2, requests are fail-fast; after approval, re-run the command"
-- "Future OpenShell versions may support held-connection resume (same request completes)"
+- "Request denied (fail-fast) → draft in HITLy"
+- "Accept → **policy updated** (verify with policy get)"
+- "Optional: **new** curl succeeds (policy now allows; not same process)"
+- "On OpenShell 0.1.2, fail-fast + retry pattern (no in-flight resume)"
 
 **To demonstrate Reject:**
 - Click **Reject** with optional reason (e.g., "Demo rejection")
 - HITLy calls `RejectDraftChunk`
 - OpenShell rejects the chunk
 
-**Terminal 4 (sandbox) — OpenShell 0.1.2:**
+**Verify policy updated:**
 
-The original curl has already failed. If you retry:
+The original curl has already failed. Verify the policy was rejected:
+
+```bash
+openshell policy get <sandbox> --full
+# OR: openshell draft list --sandbox <sandbox> --status rejected
+```
+
+**Optional: New request after Reject:**
 
 ```bash
 curl -v https://api.anthropic.com/v1/models
 ```
 
-**Retry also fails:**
+**New curl also fails:**
 
 ```
 curl: (7) Failed to connect: Permission denied (policy rejected)
@@ -451,25 +470,48 @@ curl: (7) Failed to connect: Permission denied (policy rejected)
 
 Policy remains rejected; no further approval will be created for this destination.
 
-#### Demo narrative
+#### Demo narrative — Honest 0.1.2 recording path
 
-**Key points for recording (OpenShell 0.1.2 — async flow):**
+**Recording steps (OpenShell 0.1.2 fail-fast + async):**
 
-1. **Run curl:** Show terminal with curl failing immediately (Permission denied)
-2. **Draft created:** Poller logs show "New pending chunk" within 5s
-3. **HITLy inbox:** Show approval card with context
-4. **Accept action:** Click Accept in HITLy
-5. **Retry succeeds:** Re-run curl in Terminal 4 → shows API response
+1. **Proposal / fail-fast deny:**
+   - Run curl in sandbox → Permission denied (~0s)
+   - Show terminal: curl exits immediately with error
+   - Draft created (human_review_required)
+
+2. **Poller detects:**
+   - Terminal 3 (poller logs): "New pending chunk" within 5s
+   - HITLy approval created
+
+3. **HITLy Accept:**
+   - Open HITLy inbox: `http://localhost:3001/inbox`
+   - Show approval card with context (destination, rationale, security notes)
+   - Click **Accept** → HITLy calls `ApproveDraftChunk`
+
+4. **Verify policy updated:**
+   - Show policy change: `openshell policy get <sandbox> --full`
+   - OR: `openshell draft list --sandbox <sandbox> --status approved`
+   - Confirm rule now in active policy (not just draft)
+
+5. **Optional: New request after Accept** (once curl in sandbox image):
+   - Run curl again (new process, NOT in-flight resume)
+   - Show: succeeds (policy now allows)
+   - Emphasize: This is a **new** curl, not the same in-flight process
 
 **Narrative for 0.1.2:**
 - "OpenShell 0.1.2 is fail-fast: request denied → draft in HITLy"
-- "Human accepts → policy updated"
-- "Retry the request → succeeds (policy now allows)"
+- "Human accepts → **policy updated** (verify with policy get)"
+- "Optional: new curl succeeds (policy now allows; **not same process**)"
 - "This is the working async flow on current OpenShell"
 
+**Do NOT claim:**
+- ❌ "Same curl completes" (fail-fast killed first curl)
+- ❌ "In-flight resume" (not available on 0.1.2)
+- ❌ "Blocked → Accept → same request" (sync resume not available)
+
 **Preferred future product story** (when OpenShell adds held-connection resume):
-- "Request blocks (not denied) → HITLy Accept → same request completes (no retry)"
-- When this feature ships, update docs and demo to emphasize sync resume
+- "Request blocks → HITLy Accept → same in-flight request completes"
+- When this feature ships, update docs to emphasize sync resume
 
 ### Troubleshooting async demo
 
