@@ -22,6 +22,13 @@
       "when": 1787241167401,
       "tag": "0002_tiny_owl",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790680158668,
+      "tag": "0003_clever_dexter_bennett",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."plugin_id" ADD VALUE 'openshell';
