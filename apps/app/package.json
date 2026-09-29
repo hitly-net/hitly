@@ -22,6 +22,7 @@
     "@hitly/plugin-http": "*",
     "@hitly/plugin-langgraph": "*",
     "@hitly/plugin-mastra": "*",
+    "@hitly/plugin-openshell": "*",
     "@hitly/plugin-temporal": "*",
     "@hitly/ui": "*",
     "@opentelemetry/otlp-exporter-base": "^0.221.0",

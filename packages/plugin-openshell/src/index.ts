@@ -214,7 +214,8 @@ export const openshellPlugin: HitlyPlugin = {
         metadata.add('authorization', `Bearer ${bearerToken}`)
       }
 
-      const requestId = origin.approvalId
+      // Use runId as request_id for idempotency (unique per chunk)
+      const requestId = `${sandbox}:${chunkId}`
 
       if (payload.decision === 'accept') {
         // ApproveDraftChunk

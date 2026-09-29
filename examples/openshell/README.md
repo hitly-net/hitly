@@ -33,7 +33,7 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
 1. **PRIMARY:** OpenShell public gRPC client
    - Ingest: `GetDraftPolicy` (polls per configured sandbox ID)
    - Decide: `ApproveDraftChunk` / `RejectDraftChunk`
-   - Auth: Bearer token (mTLS/JWT support available in plugin)
+   - Auth: Bearer token (passed in `authorization` header)
 
 2. **Until** `WatchProposalInbox` / `ListProposalInbox` (NVIDIA #1612) ships: **poll `GetDraftPolicy` for `OPENSHELL_SANDBOX_IDS`**
 
@@ -236,7 +236,7 @@ HITLY_PROJECT_ID=                 # project ID
 POLL_INTERVAL_MS=5000             # default 5s
 ```
 
-Add mTLS/JWT material per OpenShell docs when needed.
+**Note:** Currently uses insecure gRPC connection with Bearer token authentication. TLS/mTLS support can be added when needed.
 
 ## Troubleshooting
 

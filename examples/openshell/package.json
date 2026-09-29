@@ -8,6 +8,7 @@
     "dev": "tsx watch src/poller.ts",
     "start": "tsx src/poller.ts",
     "demo": "tsx src/demo.ts",
+    "test": "tsx --test src/poller.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

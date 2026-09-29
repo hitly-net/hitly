@@ -9,7 +9,6 @@ import * as protoLoader from '@grpc/proto-loader'
 import fetch from 'node-fetch'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { createHash } from 'node:crypto'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -55,14 +54,14 @@ class OpenShellPoller {
   }
 
   private initGrpcClient() {
-    const protoPath = join(dirname(dirname(__dirname)), 'packages/plugin-openshell/proto/openshell.proto')
+    const protoPath = join(dirname(dirname(dirname(__dirname))), 'packages/plugin-openshell/proto/openshell.proto')
     const packageDefinition = protoLoader.loadSync(protoPath, {
       keepCase: true,
       longs: String,
       enums: String,
       defaults: true,
       oneofs: true,
-      includeDirs: [join(dirname(dirname(__dirname)), 'packages/plugin-openshell/proto')],
+      includeDirs: [join(dirname(dirname(dirname(__dirname))), 'packages/plugin-openshell/proto')],
     })
 
     const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any
