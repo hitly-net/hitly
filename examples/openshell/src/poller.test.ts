@@ -1,7 +1,84 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
 
-// Simple test to verify poller idempotency tracking
+// Type matching the protobuf PolicyChunk response from GetDraftPolicy
+interface PolicyChunk {
+  id: string
+  status: 'pending' | 'approved' | 'rejected'
+  proposed_rule?: {
+    kind?: string
+    protocol?: string
+    destination?: string
+    port?: number
+  }
+  rationale?: string
+  security_notes?: string[]
+  hit_count?: number
+  review_token?: string
+}
+
+// Simulates the mapping done in createHitlyApproval
+function mapChunkToApprovalPayload(chunk: PolicyChunk, sandbox: string, workspace: string, projectId: string) {
+  const { id: chunkId, review_token: reviewToken } = chunk
+  
+  return {
+    plugin: 'openshell',
+    projectId,
+    workspace,
+    sandbox,
+    chunkId,
+    reviewToken,
+    gatewayAddr: 'gateway.example.com:443',
+    actionName: 'approve-openshell-draft-chunk',
+    args: {
+      chunkId,
+      sandbox,
+      workspace,
+      rule: chunk.proposed_rule,
+      rationale: chunk.rationale,
+      securityNotes: chunk.security_notes,
+    },
+  }
+}
+
+test('poller field mapping: PolicyChunk.id maps to payload.chunkId', () => {
+  const chunk: PolicyChunk = {
+    id: 'chunk_abc123',
+    status: 'pending',
+    review_token: 'rt_xyz789',
+    proposed_rule: {
+      kind: 'egress',
+      protocol: 'tcp',
+      destination: 'api.example.com',
+      port: 443,
+    },
+    rationale: 'Test chunk',
+    hit_count: 5,
+  }
+
+  const payload = mapChunkToApprovalPayload(chunk, 'sandbox1', 'workspace1', 'proj123')
+
+  assert.strictEqual(payload.chunkId, 'chunk_abc123', 'PolicyChunk.id should map to payload.chunkId')
+  assert.strictEqual(payload.reviewToken, 'rt_xyz789', 'PolicyChunk.review_token should map to payload.reviewToken')
+  assert.strictEqual(payload.args.chunkId, 'chunk_abc123', 'args.chunkId should match top-level chunkId')
+  assert.strictEqual(payload.plugin, 'openshell')
+  assert.strictEqual(payload.sandbox, 'sandbox1')
+  assert.strictEqual(payload.workspace, 'workspace1')
+})
+
+test('poller field mapping: missing review_token is handled', () => {
+  const chunk: PolicyChunk = {
+    id: 'chunk_no_token',
+    status: 'pending',
+    rationale: 'Chunk without token',
+  }
+
+  const payload = mapChunkToApprovalPayload(chunk, 'sandbox1', 'workspace1', 'proj123')
+
+  assert.strictEqual(payload.chunkId, 'chunk_no_token', 'chunkId should still be mapped')
+  assert.strictEqual(payload.reviewToken, undefined, 'reviewToken should be undefined when missing')
+})
+
 test('poller idempotency: seenChunks prevents duplicate approvals', () => {
   const seenChunks = new Set<string>()
 

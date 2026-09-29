@@ -62,7 +62,7 @@ function createGrpcCredentials(tlsConfig?: TlsConfig): grpc.ChannelCredentials {
 }
 
 interface PolicyChunk {
-  chunk_id: string
+  id: string
   status: 'pending' | 'approved' | 'rejected'
   proposed_rule?: {
     kind?: string
@@ -157,7 +157,7 @@ class OpenShellPoller {
     let md = `# OpenShell Draft Policy Chunk\n\n`
     md += `**Workspace:** ${this.config.openshell.workspace}  \n`
     md += `**Sandbox:** ${sandbox}  \n`
-    md += `**Chunk ID:** \`${chunk.chunk_id}\`\n\n`
+    md += `**Chunk ID:** \`${chunk.id}\`\n\n`
 
     if (chunk.proposed_rule) {
       md += `## Proposed Network Policy Rule\n\n`
@@ -195,7 +195,7 @@ class OpenShellPoller {
   }
 
   private async createHitlyApproval(chunk: PolicyChunk, sandbox: string): Promise<void> {
-    const { chunk_id: chunkId, review_token: reviewToken } = chunk
+    const { id: chunkId, review_token: reviewToken } = chunk
 
     if (!reviewToken) {
       console.warn(`[Poller] Chunk ${chunkId} has no review_token, skipping`)
@@ -259,10 +259,10 @@ class OpenShellPoller {
       console.log(`[Poller] Sandbox ${sandbox}: ${chunks.length} pending chunks`)
 
       for (const chunk of chunks) {
-        const key = `${sandbox}:${chunk.chunk_id}`
+        const key = `${sandbox}:${chunk.id}`
         if (!this.seenChunks.has(key)) {
           this.seenChunks.add(key)
-          console.log(`[Poller] New pending chunk: ${chunk.chunk_id} in ${sandbox}`)
+          console.log(`[Poller] New pending chunk: ${chunk.id} in ${sandbox}`)
           await this.createHitlyApproval(chunk, sandbox)
         }
       }
