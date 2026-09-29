@@ -25,6 +25,7 @@ export function AuthForm({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        credentials: 'include',
       })
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { message?: string }
@@ -32,7 +33,13 @@ export function AuthForm({
         setPending(false)
         return
       }
-      window.location.href = extraFields === 'token' || action.includes('forget') ? '/login' : '/'
+      await response.json().catch(() => ({}))
+      const redirectPath = action.includes('sign-up')
+        ? '/inbox'
+        : extraFields === 'token' || action.includes('forget')
+          ? '/login'
+          : '/'
+      window.location.href = redirectPath
     } catch {
       setError('Something went wrong')
       setPending(false)
@@ -40,7 +47,7 @@ export function AuthForm({
   }
 
   return (
-    <form method="post" action={action} onSubmit={onSubmit} className="flex flex-col gap-3">
+    <form onSubmit={onSubmit} className="flex flex-col gap-3">
       {extraFields === 'name' ? (
         <input name="name" required placeholder="Name" autoComplete="name" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
       ) : null}
