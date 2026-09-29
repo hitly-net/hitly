@@ -10,34 +10,49 @@
 
 This adapter is **not** a replacement for OpenShell TUI or Sentry. It handles only **pending drafts that need human review** (`human_review_required` / `proposal_approval_mode=manual`).
 
-## Flow
+## Flow (Synchronous)
+
+The **synchronous demo** flow where a network request blocks and resumes:
 
 ```
-OpenShell agent triggers human-review draft
+Agent inside OpenShell sandbox runs: curl https://api.anthropic.com
   ↓
-Poller: GetDraftPolicy(pending) → finds new chunk
+OpenShell: blocks connection, creates draft chunk (human_review_required)
+  ↓  [curl waits, connection held open]
+Poller: GetDraftPolicy(pending) → finds new chunk (within 5s)
   ↓
 Poller: POST /api/v1/approvals → HITLy (idempotent by sandbox:chunkId)
-  ↓
+  ↓  [curl still waiting]
 Reviewer decides in HITLy inbox
   ↓
 HITLy: calls @hitly/plugin-openshell resume
   ↓
 Plugin: ApproveDraftChunk or RejectDraftChunk (gRPC)
   ↓
+OpenShell: releases held connection → curl completes (same request!)
+  ↓
 Evidence: hitly.evidence.v1 signed receipt → configured sink
 ```
 
+**Key difference from async:**
+- Async: request denied → approval created → human decides → **retry** request → success
+- **Sync (this demo):** request **blocks** → approval created → human decides → **same request** completes
+
 ## Integration lock
 
-1. **PRIMARY:** OpenShell public gRPC client
+1. **PRIMARY:** OpenShell public gRPC client + **mTLS + review_token**
    - Ingest: `GetDraftPolicy` (polls per configured sandbox ID)
    - Decide: `ApproveDraftChunk` / `RejectDraftChunk`
-   - Auth: Bearer token (passed in `authorization` header)
+   - Auth: mTLS client certificates + Bearer token (optional with mTLS)
+   - **Demo uses this path exclusively** (no interceptor required)
 
 2. **Until** `WatchProposalInbox` / `ListProposalInbox` (NVIDIA #1612) ships: **poll `GetDraftPolicy` for `OPENSHELL_SANDBOX_IDS`**
 
-3. **NOT** primary inbox path: Gateway Interceptors (optional **advanced** defense-in-depth feature, see `docs/interceptor-design.md`, disabled by default, NOT required for demo)
+3. **NOT required for demo:** Gateway Interceptors
+   - Optional **advanced** defense-in-depth feature
+   - See `docs/interceptor-design.md` for advanced users
+   - **Disabled by default**, **NOT part of primary demo path**
+   - Primary security: mTLS + review_token only
 
 4. **NOT:** Supervisor middleware, network-denial spam, or auto-apply
 
@@ -47,6 +62,7 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
 | --- | --- |
 | `packages/plugin-openshell/` | Plugin (resume logic: `ApproveDraftChunk` / `RejectDraftChunk`) |
 | `examples/openshell/` | Poller (polls `GetDraftPolicy`, creates HITLy approvals) + demo |
+| `examples/openshell/trigger-sync-demo.sh` | **Helper script:** Run inside sandbox to trigger synchronous blocking demo |
 | `examples/openshell/docs/` | **Advanced:** Gateway interceptor design (optional, not required for primary demo) |
 | `examples/openshell/interceptor/` | **Advanced:** Reference interceptor stub (disabled by default) |
 
@@ -151,6 +167,15 @@ POLL_INTERVAL_MS=5000
 - Point `OPENSHELL_TLS_*_FILE` env vars to those paths (shown above)
 - Poller will be deployed after this PR lands (Ops-managed)
 
+**Ops follow-up after PR merge:**
+- Refresh demo scripts on production VM from this branch
+- Verify sandbox is configured for **blocking/synchronous human-review mode**
+  - Check: `openshell sandbox get <sandbox-id>` or gateway admin console
+  - Expected: network requests **wait** for approval (not immediate deny)
+  - If synchronous mode is not default, configure: `proposal_approval_mode=blocking` or equivalent
+- Test `trigger-sync-demo.sh` inside the sandbox to confirm blocking behavior
+- Update internal demo runbook with new synchronous flow instructions
+
 ### 3. Start HITLy
 
 From repo root:
@@ -193,56 +218,227 @@ yarn demo
 
 Shows mock pending chunks and architecture explanation.
 
-## How to record a walkthrough (Derek)
+## How to record a synchronous demo (Derek)
 
-### Dependencies
+### Goal
 
-1. **HITLy app**
+Demonstrate **synchronous** OpenShell→HITLy flow where a single network request:
+1. **Blocks** at the OpenShell policy wall
+2. **Waits** while human reviews in HITLy inbox
+3. **Resumes** with the same in-flight request showing stdout
+
+**Not** the async pattern of: propose → exit → re-run after accept.
+
+### Architecture
+
+- **mTLS + review_token** is the primary path (interceptor is optional/advanced, OFF for this demo)
+- OpenShell holds the agent's network connection open while the draft chunk is pending
+- Poller detects draft and creates HITLy approval (within 5 seconds)
+- Human decides in HITLy inbox → HITLy calls plugin → OpenShell releases connection
+- **Same request** completes (success) or fails (reject) without retry
+
+### Prerequisites
+
+1. **OpenShell sandbox running** with human-review mode enabled
+   - Sandbox must be configured to **hold connections** during human review (not deny immediately)
+   - Example: `proposal_approval_mode=blocking` or similar runtime setting
+   - Check with: `openshell sandbox get <sandbox-id>` or gateway admin
+
+2. **HITLy app running**
    ```bash
    # Terminal 1: from repo root
    yarn dev:app
    ```
 
-2. **Evidence sink** (optional)
+3. **Evidence sink (optional)**
    ```bash
    # Terminal 2: from repo root
    cd examples/evidence-http && yarn start
    ```
 
-3. **Poller**
+4. **Poller running**
    ```bash
-   # Terminal 3
+   # Terminal 3: from repo root
    cd examples/openshell && yarn start
    ```
 
-### Recording steps
+### Recording steps (synchronous flow)
 
-1. **Trigger a human-review draft chunk**
-   - Run an agent under OpenShell (OpenClaw or any agent)
-   - Agent triggers `human_review_required` draft (e.g., outbound API call)
-   - Poller detects within 5 seconds
+#### Option A: Using the helper script (recommended)
 
-2. **Show HITLy inbox**
-   - Navigate to `http://localhost:3001/inbox`
-   - New approval appears: `approve-openshell-draft-chunk`
-   - Context shows: workspace, sandbox, chunk ID, proposed rule (protocol, destination, port), rationale, security notes
+**Terminal 4: Inside OpenShell sandbox**
 
-3. **Approve or reject**
-   - Click **Accept** (or **Reject** with optional response)
-   - HITLy calls `@hitly/plugin-openshell` resume
-   - Plugin calls `ApproveDraftChunk` or `RejectDraftChunk`
-   - Poller logs: "HITLy decided..."
-   - Terminal shows gRPC result (policy version, hash, or error)
+```bash
+# Copy the helper script into the sandbox (if not already there)
+# Then run:
+./trigger-sync-demo.sh https://api.anthropic.com/v1/models
 
-4. **Show OpenShell chunk status**
-   - Use OpenShell CLI: `openshell draft list --sandbox <sandbox> --status approved` (or `rejected`)
-   - Confirm chunk moved from `pending` → `approved`/`rejected`
+# OR: let it use the default URL
+./trigger-sync-demo.sh
+```
 
-5. **Show evidence**
-   - Open `http://localhost:3100` (if using evidence sink)
-   - Click approval ID
-   - See event chain: `requested` → `decided` → `resumed` (or `resume_failed`)
-   - Show integrity hashes linking events
+The script will:
+- Verify it's running inside a sandbox (warns if not)
+- Display expected flow and demo tips
+- Run curl with verbose output to show blocking
+- Measure duration (helpful for showing it waited for human decision)
+- Display success/failure summary
+
+**Expected output (while blocking):**
+
+```
+=== OpenShell HITLy Synchronous Demo ===
+
+Demo URL: https://api.anthropic.com/v1/models
+Sandbox:  sandbox-demo-123
+Workspace: demo-workspace
+
+Expected flow:
+  1. This curl will BLOCK (not fail immediately)
+  2. OpenShell creates draft chunk (human_review_required)
+  3. Poller detects chunk and creates HITLy approval (within 5s)
+  4. Human reviews in HITLy inbox: http://localhost:3001/inbox
+  5. Accept → this curl completes with response
+     Reject → this curl fails with policy error
+
+📹 Recording tip: Keep this terminal visible while reviewing in HITLy
+
+Starting synchronous request...
+
+[2026-09-29T13:55:00+00:00] Request started (blocking mode)
+
+* Trying 1.2.3.4:443...
+* Connected to api.anthropic.com (1.2.3.4) port 443
+... [curl waits here - no output until HITLy decision] ...
+```
+
+#### Option B: Manual curl (also works)
+
+**Terminal 4: Inside OpenShell sandbox**
+
+Run any network request that requires human approval:
+
+```bash
+# Example: curl to external API that requires human approval
+curl -v https://api.anthropic.com/v1/models
+
+# OR: any agent command that triggers network policy review
+# Example: Python script, npm install, git clone, etc.
+```
+
+**Expected behavior:**
+- Command **blocks** (no immediate error)
+- OpenShell creates a draft chunk with `human_review_required`
+- Connection stays open, waiting for policy decision
+
+#### Terminal 3: Watch poller logs
+
+Poller detects the draft within 5 seconds:
+
+```
+[Poller] Sandbox <sandbox>: 1 pending chunks
+[Poller] New pending chunk: chunk_abc123 in <sandbox>
+[HITLy] Created approval appr_xyz789 for chunk chunk_abc123
+```
+
+#### Browser: HITLy inbox
+
+1. Navigate to `http://localhost:3001/inbox`
+2. See new approval: `approve-openshell-draft-chunk`
+3. Review context:
+   - **Destination:** `https://api.anthropic.com` (or actual URL)
+   - **Rationale:** Agent observed repeated connection attempts
+   - **Security Notes:** External API access, credentials may be sent
+
+#### Browser: Accept or Reject
+
+**To demonstrate Accept:**
+- Click **Accept**
+- HITLy calls `ApproveDraftChunk`
+- OpenShell approves the chunk and **releases the held connection**
+
+**Terminal 4 (sandbox):** The original curl completes immediately with API response:
+
+```json
+{
+  "models": [...]
+}
+```
+
+If using `trigger-sync-demo.sh`, you'll also see:
+
+```
+[2026-09-29T13:55:42+00:00] Request completed (exit code: 0)
+Duration: 42s
+
+✅ SUCCESS: Request completed after human approval
+   Demo showed: blocked → HITLy inbox → accept → same request completed
+```
+
+**To demonstrate Reject:**
+- Click **Reject** with optional reason (e.g., "Demo rejection")
+- HITLy calls `RejectDraftChunk`
+- OpenShell rejects the chunk and **fails the held connection**
+
+**Terminal 4 (sandbox):** The original curl fails immediately:
+
+```
+curl: (7) Failed to connect: Connection refused (policy rejected)
+```
+
+Or similar OpenShell policy error (exact message depends on OpenShell version).
+
+If using `trigger-sync-demo.sh`, you'll see:
+
+```
+[2026-09-29T13:56:15+00:00] Request completed (exit code: 7)
+Duration: 33s
+
+❌ FAILED: Request rejected or errored (exit code: 7)
+   Possible causes:
+   - Human rejected in HITLy (expected for reject demo)
+   ...
+```
+
+#### Demo narrative
+
+**Key points for recording:**
+
+1. **Blocked state:** Show terminal with curl paused (no output, waiting)
+2. **HITLy inbox:** Show approval card with context
+3. **Accept action:** Click Accept in HITLy
+4. **Same curl completes:** Terminal 4 shows stdout from the **same command** (not a retry)
+
+**Contrast with async (not shown):**
+- Async: curl fails immediately → poller creates approval → human accepts → **re-run curl** → success
+- **Sync (this demo):** curl waits → poller creates approval → human accepts → **same curl** completes
+
+### Troubleshooting synchronous demo
+
+**"My curl fails immediately instead of blocking"**
+
+Sandbox is configured for immediate deny, not blocking mode. Check:
+- Sandbox runtime settings: `openshell sandbox get <sandbox-id>`
+- Look for `proposal_approval_mode` or similar setting
+- Expected: mode that **holds connections** during human review (not immediate deny)
+- Contact OpenShell admin to enable blocking/synchronous approval mode
+
+**"Poller doesn't detect the chunk"**
+
+- Verify `OPENSHELL_SANDBOX_IDS` includes the sandbox you're testing in
+- Check poller is running: Terminal 3 should show poll logs every 5 seconds
+- Manually verify chunk exists: `openshell draft list --sandbox <sandbox> --status pending`
+
+**"HITLy shows approval but curl still hangs"**
+
+- Check Terminal 3 (poller) for resume errors
+- Look for: `ApproveDraftChunk failed: FAILED_PRECONDITION` (stale review_token)
+- Check plugin credentials in HITLy project Config tab (mTLS certs, bearer token)
+
+**"Curl completes but I didn't see HITLy inbox"**
+
+- Policy may have been auto-approved (not in human-review mode)
+- Check sandbox settings for `proposal_approval_mode=manual` or `human_review_required`
 
 ## Acceptance criteria (issue #71)
 
@@ -311,6 +507,7 @@ POLL_INTERVAL_MS=5000                   # default 5s
 **Deployment:**
 - Poller deployment is blocked until this PR lands
 - Ops will wire production config after branch merges
+- **Ops must verify sandbox blocking mode** for synchronous demo (see "Ops follow-up" above)
 
 ## Troubleshooting
 
