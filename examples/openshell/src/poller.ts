@@ -35,6 +35,9 @@ function loadTlsMaterial(pathOrPem: string): Buffer {
 
 /**
  * Create gRPC channel credentials based on TLS configuration.
+ * - If insecure=true: createInsecure (dev/test only, explicit opt-in)
+ * - If tlsConfig provided: createSsl with CA + client cert/key for mTLS
+ * - Otherwise: throw error (fail-closed, require explicit TLS or insecure flag)
  */
 function createGrpcCredentials(tlsConfig?: TlsConfig): grpc.ChannelCredentials {
   if (tlsConfig?.insecure === true) {
@@ -53,7 +56,9 @@ function createGrpcCredentials(tlsConfig?: TlsConfig): grpc.ChannelCredentials {
     return grpc.credentials.createSsl(rootCerts, privateKey, certChain)
   }
 
-  return grpc.credentials.createInsecure()
+  throw new Error(
+    'OpenShell poller requires TLS configuration (OPENSHELL_TLS_CA_FILE, OPENSHELL_TLS_CERT_FILE, OPENSHELL_TLS_KEY_FILE) or explicit insecure flag (OPENSHELL_TLS_INSECURE=1) for dev/test only'
+  )
 }
 
 interface PolicyChunk {

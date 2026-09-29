@@ -103,9 +103,9 @@ function loadTlsMaterial(pathOrPem: string): Buffer {
 
 /**
  * Create gRPC channel credentials based on TLS configuration.
- * - If insecure=true: createInsecure (dev/test only)
+ * - If insecure=true: createInsecure (dev/test only, explicit opt-in)
  * - If tlsConfig provided: createSsl with CA + client cert/key for mTLS
- * - Otherwise: createInsecure (fallback, not recommended for production)
+ * - Otherwise: throw error (fail-closed, require explicit TLS or insecure flag)
  */
 function createGrpcCredentials(tlsConfig?: TlsConfig, insecure?: boolean): grpc.ChannelCredentials {
   // Explicit insecure mode (dev/test only)
@@ -131,8 +131,10 @@ function createGrpcCredentials(tlsConfig?: TlsConfig, insecure?: boolean): grpc.
     return sslCreds
   }
 
-  // Fallback to insecure (not recommended for production)
-  return grpc.credentials.createInsecure()
+  // Fail-closed: require explicit TLS config or insecure flag
+  throw new Error(
+    'OpenShell gRPC client requires TLS configuration (tlsCaFile, tlsCertFile, tlsKeyFile) or explicit insecure flag (tlsInsecure=true) for dev/test only'
+  )
 }
 
 // Production gRPC client factory
