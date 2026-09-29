@@ -232,10 +232,40 @@ Demonstrate **synchronous** OpenShell→HITLy flow where a single network reques
 ### Architecture
 
 - **mTLS + review_token** is the primary path (interceptor is optional/advanced, OFF for this demo)
-- OpenShell holds the agent's network connection open while the draft chunk is pending
+- OpenShell intended to hold agent's network connection open while draft chunk is pending
 - Poller detects draft and creates HITLy approval (within 5 seconds)
-- Human decides in HITLy inbox → HITLy calls plugin → OpenShell releases connection
-- **Same request** completes (success) or fails (reject) without retry
+- Human decides in HITLy inbox → HITLy calls plugin → OpenShell intended to release connection
+- **Intended:** Same request completes (success) or fails (reject) without retry
+
+### ⚠️ Known Limitations (OpenShell 0.1.2)
+
+**Held-connection resume behavior is UNVERIFIED on OpenShell 0.1.2.**
+
+Ops reported that `ApproveDraftChunk` / `RejectDraftChunk` may **only update policy** and **NOT** resume or retry a blocked in-flight network request on this version.
+
+**Possible behaviors after HITLy Accept/Reject:**
+
+1. **Best case (intended product story):** Held curl releases immediately and completes (sync resume)
+2. **0.1.2 observed:** Policy updates but curl stays blocked or times out; operator must **retry** the request manually after Accept
+
+**Implications for demo recording:**
+
+- **Preferred narrative:** "Blocked → HITLy Accept → same request completes" (test on your OpenShell version first)
+- **Fallback for 0.1.2:** If curl stays blocked after Accept, document as: "Blocked → HITLy Accept → policy approved → retry curl → succeeds"
+  - This is **not** the ideal product story but may be necessary for 0.1.2
+  - Clearly state in recording: "On OpenShell [version], held-connection resume is not available; showing approve-then-retry pattern"
+
+**Required Ops verification after PR merge:**
+
+1. Test `trigger-sync-demo.sh` on production VM with actual OpenShell 0.1.2
+2. Observe whether Accept/Reject releases held curl or requires retry
+3. Document actual behavior in internal runbook
+4. If retry is required, update demo narrative to set expectations correctly
+
+Until verified, **soften claims** in recordings:
+- Say "intended to release" or "when gateway supports sync resume" instead of absolute "will complete"
+- If demonstrating on 0.1.2, show the retry pattern if held-connection resume fails
+- Emphasize that HITLy decision and policy update work correctly; held-connection resume is OpenShell gateway feature
 
 ### Prerequisites
 
@@ -355,7 +385,9 @@ Poller detects the draft within 5 seconds:
 **To demonstrate Accept:**
 - Click **Accept**
 - HITLy calls `ApproveDraftChunk`
-- OpenShell approves the chunk and **releases the held connection**
+- OpenShell approves the chunk
+
+**Expected (when gateway supports held-connection resume):**
 
 **Terminal 4 (sandbox):** The original curl completes immediately with API response:
 
@@ -365,20 +397,35 @@ Poller detects the draft within 5 seconds:
 }
 ```
 
-If using `trigger-sync-demo.sh`, you'll also see:
+If using `trigger-sync-demo.sh`, you'll see:
 
 ```
 [2026-09-29T13:55:42+00:00] Request completed (exit code: 0)
 Duration: 42s
 
 ✅ SUCCESS: Request completed after human approval
-   Demo showed: blocked → HITLy inbox → accept → same request completed
 ```
+
+**Fallback (OpenShell 0.1.2 observed behavior):**
+
+If curl **stays blocked** or times out after Accept:
+
+1. Policy is approved (verify with `openshell policy get <sandbox>`)
+2. Held-connection resume not working on this version
+3. **Retry the request** manually: `curl https://api.anthropic.com/v1/models`
+4. Retry succeeds immediately (policy now allows it)
+
+**Demo narrative for fallback:**
+- "On OpenShell 0.1.2, held-connection resume is not available"
+- "After HITLy Accept, policy is approved but we need to retry the request"
+- "This shows approve-then-retry pattern; future versions may support sync resume"
 
 **To demonstrate Reject:**
 - Click **Reject** with optional reason (e.g., "Demo rejection")
 - HITLy calls `RejectDraftChunk`
-- OpenShell rejects the chunk and **fails the held connection**
+- OpenShell rejects the chunk
+
+**Expected (when gateway supports held-connection resume):**
 
 **Terminal 4 (sandbox):** The original curl fails immediately:
 
@@ -388,21 +435,15 @@ curl: (7) Failed to connect: Connection refused (policy rejected)
 
 Or similar OpenShell policy error (exact message depends on OpenShell version).
 
-If using `trigger-sync-demo.sh`, you'll see:
+**Fallback (OpenShell 0.1.2):**
 
-```
-[2026-09-29T13:56:15+00:00] Request completed (exit code: 7)
-Duration: 33s
-
-❌ FAILED: Request rejected or errored (exit code: 7)
-   Possible causes:
-   - Human rejected in HITLy (expected for reject demo)
-   ...
-```
+If curl stays blocked after Reject:
+- Wait for timeout or Ctrl+C
+- Retry will fail with policy error (as expected)
 
 #### Demo narrative
 
-**Key points for recording:**
+**Key points for recording (when gateway supports held-connection resume):**
 
 1. **Blocked state:** Show terminal with curl paused (no output, waiting)
 2. **HITLy inbox:** Show approval card with context
@@ -411,7 +452,16 @@ Duration: 33s
 
 **Contrast with async (not shown):**
 - Async: curl fails immediately → poller creates approval → human accepts → **re-run curl** → success
-- **Sync (this demo):** curl waits → poller creates approval → human accepts → **same curl** completes
+- **Sync (intended):** curl waits → poller creates approval → human accepts → **same curl** completes
+
+**If held-connection resume not available (OpenShell 0.1.2 observed):**
+
+1. **Blocked state:** Show terminal with curl paused
+2. **HITLy inbox:** Show approval card
+3. **Accept action:** Click Accept in HITLy
+4. **Observe:** curl may stay blocked or time out
+5. **Retry:** Run curl again → succeeds (policy now allows)
+6. **Narrative:** "On this OpenShell version, held-connection resume not available; showing approve-then-retry pattern"
 
 ### Troubleshooting synchronous demo
 
@@ -423,17 +473,33 @@ Sandbox is configured for immediate deny, not blocking mode. Check:
 - Expected: mode that **holds connections** during human review (not immediate deny)
 - Contact OpenShell admin to enable blocking/synchronous approval mode
 
+**"Curl stays blocked after HITLy Accept/Reject"**
+
+This is the **known limitation on OpenShell 0.1.2** (see above).
+
+Held-connection resume may not be implemented on this version. Verify:
+1. Check HITLy poller logs for successful `ApproveDraftChunk` / `RejectDraftChunk`
+2. Verify policy updated: `openshell policy get <sandbox>`
+3. If policy approved, **retry the request manually** (it should succeed)
+4. Document actual behavior for your OpenShell version
+
+**Workaround for demo recording:**
+- Show approve-then-retry pattern instead of sync resume
+- Clearly state: "On OpenShell [version], showing approve-then-retry; held-connection resume not available"
+- Emphasize: HITLy approval and policy update work correctly; resume is OpenShell feature
+
 **"Poller doesn't detect the chunk"**
 
 - Verify `OPENSHELL_SANDBOX_IDS` includes the sandbox you're testing in
 - Check poller is running: Terminal 3 should show poll logs every 5 seconds
 - Manually verify chunk exists: `openshell draft list --sandbox <sandbox> --status pending`
 
-**"HITLy shows approval but curl still hangs"**
+**"HITLy shows approval but poller logs resume errors"**
 
-- Check Terminal 3 (poller) for resume errors
+- Check Terminal 3 (poller) for errors
 - Look for: `ApproveDraftChunk failed: FAILED_PRECONDITION` (stale review_token)
 - Check plugin credentials in HITLy project Config tab (mTLS certs, bearer token)
+- This does NOT prevent policy update; resume may still work or require retry
 
 **"Curl completes but I didn't see HITLy inbox"**
 

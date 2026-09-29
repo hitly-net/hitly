@@ -3,10 +3,18 @@
 # OpenShell HITLy Synchronous Demo Trigger
 #
 # PURPOSE:
-#   Run this script INSIDE an OpenShell sandbox to trigger a synchronous
-#   human-review flow. The network request will BLOCK at the OpenShell
-#   policy wall, wait for HITLy approval, then complete with the same
-#   in-flight request.
+#   Run this script INSIDE an OpenShell sandbox to trigger a
+#   human-review flow. The network request INTENDS to block at the
+#   OpenShell policy wall and resume when HITLy approves/rejects.
+#
+# ⚠️  KNOWN LIMITATION (OpenShell 0.1.2):
+#   Held-connection resume behavior is UNVERIFIED on OpenShell 0.1.2.
+#   ApproveDraftChunk/RejectDraftChunk may only update policy and NOT
+#   resume the blocked request. If curl stays blocked after HITLy decision,
+#   you may need to RETRY the request manually after Accept.
+#
+#   Ops must verify actual behavior on your OpenShell version before
+#   using this for demo recordings.
 #
 # USAGE:
 #   ./trigger-sync-demo.sh [URL]
@@ -21,19 +29,26 @@
 #   3. HITLy poller running and monitoring this sandbox
 #   4. HITLy app accessible for human review
 #
-# EXPECTED FLOW:
+# INTENDED FLOW (when gateway supports held-connection resume):
 #   1. curl command blocks (connection held by OpenShell)
 #   2. Poller detects draft chunk within 5 seconds
 #   3. HITLy approval appears in inbox
 #   4. Human accepts/rejects in HITLy
 #   5. THIS SCRIPT's curl completes (same request, no retry)
 #
+# FALLBACK (OpenShell 0.1.2 observed behavior):
+#   1-4. Same as above
+#   5. curl may stay blocked or time out
+#   6. Operator must RETRY the request manually (policy is approved)
+#
 # DEMO RECORDING TIPS:
+#   - Test on your OpenShell version BEFORE recording
+#   - If held-connection resume works: emphasize "same request, no retry"
+#   - If retry needed: document as "approve-then-retry on OpenShell [version]"
 #   - Run this in a visible terminal (Terminal 4)
 #   - Show the terminal BEFORE accepting in HITLy (curl is waiting)
 #   - Accept in HITLy inbox (Terminal/Browser)
-#   - Return to Terminal 4 to show curl output appearing
-#   - Emphasize: "same request, no retry needed"
+#   - Return to Terminal 4 to show result (completion or need for retry)
 #
 
 set -euo pipefail
@@ -58,11 +73,16 @@ fi
 
 echo "=== OpenShell HITLy Synchronous Demo ==="
 echo ""
+echo "⚠️  KNOWN LIMITATION (OpenShell 0.1.2):"
+echo "   Held-connection resume is UNVERIFIED on OpenShell 0.1.2."
+echo "   If curl stays blocked after HITLy Accept, you may need to"
+echo "   RETRY the request manually (policy will be approved)."
+echo ""
 echo "Demo URL: $URL"
 echo "Sandbox:  ${OPENSHELL_SANDBOX_ID:-<unknown>}"
 echo "Workspace: ${OPENSHELL_WORKSPACE:-<unknown>}"
 echo ""
-echo "Expected flow:"
+echo "Intended flow (when gateway supports held-connection resume):"
 echo "  1. This curl will BLOCK (not fail immediately)"
 echo "  2. OpenShell creates draft chunk (human_review_required)"
 echo "  3. Poller detects chunk and creates HITLy approval (within 5s)"
@@ -70,9 +90,14 @@ echo "  4. Human reviews in HITLy inbox: http://localhost:3001/inbox"
 echo "  5. Accept → this curl completes with response"
 echo "     Reject → this curl fails with policy error"
 echo ""
-echo "📹 Recording tip: Keep this terminal visible while reviewing in HITLy"
+echo "Fallback (if held-connection resume not available):"
+echo "  1-4. Same as above"
+echo "  5. curl may stay blocked or time out"
+echo "  6. Retry request manually → succeeds (policy approved)"
 echo ""
-echo "Starting synchronous request..."
+echo "📹 Recording tip: Test on your OpenShell version first"
+echo ""
+echo "Starting request..."
 echo ""
 
 # Timestamp for correlation
@@ -94,18 +119,33 @@ echo "Duration: ${DURATION}s"
 echo ""
 
 if [[ $EXIT_CODE -eq 0 ]]; then
-  echo "✅ SUCCESS: Request completed after human approval"
-  echo "   Demo showed: blocked → HITLy inbox → accept → same request completed"
+  echo "✅ SUCCESS: Request completed"
+  echo ""
+  echo "   Possible causes:"
+  echo "   - Held-connection resume worked (gateway released connection)"
+  echo "   - Request was approved and retried manually"
+  echo "   - Policy was already approved from earlier run"
+  echo ""
+  echo "   If duration > 5s, likely waited for human decision."
+  echo "   Verify in HITLy inbox and poller logs."
 else
   echo "❌ FAILED: Request rejected or errored (exit code: $EXIT_CODE)"
+  echo ""
   echo "   Possible causes:"
   echo "   - Human rejected in HITLy (expected for reject demo)"
-  echo "   - Sandbox not in blocking mode (fails immediately instead of waiting)"
+  echo "   - Sandbox not in blocking mode (fails immediately)"
+  echo "   - Held-connection resume not available (stayed blocked/timed out)"
   echo "   - Network unreachable for other reasons"
+  echo ""
+  echo "   If curl timed out or stayed blocked after HITLy Accept:"
+  echo "   - Policy may be approved (check: openshell policy get <sandbox>)"
+  echo "   - Retry the request manually: curl $URL"
+  echo "   - If retry succeeds: held-connection resume not available on this version"
 fi
 
 echo ""
 echo "Next steps:"
 echo "  - Check HITLy inbox for approval status"
-echo "  - Check poller logs (Terminal 3) for draft detection"
+echo "  - Check poller logs (Terminal 3) for draft detection + resume outcome"
 echo "  - Check evidence sink (http://localhost:3100) for event chain"
+echo "  - If curl stayed blocked: verify OpenShell version supports held-connection resume"
