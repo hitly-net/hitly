@@ -144,57 +144,6 @@ yarn demo
 
 Shows mock pending chunks and architecture explanation.
 
-## How to record a walkthrough (Derek)
-
-### Dependencies
-
-1. **HITLy app**
-   ```bash
-   # Terminal 1: from repo root
-   yarn dev:app
-   ```
-
-2. **Evidence sink** (optional)
-   ```bash
-   # Terminal 2: from repo root
-   cd examples/evidence-http && yarn start
-   ```
-
-3. **Poller**
-   ```bash
-   # Terminal 3
-   cd examples/openshell && yarn start
-   ```
-
-### Recording steps
-
-1. **Trigger a human-review draft chunk**
-   - Run an agent under OpenShell (OpenClaw or any agent)
-   - Agent triggers `human_review_required` draft (e.g., outbound API call)
-   - Poller detects within 5 seconds
-
-2. **Show HITLy inbox**
-   - Navigate to `http://localhost:3001/inbox`
-   - New approval appears: `approve-openshell-draft-chunk`
-   - Context shows: workspace, sandbox, chunk ID, proposed rule (protocol, destination, port), rationale, security notes
-
-3. **Approve or reject**
-   - Click **Accept** (or **Reject** with optional response)
-   - HITLy calls `@hitly/plugin-openshell` resume
-   - Plugin calls `ApproveDraftChunk` or `RejectDraftChunk`
-   - Poller logs: "HITLy decided..."
-   - Terminal shows gRPC result (policy version, hash, or error)
-
-4. **Show OpenShell chunk status**
-   - Use OpenShell CLI: `openshell draft list --sandbox <sandbox> --status approved` (or `rejected`)
-   - Confirm chunk moved from `pending` → `approved`/`rejected`
-
-5. **Show evidence**
-   - Open `http://localhost:3100` (if using evidence sink)
-   - Click approval ID
-   - See event chain: `requested` → `decided` → `resumed` (or `resume_failed`)
-   - Show integrity hashes linking events
-
 ## Acceptance criteria (issue #71)
 
 - [x] Pending human-review chunks → HITLy approvals (idempotent by `sandbox:chunkId`)
