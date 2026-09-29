@@ -21,6 +21,14 @@ coverage
 AGENTS.md
 CLAUDE.md
 
+# TLS certificates and keys (never commit secrets)
+*.pem
+*.key
+*.crt
+*.cert
+certs/
+certificates/
+
 # Python
 __pycache__/
 *.py[cod]

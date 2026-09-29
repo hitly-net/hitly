@@ -14,7 +14,7 @@ function createMockClient(behavior: {
   policyHash?: string
 }): OpenShellClientFactory {
   return {
-    async connect() {
+    async connect(_gatewayAddr: string, _bearerToken?: string, _tlsConfig?: any, _insecure?: boolean) {
       return {
         client: {
           ApproveDraftChunk(request: any, metadata: grpc.Metadata, callback: (error: any, response?: any) => void) {
@@ -228,4 +228,93 @@ test('openshellPlugin.healthcheck returns error on missing address', async () =>
   })
 
   assert.strictEqual(result, 'error')
+})
+
+test('openshellPlugin.resume accepts TLS configuration from credentials', async () => {
+  let capturedTlsConfig: any = undefined
+  let capturedInsecure: any = undefined
+
+  const mockFactory: OpenShellClientFactory = {
+    async connect(_addr: string, _token?: string, tlsConfig?: any, insecure?: boolean) {
+      capturedTlsConfig = tlsConfig
+      capturedInsecure = insecure
+      return createMockClient({ approveSuccess: true }).connect(_addr, _token, tlsConfig, insecure)
+    },
+  }
+
+  __setOpenShellClientFactory(mockFactory)
+
+  const origin: OriginRef = {
+    plugin: 'openshell',
+    projectId: 'prj_test',
+    runId: 'sandbox:chunk',
+    resumeHandle: {
+      gatewayAddr: '127.0.0.1:17670',
+      workspace: 'ws',
+      sandbox: 'sb',
+      chunkId: 'chunk_1',
+      reviewToken: 'rt_1',
+    },
+  }
+
+  const payload: DecisionPayload = {
+    decision: 'accept',
+  }
+
+  const credentials = {
+    plugin: 'openshell' as const,
+    token: 'bearer_token',
+    tlsCaFile: '/path/to/ca.pem',
+    tlsCertFile: '/path/to/cert.pem',
+    tlsKeyFile: '/path/to/key.pem',
+    tlsSslTargetNameOverride: 'openshell.local',
+  }
+
+  await openshellPlugin.resume(origin, payload, credentials)
+
+  assert.ok(capturedTlsConfig, 'TLS config should be passed')
+  assert.strictEqual(capturedTlsConfig.ca, '/path/to/ca.pem')
+  assert.strictEqual(capturedTlsConfig.cert, '/path/to/cert.pem')
+  assert.strictEqual(capturedTlsConfig.key, '/path/to/key.pem')
+  assert.strictEqual(capturedTlsConfig.sslTargetNameOverride, 'openshell.local')
+  assert.strictEqual(capturedInsecure, undefined)
+})
+
+test('openshellPlugin.resume respects insecure flag', async () => {
+  let capturedInsecure: any = undefined
+
+  const mockFactory: OpenShellClientFactory = {
+    async connect(_addr: string, _token?: string, tlsConfig?: any, insecure?: boolean) {
+      capturedInsecure = insecure
+      return createMockClient({ approveSuccess: true }).connect(_addr, _token, tlsConfig, insecure)
+    },
+  }
+
+  __setOpenShellClientFactory(mockFactory)
+
+  const origin: OriginRef = {
+    plugin: 'openshell',
+    projectId: 'prj_test',
+    runId: 'sandbox:chunk',
+    resumeHandle: {
+      gatewayAddr: 'localhost:50051',
+      workspace: 'ws',
+      sandbox: 'sb',
+      chunkId: 'chunk_1',
+      reviewToken: 'rt_1',
+    },
+  }
+
+  const payload: DecisionPayload = {
+    decision: 'accept',
+  }
+
+  const credentials = {
+    plugin: 'openshell' as const,
+    tlsInsecure: true,
+  }
+
+  await openshellPlugin.resume(origin, payload, credentials)
+
+  assert.strictEqual(capturedInsecure, true, 'insecure flag should be true')
 })

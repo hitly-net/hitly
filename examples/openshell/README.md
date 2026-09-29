@@ -55,8 +55,10 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
    - API key and project ID from Config tab
 
 2. **OpenShell gateway** accessible via gRPC
-   - Gateway address (e.g., `openshell.example.com:443`)
+   - Gateway address (e.g., `127.0.0.1:17670` for local mTLS, or `openshell.example.com:443`)
    - Bearer token with `config:read` and `config:write` scopes
+   - **(Production)** TLS/mTLS certificates: CA cert, client cert, client key
+   - **(Dev/test only)** Set `OPENSHELL_TLS_INSECURE=1` to disable TLS
    - Workspace name and sandbox ID(s)
 
 3. **(Optional) Evidence sink** for `hitly.evidence.v1` events
@@ -86,10 +88,19 @@ Edit `.env`:
 
 ```bash
 # OpenShell
-OPENSHELL_GATEWAY_ADDR=your-gateway.example.com:443
+OPENSHELL_GATEWAY_ADDR=127.0.0.1:17670  # or your-gateway.example.com:443
 OPENSHELL_BEARER_TOKEN=your_bearer_token
 OPENSHELL_WORKSPACE=your-workspace
 OPENSHELL_SANDBOX_IDS=sandbox-1,sandbox-2  # comma-separated
+
+# OpenShell TLS/mTLS (production - required for live gateway)
+# OPENSHELL_TLS_CA_FILE=/path/to/ca.pem
+# OPENSHELL_TLS_CERT_FILE=/path/to/client-cert.pem
+# OPENSHELL_TLS_KEY_FILE=/path/to/client-key.pem
+# OPENSHELL_TLS_SSL_TARGET_NAME_OVERRIDE=openshell.local  # optional, for 127.0.0.1 with different cert CN
+
+# OpenShell TLS (dev/test ONLY - do NOT use in production)
+# OPENSHELL_TLS_INSECURE=1  # disables TLS for local testing
 
 # HITLy
 HITLY_API_URL=http://localhost:3001
@@ -101,6 +112,11 @@ POLL_INTERVAL_MS=5000
 ```
 
 **Never commit `.env` or API keys.**
+
+**TLS/mTLS setup:**
+- For production deployment on the OpenShell VM at 192.168.10.176, configure `OPENSHELL_TLS_*_FILE` paths to your CA, client cert, and client key.
+- The gateway uses mTLS at `https://127.0.0.1:17670`. You may need `OPENSHELL_TLS_SSL_TARGET_NAME_OVERRIDE` if the cert CN doesn't match `127.0.0.1`.
+- For local dev/testing without TLS, set `OPENSHELL_TLS_INSECURE=1`.
 
 ### 3. Start HITLy
 
@@ -224,10 +240,19 @@ Shows mock pending chunks and architecture explanation.
 For production, align with OpenShell client docs:
 
 ```bash
-OPENSHELL_GATEWAY_ADDR=           # gRPC endpoint
+OPENSHELL_GATEWAY_ADDR=           # gRPC endpoint (e.g., 127.0.0.1:17670)
 OPENSHELL_BEARER_TOKEN=           # config:read + config:write
 OPENSHELL_WORKSPACE=              # workspace name
 OPENSHELL_SANDBOX_IDS=            # comma-separated until multi-inbox API
+
+# TLS/mTLS (production - required for live gateway)
+OPENSHELL_TLS_CA_FILE=            # path to CA certificate
+OPENSHELL_TLS_CERT_FILE=          # path to client certificate
+OPENSHELL_TLS_KEY_FILE=           # path to client private key
+OPENSHELL_TLS_SSL_TARGET_NAME_OVERRIDE=  # optional: override hostname verification (e.g., openshell.local)
+
+# TLS insecure mode (dev/test ONLY)
+# OPENSHELL_TLS_INSECURE=1        # disable TLS (do NOT use in production)
 
 HITLY_API_URL=                    # HITLy instance (routable, not localhost)
 HITLY_API_KEY=                    # project API key
@@ -236,7 +261,7 @@ HITLY_PROJECT_ID=                 # project ID
 POLL_INTERVAL_MS=5000             # default 5s
 ```
 
-**Note:** Currently uses insecure gRPC connection with Bearer token authentication. TLS/mTLS support can be added when needed.
+**TLS/mTLS:** Production deployment requires TLS certificates. The live OpenShell gateway at `https://127.0.0.1:17670` uses mTLS. Configure `OPENSHELL_TLS_*_FILE` paths to your CA, client cert, and client key. Use `OPENSHELL_TLS_INSECURE=1` only for local dev/testing.
 
 ## Troubleshooting
 

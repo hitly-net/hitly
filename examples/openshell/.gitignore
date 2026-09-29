@@ -4,3 +4,11 @@ dist/
 .env
 .env.local
 events/
+
+# TLS certificates and keys (never commit secrets)
+*.pem
+*.key
+*.crt
+*.cert
+certs/
+certificates/
