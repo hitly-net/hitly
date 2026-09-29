@@ -10,9 +10,9 @@
 
 This adapter is **not** a replacement for OpenShell TUI or Sentry. It handles only **pending drafts that need human review** (`human_review_required` / `proposal_approval_mode=manual`).
 
-## Flow (Synchronous)
+## Flow (Async on OpenShell 0.1.2)
 
-The **synchronous demo** flow where a network request blocks and resumes:
+The **async demo** flow on OpenShell 0.1.2 (fail-fast):
 
 ```
 Agent inside OpenShell sandbox runs: curl https://api.anthropic.com
@@ -62,7 +62,7 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
 | --- | --- |
 | `packages/plugin-openshell/` | Plugin (resume logic: `ApproveDraftChunk` / `RejectDraftChunk`) |
 | `examples/openshell/` | Poller (polls `GetDraftPolicy`, creates HITLy approvals) + demo |
-| `examples/openshell/trigger-sync-demo.sh` | **Helper script:** Run inside sandbox to trigger synchronous blocking demo |
+| `examples/openshell/trigger-async-demo.sh` | **Helper script:** Run inside sandbox to trigger async demo (fail-fast + retry) |
 | `examples/openshell/docs/` | **Advanced:** Gateway interceptor design (optional, not required for primary demo) |
 | `examples/openshell/interceptor/` | **Advanced:** Reference interceptor stub (disabled by default) |
 
@@ -169,12 +169,14 @@ POLL_INTERVAL_MS=5000
 
 **Ops follow-up after PR merge:**
 - Refresh demo scripts on production VM from this branch
-- Verify sandbox is configured for **blocking/synchronous human-review mode**
+- **Install curl in sandbox image** (0.1.2 default image missing `/usr/bin/curl`)
+- Verify sandbox configured for `proposal_approval_mode=manual` (human-review mode)
   - Check: `openshell sandbox get <sandbox-id>` or gateway admin console
-  - Expected: network requests **wait** for approval (not immediate deny)
-  - If synchronous mode is not default, configure: `proposal_approval_mode=blocking` or equivalent
-- Test `trigger-sync-demo.sh` inside the sandbox to confirm blocking behavior
-- Update internal demo runbook with new synchronous flow instructions
+  - **Note:** No "blocking" mode on 0.1.2; only `manual` or `auto`
+- Test `trigger-async-demo.sh` inside the sandbox:
+  - Run script → Permission denied (fail-fast) + draft created
+  - Accept in HITLy → retry script → succeeds
+- Update internal demo runbook with **async flow** (fail-fast + retry after Accept)
 
 ### 3. Start HITLy
 
@@ -218,81 +220,95 @@ yarn demo
 
 Shows mock pending chunks and architecture explanation.
 
-## How to record a synchronous demo (Derek)
+## How to record an async demo (Derek) — OpenShell 0.1.2
 
 ### Goal
 
-Demonstrate **synchronous** OpenShell→HITLy flow where a single network request:
-1. **Blocks** at the OpenShell policy wall
-2. **Waits** while human reviews in HITLy inbox
-3. **Resumes** with the same in-flight request showing stdout
+Demonstrate **async** OpenShell→HITLy flow on OpenShell 0.1.2 where:
+1. Network request **fails immediately** (Permission denied, fail-fast)
+2. Draft chunk created for HITLy review
+3. Human reviews and decides in HITLy inbox
+4. Policy updated by HITLy
+5. **Retry** the request → succeeds (policy now allows)
 
-**Not** the async pattern of: propose → exit → re-run after accept.
+**Preferred long-term product story** (requires future OpenShell held-connection feature):
+- In-flight request blocks → HITLy Accept → same request completes (no retry)
+- When available, update docs to emphasize sync resume
+- For now: **async flow is the honest, working path on 0.1.2**
 
 ### Architecture
 
 - **mTLS + review_token** is the primary path (interceptor is optional/advanced, OFF for this demo)
-- OpenShell intended to hold agent's network connection open while draft chunk is pending
 - Poller detects draft and creates HITLy approval (within 5 seconds)
-- Human decides in HITLy inbox → HITLy calls plugin → OpenShell intended to release connection
-- **Intended:** Same request completes (success) or fails (reject) without retry
+- Human decides in HITLy inbox → HITLy calls plugin → policy updated
+- **Preferred long-term product story:** In-flight request blocks → HITLy decide → same request completes
+  - This requires OpenShell feature to **hold** denied connections (not available on 0.1.2)
 
-### ⚠️ Known Limitations (OpenShell 0.1.2)
+### ⚠️ Known Limitations (OpenShell 0.1.2) — Ops Verified
 
-**Held-connection resume behavior is UNVERIFIED on OpenShell 0.1.2.**
+**Synchronous resume FAILS on OpenShell 0.1.2.** The gateway is **fail-fast**, not blocking.
 
-Ops reported that `ApproveDraftChunk` / `RejectDraftChunk` may **only update policy** and **NOT** resume or retry a blocked in-flight network request on this version.
+**Ops probe confirmed (OpenShell 0.1.2):**
 
-**Possible behaviors after HITLy Accept/Reject:**
+1. **Denied TCP is fail-fast:** `Permission denied` (~0s) + pending draft created
+2. **Accept does NOT resume** that failed socket
+3. **No "blocking" approval mode** — only `manual` or `auto` (any docs mentioning `proposal_approval_mode=blocking` are wrong)
+4. **Working path on 0.1.2:** Async propose + retry after Accept
 
-1. **Best case (intended product story):** Held curl releases immediately and completes (sync resume)
-2. **0.1.2 observed:** Policy updates but curl stays blocked or times out; operator must **retry** the request manually after Accept
+**Actual 0.1.2 flow:**
 
-**Implications for demo recording:**
+```
+Agent runs curl → Permission denied (fail-fast) + draft chunk created
+  ↓ [curl exits immediately with error]
+Poller detects draft (within 5s) → HITLy approval created
+  ↓
+Human reviews in HITLy inbox → Accept
+  ↓
+HITLy calls ApproveDraftChunk → policy updated
+  ↓
+Operator re-runs curl → succeeds (policy now allows)
+```
 
-- **Preferred narrative:** "Blocked → HITLy Accept → same request completes" (test on your OpenShell version first)
-- **Fallback for 0.1.2:** If curl stays blocked after Accept, document as: "Blocked → HITLy Accept → policy approved → retry curl → succeeds"
-  - This is **not** the ideal product story but may be necessary for 0.1.2
-  - Clearly state in recording: "On OpenShell [version], held-connection resume is not available; showing approve-then-retry pattern"
+**Demo narrative for 0.1.2:**
 
-**Required Ops verification after PR merge:**
+- **Honest:** "Request denied → draft in HITLy → Accept → policy approved → retry succeeds"
+- **NOT:** "Request blocks → Accept → same request completes" (sync resume not available)
+- Emphasize: HITLy approval and policy update work correctly; held-connection resume is future OpenShell feature
 
-1. Test `trigger-sync-demo.sh` on production VM with actual OpenShell 0.1.2
-2. Observe whether Accept/Reject releases held curl or requires retry
-3. Document actual behavior in internal runbook
-4. If retry is required, update demo narrative to set expectations correctly
-
-Until verified, **soften claims** in recordings:
-- Say "intended to release" or "when gateway supports sync resume" instead of absolute "will complete"
-- If demonstrating on 0.1.2, show the retry pattern if held-connection resume fails
-- Emphasize that HITLy decision and policy update work correctly; held-connection resume is OpenShell gateway feature
+**Preferred long-term story** (requires OpenShell held-connection feature):
+- In-flight request blocks → HITLy Accept → same request completes (no retry)
+- When OpenShell supports this, update docs and demo narrative accordingly
 
 ### Prerequisites
 
 1. **OpenShell sandbox running** with human-review mode enabled
-   - Sandbox must be configured to **hold connections** during human review (not deny immediately)
-   - Example: `proposal_approval_mode=blocking` or similar runtime setting
+   - Sandbox configured for `proposal_approval_mode=manual`
    - Check with: `openshell sandbox get <sandbox-id>` or gateway admin
+   - **Note:** OpenShell 0.1.2 is fail-fast (not blocking); requests denied immediately
 
-2. **HITLy app running**
+2. **curl installed in sandbox** (OpenShell 0.1.2 default image missing `/usr/bin/curl`)
+   - Ops prerequisite: install curl in sandbox image before demo
+   - Alternative: use `/dev/tcp` or other built-in tools (see script comments)
+
+3. **HITLy app running**
    ```bash
    # Terminal 1: from repo root
    yarn dev:app
    ```
 
-3. **Evidence sink (optional)**
+4. **Evidence sink (optional)**
    ```bash
    # Terminal 2: from repo root
    cd examples/evidence-http && yarn start
    ```
 
-4. **Poller running**
+5. **Poller running**
    ```bash
    # Terminal 3: from repo root
    cd examples/openshell && yarn start
    ```
 
-### Recording steps (synchronous flow)
+### Recording steps (async flow on OpenShell 0.1.2)
 
 #### Option A: Using the helper script (recommended)
 
@@ -301,45 +317,48 @@ Until verified, **soften claims** in recordings:
 ```bash
 # Copy the helper script into the sandbox (if not already there)
 # Then run:
-./trigger-sync-demo.sh https://api.anthropic.com/v1/models
+./trigger-async-demo.sh https://api.anthropic.com/v1/models
 
 # OR: let it use the default URL
-./trigger-sync-demo.sh
+./trigger-async-demo.sh
 ```
 
 The script will:
 - Verify it's running inside a sandbox (warns if not)
-- Display expected flow and demo tips
-- Run curl with verbose output to show blocking
-- Measure duration (helpful for showing it waited for human decision)
-- Display success/failure summary
+- Check for curl (errors if missing, shows workaround)
+- Display expected flow (fail-fast on 0.1.2)
+- Run curl (fails immediately with Permission denied)
+- Guide user to Accept in HITLy and retry
 
-**Expected output (while blocking):**
+**Expected output (OpenShell 0.1.2 fail-fast):**
 
 ```
-=== OpenShell HITLy Synchronous Demo ===
+=== OpenShell HITLy Async Demo (0.1.2) ===
+
+⚠️  OpenShell 0.1.2 is FAIL-FAST (Ops verified):
+   - Request will be DENIED immediately (Permission denied ~0s)
+   - Draft chunk created for HITLy review
+   - After Accept, RE-RUN this script (retry)
 
 Demo URL: https://api.anthropic.com/v1/models
 Sandbox:  sandbox-demo-123
 Workspace: demo-workspace
 
-Expected flow:
-  1. This curl will BLOCK (not fail immediately)
+Expected flow (0.1.2 fail-fast):
+  1. This curl will FAIL immediately (Permission denied)
   2. OpenShell creates draft chunk (human_review_required)
   3. Poller detects chunk and creates HITLy approval (within 5s)
-  4. Human reviews in HITLy inbox: http://localhost:3001/inbox
-  5. Accept → this curl completes with response
-     Reject → this curl fails with policy error
+  4. Human reviews in HITLy inbox
+  5. Accept → policy approved
+  6. RE-RUN this script → succeeds (policy now allows)
 
-📹 Recording tip: Keep this terminal visible while reviewing in HITLy
+Starting request (expect fail-fast on first run)...
 
-Starting synchronous request...
+curl: (7) Failed to connect: Permission denied
 
-[2026-09-29T13:55:00+00:00] Request started (blocking mode)
-
-* Trying 1.2.3.4:443...
-* Connected to api.anthropic.com (1.2.3.4) port 443
-... [curl waits here - no output until HITLy decision] ...
+[Request failed as expected - draft created]
+Check HITLy inbox: http://localhost:3001/inbox
+After Accept, re-run: ./trigger-async-demo.sh
 ```
 
 #### Option B: Manual curl (also works)
@@ -349,17 +368,17 @@ Starting synchronous request...
 Run any network request that requires human approval:
 
 ```bash
-# Example: curl to external API that requires human approval
+# Example: curl to external API (requires curl installed in sandbox)
 curl -v https://api.anthropic.com/v1/models
 
-# OR: any agent command that triggers network policy review
-# Example: Python script, npm install, git clone, etc.
+# Expected: Permission denied (fail-fast)
+# Then check HITLy inbox, Accept, and re-run curl
 ```
 
-**Expected behavior:**
-- Command **blocks** (no immediate error)
+**Expected behavior (OpenShell 0.1.2):**
+- Command **fails immediately** (Permission denied ~0s)
 - OpenShell creates a draft chunk with `human_review_required`
-- Connection stays open, waiting for policy decision
+- No blocking wait; curl exits with error
 
 #### Terminal 3: Watch poller logs
 
@@ -383,13 +402,22 @@ Poller detects the draft within 5 seconds:
 #### Browser: Accept or Reject
 
 **To demonstrate Accept:**
-- Click **Accept**
+- Click **Accept** in HITLy inbox
 - HITLy calls `ApproveDraftChunk`
-- OpenShell approves the chunk
+- OpenShell approves the chunk and updates policy
 
-**Expected (when gateway supports held-connection resume):**
+**Terminal 4 (sandbox) — OpenShell 0.1.2:**
 
-**Terminal 4 (sandbox):** The original curl completes immediately with API response:
+The original curl has **already failed** (exit code 7, Permission denied ~0s).
+
+**Re-run the request:**
+
+```bash
+./trigger-async-demo.sh https://api.anthropic.com/v1/models
+# OR: curl -v https://api.anthropic.com/v1/models
+```
+
+**Retry succeeds:**
 
 ```json
 {
@@ -397,96 +425,74 @@ Poller detects the draft within 5 seconds:
 }
 ```
 
-If using `trigger-sync-demo.sh`, you'll see:
-
-```
-[2026-09-29T13:55:42+00:00] Request completed (exit code: 0)
-Duration: 42s
-
-✅ SUCCESS: Request completed after human approval
-```
-
-**Fallback (OpenShell 0.1.2 observed behavior):**
-
-If curl **stays blocked** or times out after Accept:
-
-1. Policy is approved (verify with `openshell policy get <sandbox>`)
-2. Held-connection resume not working on this version
-3. **Retry the request** manually: `curl https://api.anthropic.com/v1/models`
-4. Retry succeeds immediately (policy now allows it)
-
-**Demo narrative for fallback:**
-- "On OpenShell 0.1.2, held-connection resume is not available"
-- "After HITLy Accept, policy is approved but we need to retry the request"
-- "This shows approve-then-retry pattern; future versions may support sync resume"
+**Demo narrative for 0.1.2:**
+- "Request denied → draft in HITLy → Accept → policy approved → retry succeeds"
+- "On OpenShell 0.1.2, requests are fail-fast; after approval, re-run the command"
+- "Future OpenShell versions may support held-connection resume (same request completes)"
 
 **To demonstrate Reject:**
 - Click **Reject** with optional reason (e.g., "Demo rejection")
 - HITLy calls `RejectDraftChunk`
 - OpenShell rejects the chunk
 
-**Expected (when gateway supports held-connection resume):**
+**Terminal 4 (sandbox) — OpenShell 0.1.2:**
 
-**Terminal 4 (sandbox):** The original curl fails immediately:
+The original curl has already failed. If you retry:
+
+```bash
+curl -v https://api.anthropic.com/v1/models
+```
+
+**Retry also fails:**
 
 ```
-curl: (7) Failed to connect: Connection refused (policy rejected)
+curl: (7) Failed to connect: Permission denied (policy rejected)
 ```
 
-Or similar OpenShell policy error (exact message depends on OpenShell version).
-
-**Fallback (OpenShell 0.1.2):**
-
-If curl stays blocked after Reject:
-- Wait for timeout or Ctrl+C
-- Retry will fail with policy error (as expected)
+Policy remains rejected; no further approval will be created for this destination.
 
 #### Demo narrative
 
-**Key points for recording (when gateway supports held-connection resume):**
+**Key points for recording (OpenShell 0.1.2 — async flow):**
 
-1. **Blocked state:** Show terminal with curl paused (no output, waiting)
-2. **HITLy inbox:** Show approval card with context
-3. **Accept action:** Click Accept in HITLy
-4. **Same curl completes:** Terminal 4 shows stdout from the **same command** (not a retry)
+1. **Run curl:** Show terminal with curl failing immediately (Permission denied)
+2. **Draft created:** Poller logs show "New pending chunk" within 5s
+3. **HITLy inbox:** Show approval card with context
+4. **Accept action:** Click Accept in HITLy
+5. **Retry succeeds:** Re-run curl in Terminal 4 → shows API response
 
-**Contrast with async (not shown):**
-- Async: curl fails immediately → poller creates approval → human accepts → **re-run curl** → success
-- **Sync (intended):** curl waits → poller creates approval → human accepts → **same curl** completes
+**Narrative for 0.1.2:**
+- "OpenShell 0.1.2 is fail-fast: request denied → draft in HITLy"
+- "Human accepts → policy updated"
+- "Retry the request → succeeds (policy now allows)"
+- "This is the working async flow on current OpenShell"
 
-**If held-connection resume not available (OpenShell 0.1.2 observed):**
+**Preferred future product story** (when OpenShell adds held-connection resume):
+- "Request blocks (not denied) → HITLy Accept → same request completes (no retry)"
+- When this feature ships, update docs and demo to emphasize sync resume
 
-1. **Blocked state:** Show terminal with curl paused
-2. **HITLy inbox:** Show approval card
-3. **Accept action:** Click Accept in HITLy
-4. **Observe:** curl may stay blocked or time out
-5. **Retry:** Run curl again → succeeds (policy now allows)
-6. **Narrative:** "On this OpenShell version, held-connection resume not available; showing approve-then-retry pattern"
+### Troubleshooting async demo
 
-### Troubleshooting synchronous demo
+**"My curl fails immediately with Permission denied"**
 
-**"My curl fails immediately instead of blocking"**
+This is **expected on OpenShell 0.1.2** (fail-fast). Working as designed.
+- Verify draft chunk created: `openshell draft list --sandbox <sandbox> --status pending`
+- Check HITLy inbox for approval: `http://localhost:3001/inbox`
+- After Accept, **retry the request** (policy now allows)
 
-Sandbox is configured for immediate deny, not blocking mode. Check:
-- Sandbox runtime settings: `openshell sandbox get <sandbox-id>`
-- Look for `proposal_approval_mode` or similar setting
-- Expected: mode that **holds connections** during human review (not immediate deny)
-- Contact OpenShell admin to enable blocking/synchronous approval mode
+**"curl: command not found"**
 
-**"Curl stays blocked after HITLy Accept/Reject"**
+OpenShell 0.1.2 default sandbox image is **missing `/usr/bin/curl`**.
 
-This is the **known limitation on OpenShell 0.1.2** (see above).
-
-Held-connection resume may not be implemented on this version. Verify:
-1. Check HITLy poller logs for successful `ApproveDraftChunk` / `RejectDraftChunk`
-2. Verify policy updated: `openshell policy get <sandbox>`
-3. If policy approved, **retry the request manually** (it should succeed)
-4. Document actual behavior for your OpenShell version
-
-**Workaround for demo recording:**
-- Show approve-then-retry pattern instead of sync resume
-- Clearly state: "On OpenShell [version], showing approve-then-retry; held-connection resume not available"
-- Emphasize: HITLy approval and policy update work correctly; resume is OpenShell feature
+**Workaround:**
+- Ops: Install curl in sandbox image before demo
+- Alternative: Use `/dev/tcp` for TCP connectivity test:
+  ```bash
+  timeout 3 bash -c '</dev/tcp/api.anthropic.com/443' 2>&1
+  # Expected: Permission denied (fail-fast)
+  # After Accept: Connection refused or success
+  ```
+- Document curl installation as Ops prerequisite
 
 **"Poller doesn't detect the chunk"**
 
@@ -499,12 +505,14 @@ Held-connection resume may not be implemented on this version. Verify:
 - Check Terminal 3 (poller) for errors
 - Look for: `ApproveDraftChunk failed: FAILED_PRECONDITION` (stale review_token)
 - Check plugin credentials in HITLy project Config tab (mTLS certs, bearer token)
-- This does NOT prevent policy update; resume may still work or require retry
+- This does NOT prevent policy update; on 0.1.2, **retry** the request after fixing
 
-**"Curl completes but I didn't see HITLy inbox"**
+**"Retry still fails after Accept"**
 
-- Policy may have been auto-approved (not in human-review mode)
-- Check sandbox settings for `proposal_approval_mode=manual` or `human_review_required`
+- Verify policy approved: `openshell policy get <sandbox>` (look for approved chunk)
+- Check poller logs for successful `ApproveDraftChunk` response
+- Destination may need exact match (protocol, port, etc.)
+- Try: `openshell draft list --sandbox <sandbox> --status approved` to see approved rules
 
 ## Acceptance criteria (issue #71)
 
@@ -573,7 +581,7 @@ POLL_INTERVAL_MS=5000                   # default 5s
 **Deployment:**
 - Poller deployment is blocked until this PR lands
 - Ops will wire production config after branch merges
-- **Ops must verify sandbox blocking mode** for synchronous demo (see "Ops follow-up" above)
+- **Ops must install curl in sandbox image** before demo (see "Ops follow-up" above)
 
 ## Troubleshooting
 
