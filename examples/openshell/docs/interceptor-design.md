@@ -1,6 +1,8 @@
 # HITLy Gateway Interceptor Design
 
 **Status:** Draft design for PM/Derek review and Test  
+**Audience:** Advanced users and Ops teams  
+**Positioning:** **Optional advanced feature** — NOT required for primary OpenShell→HITLy demo path  
 **Target:** OpenShell 0.1.2 production VM (`openshell` / Tailscale `100.106.191.81`)  
 **Scope:** Demo-friendly interceptor; no Cloud/GA changes, no plugin HMAC changes
 
@@ -8,12 +10,18 @@
 
 ## Executive Summary
 
-The HITLy gateway interceptor **verifies that a human decision exists in HITLy before allowing OpenShell to commit a draft policy chunk**. This provides defense-in-depth by ensuring that:
+The HITLy gateway interceptor is an **optional advanced security feature** that verifies a human decision exists in HITLy before allowing OpenShell to commit a draft policy chunk. This provides defense-in-depth by ensuring that:
 
 1. **mTLS** proves the caller is the authorized HITLy plugin client
 2. **HITLy decision state** proves a human reviewer explicitly accepted or rejected the chunk in the HITLy inbox
 
+**Default behavior (without interceptor):** OpenShell→HITLy works via **mTLS + review_token** only. The plugin authenticates with client certificates, and OpenShell's `review_token` ensures the chunk hasn't been modified since review. This is the **primary demo path** and is sufficient for most deployments.
+
+**With interceptor (advanced):** Adds an additional verification layer that queries HITLy's decision database before allowing policy commits. This is useful for organizations with strict compliance requirements or defense-in-depth security policies.
+
 Without this interceptor, a compromised mTLS client certificate could approve chunks directly without human review. With the interceptor, the attacker would also need to compromise HITLy's decision database or API key.
+
+**Note:** The interceptor is **disabled by default** and requires explicit configuration. It is **not** part of the main OpenShell→HITLy demo recording or primary documentation.
 
 ---
 
@@ -268,9 +276,15 @@ Examples:
 
 ---
 
-## 6. Configuration: Demo-Friendly and Opt-In
+## 6. Configuration: Optional Advanced Feature (Disabled by Default)
 
-The interceptor is **opt-in** by default and requires explicit configuration to enable. This ensures it does not break existing setups or CI/test environments.
+The interceptor is an **optional advanced feature** that is **disabled by default**. It requires explicit configuration to enable. This ensures:
+
+1. **Primary demo path works without it:** OpenShell→HITLy demo uses mTLS + `review_token` only
+2. **No breaking changes:** Existing setups and CI/test environments work unchanged
+3. **Opt-in for advanced users:** Organizations with strict security requirements can enable it
+
+**The interceptor is NOT required for OpenShell→HITLy integration to work.**
 
 ### Environment variables (interceptor)
 
@@ -463,12 +477,14 @@ Test cases:
 
 ## 10. Operational Notes for Deployment
 
-### 10.1. Production VM Configuration
+**IMPORTANT:** The interceptor is an **optional advanced feature**. The primary Ops demo path uses **mTLS + review_token only** (interceptor disabled). Deploy the interceptor only if defense-in-depth verification is required for your organization's security policy.
+
+### 10.1. Production VM Configuration (Advanced/Optional)
 
 **VM:** `openshell` (Tailscale `100.106.191.81`)  
 **Gateway:** OpenShell 0.1.2, `https://127.0.0.1:17670` (loopback-only, mTLS)
 
-**Required environment variables:**
+**Required environment variables (only if enabling interceptor):**
 ```bash
 # Interceptor (add to gateway startup script)
 export OPENSHELL_HITLY_INTERCEPTOR_ENABLED=true
@@ -483,15 +499,18 @@ export OPENSHELL_HITLY_INTERCEPTOR_FAIL_OPEN=false  # Fail-closed in production
 - `OPENSHELL_HITLY_API_KEY` must be stored securely (e.g., Hashicorp Vault, AWS Secrets Manager)
 - Do NOT commit API key to git or log it in plaintext
 
-### 10.2. Rollout Plan
+### 10.2. Rollout Plan (Advanced/Optional)
 
-1. **Deploy HITLy API endpoint** (`GET /api/v1/approvals?runId=...`) to production VM
+**Note:** This rollout plan is for organizations that choose to enable the interceptor. The default Ops demo path does **not** require these steps.
+
+1. **Deploy HITLy API endpoint** (`GET /api/v1/approvals?runId=...`) to production VM (this PR)
 2. **Test endpoint** manually with `curl` (verify query by `runId` works)
-3. **Deploy OpenShell gateway with interceptor** (Go implementation, not in this repo)
-4. **Configure environment variables** on production VM (set `ENABLED=true`)
-5. **Restart gateway** and verify interceptor is active (check logs: "HITLy interceptor enabled")
-6. **Integration test:** Trigger pending chunk → deny without decision → approve in HITLy → allow
-7. **Monitor:** Watch for `PERMISSION_DENIED` errors in gateway logs (indicates interceptor is blocking requests as expected)
+3. **Deploy OpenShell gateway with interceptor** (Go implementation by OpenShell team, not in this repo)
+4. **Keep interceptor disabled** (`ENABLED=false` or omit env vars) for primary demo
+5. **If enabling interceptor:** Configure environment variables on production VM (set `ENABLED=true`)
+6. **Restart gateway** and verify interceptor is active (check logs: "HITLy interceptor enabled")
+7. **Integration test:** Trigger pending chunk → deny without decision → approve in HITLy → allow
+8. **Monitor:** Watch for `PERMISSION_DENIED` errors in gateway logs (indicates interceptor is blocking requests as expected)
 
 ### 10.3. Rollback Plan
 

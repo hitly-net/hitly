@@ -1,6 +1,13 @@
 # HITLy Gateway Interceptor (Reference Implementation)
 
-**IMPORTANT:** This is a **TypeScript reference stub for demo purposes only**. The production interceptor will be implemented in **Go** by the OpenShell team as a gRPC middleware in the OpenShell gateway codebase.
+**STATUS:** **Optional Advanced Feature** (NOT part of primary demo path)
+
+**IMPORTANT:** 
+- This is a **TypeScript reference stub for demo purposes only**
+- The production interceptor will be implemented in **Go** by the OpenShell team
+- The interceptor is **disabled by default** and is **NOT required** for OpenShell→HITLy integration
+- Primary Ops demo uses **mTLS + review_token only** (no interceptor)
+- Enable the interceptor only if defense-in-depth verification is required
 
 ---
 
@@ -61,7 +68,9 @@ See [../docs/interceptor-design.md](../docs/interceptor-design.md) section 5 for
 
 ---
 
-## Configuration
+## Configuration (Advanced/Optional)
+
+**Note:** The interceptor is **disabled by default**. Do not enable it unless defense-in-depth verification is required for your security policy.
 
 The interceptor is configured via environment variables:
 

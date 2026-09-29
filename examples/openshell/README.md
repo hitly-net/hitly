@@ -37,7 +37,7 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
 
 2. **Until** `WatchProposalInbox` / `ListProposalInbox` (NVIDIA #1612) ships: **poll `GetDraftPolicy` for `OPENSHELL_SANDBOX_IDS`**
 
-3. **NOT** primary inbox path: Gateway Interceptors (optional `post_commit` audit fan-out later only)
+3. **NOT** primary inbox path: Gateway Interceptors (optional **advanced** defense-in-depth feature, see `docs/interceptor-design.md`, disabled by default, NOT required for demo)
 
 4. **NOT:** Supervisor middleware, network-denial spam, or auto-apply
 
@@ -47,6 +47,10 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
 | --- | --- |
 | `packages/plugin-openshell/` | Plugin (resume logic: `ApproveDraftChunk` / `RejectDraftChunk`) |
 | `examples/openshell/` | Poller (polls `GetDraftPolicy`, creates HITLy approvals) + demo |
+| `examples/openshell/docs/` | **Advanced:** Gateway interceptor design (optional, not required for primary demo) |
+| `examples/openshell/interceptor/` | **Advanced:** Reference interceptor stub (disabled by default) |
+
+**Note:** The gateway interceptor (`docs/interceptor-design.md`) is an **optional advanced feature** for defense-in-depth verification. It is **NOT** part of the primary OpenShell→HITLy demo path. The default integration uses **mTLS + review_token** only.
 
 ## Prerequisites
 
@@ -260,7 +264,7 @@ Shows mock pending chunks and architecture explanation.
 **Out of scope:**
 - Every network allow-list / denial ping (use OpenShell TUI)
 - Replacing OpenShell TUI
-- Gateway Interceptors as primary inbox (optional audit later)
+- Gateway Interceptors as primary inbox (optional **advanced** feature in `docs/interceptor-design.md`, disabled by default)
 - Supervisor middleware
 - Auto-apply / reviewer-agent
 - Cloud GA / invite-only changes (OSS `hitly-net/hitly` only)
