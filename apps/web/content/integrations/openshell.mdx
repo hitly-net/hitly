@@ -1,0 +1,166 @@
+---
+title: OpenShell
+description: Enforce sandbox policy with HITL<sub><i>y</i></sub> approval decisions and evidence.
+---
+
+[OpenShell](https://github.com/NVIDIA/OpenShell) enforces sandbox policy and kernel isolation for AI agents. HITL<sub><i>y</i></sub> handles the decision surface and evidence chain for **human-review-required draft policy chunks** (`human_review_required` / `proposal_approval_mode=manual`).
+
+## How it works with HITL<sub><i>y</i></sub>
+
+1. An OpenShell agent triggers a `human_review_required` draft policy chunk (e.g., outbound API call).
+2. A poller calls `GetDraftPolicy` (pending) and discovers the new chunk.
+3. The poller POSTs to HITL<sub><i>y</i></sub> `/api/v1/approvals` (idempotent by `sandbox:chunkId`).
+4. A reviewer decides in the HITL<sub><i>y</i></sub> inbox.
+5. HITL<sub><i>y</i></sub> calls `@hitly/plugin-openshell` resume:
+   - `accept` → `ApproveDraftChunk` gRPC call
+   - `reject` → `RejectDraftChunk` gRPC call
+6. Evidence events (`hitly.evidence.v1` signed receipts) are written to the configured sink.
+
+See the runnable project in `examples/openshell` (TypeScript poller + demo).
+
+## Scope
+
+**This integration handles only `human_review_required` pending drafts.** It is not a replacement for the OpenShell TUI or NVIDIA Sentry. Gateway interceptors and supervisor middleware are out of scope; HITL<sub><i>y</i></sub> inbox is the primary decision surface.
+
+## Setup
+
+Create a workspace, [API key](/docs/api), and OpenShell [connection](/docs/connections) (`gateway address`, `workspace`, and Bearer token with `config:read` + `config:write` scopes).
+
+Set env:
+
+```bash
+OPENSHELL_GATEWAY_ADDR=your-gateway.example.com:443
+OPENSHELL_BEARER_TOKEN=your_bearer_token
+OPENSHELL_WORKSPACE=your-workspace
+OPENSHELL_SANDBOX_IDS=sandbox-1,sandbox-2
+
+HITLY_API_URL=http://localhost:3001
+HITLY_API_KEY=hitly_...
+HITLY_PROJECT_ID=prj_...
+
+POLL_INTERVAL_MS=5000
+```
+
+**Note:** Currently uses insecure gRPC connection with Bearer token authentication.
+
+## Integration guide (TypeScript)
+
+### 1. Install dependencies
+
+From the monorepo root:
+
+```bash
+yarn install
+```
+
+### 2. Set up the poller
+
+The example poller in `examples/openshell` polls `GetDraftPolicy` for pending chunks and creates HITL<sub><i>y</i></sub> approvals.
+
+Configure `.env` from `.env.example`:
+
+```bash
+cd examples/openshell
+cp .env.example .env
+```
+
+Edit `.env` with your OpenShell and HITL<sub><i>y</i></sub> credentials.
+
+### 3. Run the poller
+
+```bash
+cd examples/openshell
+yarn start
+```
+
+The poller will:
+- Poll `GetDraftPolicy` for each sandbox in `OPENSHELL_SANDBOX_IDS` every 5 seconds
+- Create HITL<sub><i>y</i></sub> approvals for new pending chunks (idempotent by `sandbox:chunkId`)
+- HITL<sub><i>y</i></sub> calls `@hitly/plugin-openshell` resume on decision
+- Plugin calls `ApproveDraftChunk` (accept) or `RejectDraftChunk` (reject)
+- Evidence events are written to the configured sink
+
+## Running locally
+
+1. `yarn workspace @hitly/app dev` — HITL<sub><i>y</i></sub> on port 3001.
+2. `cd examples/evidence-http && yarn start` — Evidence sink on port 3100 (optional).
+3. `cd examples/openshell && yarn start` — Poller.
+4. Trigger a `human_review_required` draft chunk in OpenShell (e.g., run an agent that makes an outbound API call).
+5. Open the HITL<sub><i>y</i></sub> inbox at http://localhost:3001/inbox to approve or reject.
+
+## Demo mode
+
+If you don't have a live OpenShell gateway:
+
+```bash
+cd examples/openshell
+yarn demo
+```
+
+Shows mock pending chunks and architecture explanation.
+
+## Decision mapping
+
+| HITL<sub><i>y</i></sub> | OpenShell |
+| --- | --- |
+| `accept` | `ApproveDraftChunk` (gRPC) |
+| `reject` | `RejectDraftChunk` (gRPC) |
+| `edit` | Not supported (would require re-drafting) |
+| `respond` | Not supported |
+
+**Fail-closed note:** If `ApproveDraftChunk` or `RejectDraftChunk` fails (e.g., stale `review_token` due to chunk modification), the approval shows `failed_resume` in HITL<sub><i>y</i></sub>, and no policy change is applied.
+
+## Configuration options
+
+| Option | Use it to |
+| --- | --- |
+| `gateway address` | OpenShell gRPC endpoint (e.g. `openshell.example.com:443`) |
+| `workspace` | OpenShell workspace name |
+| `sandbox IDs` | Comma-separated sandbox IDs to poll |
+| Bearer token | Auth token with `config:read` + `config:write` scopes |
+
+### Evidence Fields (Optional)
+
+For audit and compliance, the plugin automatically includes evidence context:
+
+| Field | Description |
+| --- | --- |
+| `systemId` | Sandbox ID being governed |
+| `inventoryId` | Optional: this sandbox's record in your inventory/registry (Layer 1) |
+| `policyId` | Draft chunk ID |
+| `riskTier` | Risk level (e.g. "high", "medium", "low") |
+| `toolName` | OpenShell action (e.g. "ApproveDraftChunk") |
+
+Evidence events are written to the configured HTTP sink (project settings → Evidence Storage). See [Envelope](/docs/envelope#evidence-fields) for full details.
+
+## Production
+
+HITL<sub><i>y</i></sub> must reach `gateway address` to call `ApproveDraftChunk` / `RejectDraftChunk`. Do not point a hosted HITL<sub><i>y</i></sub> workspace at `localhost`. Use a publicly accessible OpenShell gateway.
+
+## Troubleshooting
+
+### "HITLy createApproval failed (401)"
+
+Check `HITLY_API_KEY`. Should start with `hitly_`.
+
+### "GetDraftPolicy failed: UNAUTHENTICATED"
+
+Check `OPENSHELL_BEARER_TOKEN`. Needs `config:read` scope.
+
+### "ApproveDraftChunk failed: FAILED_PRECONDITION"
+
+The `review_token` is stale (chunk was modified). This is expected; the approval is rejected to avoid approving out-of-date policy. The approval shows `failed_resume` in HITL<sub><i>y</i></sub>.
+
+### No chunks appear
+
+1. Verify poller logs: `[Poller] Sandbox X: N pending chunks`
+2. Check OpenShell has pending chunks: `openshell draft list --sandbox <sandbox> --status pending`
+3. Ensure `OPENSHELL_WORKSPACE` and `OPENSHELL_SANDBOX_IDS` match your actual workspace/sandboxes
+
+## Related
+
+- [Envelope](/docs/envelope)
+- [API](/docs/api)
+- Example: `examples/openshell`
+- [OpenShell on GitHub](https://github.com/NVIDIA/OpenShell)
+- [OpenShell proto](https://github.com/NVIDIA/OpenShell/blob/main/proto/openshell.proto)
