@@ -64,11 +64,19 @@ function createGrpcCredentials(tlsConfig?: TlsConfig): grpc.ChannelCredentials {
 interface PolicyChunk {
   id: string
   status: 'pending' | 'approved' | 'rejected'
+  rule_name?: string
+  binary?: string
   proposed_rule?: {
     kind?: string
     protocol?: string
     destination?: string
     port?: number
+    endpoints?: Array<{
+      host?: string
+      port?: number
+      ports?: number[]
+      protocol?: string
+    }>
   }
   rationale?: string
   security_notes?: string[]
@@ -90,6 +98,110 @@ interface Config {
     projectId: string
   }
   pollIntervalMs: number
+}
+
+/**
+ * Format network policy rule destination for human readability.
+ * Handles both legacy single destination field and modern endpoints array.
+ */
+function formatDestination(rule: PolicyChunk['proposed_rule']): string | null {
+  if (!rule) return null
+  
+  // Legacy single destination field
+  if (rule.destination) {
+    const port = rule.port ? `:${rule.port}` : ''
+    return `${rule.destination}${port}`
+  }
+  
+  // Modern endpoints array
+  if (rule.endpoints && rule.endpoints.length > 0) {
+    const endpoint = rule.endpoints[0]
+    const host = endpoint.host || '<host>'
+    const ports = endpoint.ports && endpoint.ports.length > 0 
+      ? endpoint.ports 
+      : endpoint.port 
+        ? [endpoint.port]
+        : []
+    
+    if (ports.length === 0) return host
+    if (ports.length === 1) return `${host}:${ports[0]}`
+    return `${host}:${ports.join(',')}`
+  }
+  
+  return null
+}
+
+/**
+ * Build human-readable Markdown context for an OpenShell draft policy chunk.
+ * Pure function for testability.
+ */
+export function buildChunkContextMarkdown(
+  chunk: PolicyChunk, 
+  sandbox: string, 
+  workspace: string
+): string {
+  let md = `## Proposed Network Policy Rule\n\n`
+  
+  // Rule name (primary identifier for operators)
+  if (chunk.rule_name) {
+    md += `**Rule:** \`${chunk.rule_name}\`\n\n`
+  }
+  
+  // Binary that triggered the request
+  if (chunk.binary) {
+    md += `**Binary:** \`${chunk.binary}\`\n\n`
+  }
+  
+  // Destination (method + URL or host:port)
+  const destination = formatDestination(chunk.proposed_rule)
+  if (destination) {
+    const protocol = chunk.proposed_rule?.protocol || 'tcp'
+    const isL7 = ['rest', 'websocket', 'graphql', 'sql', 'json-rpc', 'mcp'].includes(protocol)
+    
+    if (isL7) {
+      // L7 inspection: show as URL-like
+      const scheme = protocol === 'rest' ? 'https' : protocol
+      md += `**Destination:** \`${scheme}://${destination}\`\n\n`
+    } else {
+      // L4-only: show as host:port
+      md += `**Destination:** \`${destination}\` (${protocol})\n\n`
+    }
+  }
+  
+  // Rationale (why this rule is needed)
+  if (chunk.rationale) {
+    md += `**Rationale:** ${chunk.rationale}\n\n`
+  }
+  
+  // Hit count (how many times observed)
+  if (chunk.hit_count && chunk.hit_count > 0) {
+    md += `**Observed requests:** ${chunk.hit_count}\n\n`
+  }
+  
+  // Security notes (warnings/concerns)
+  if (chunk.security_notes && chunk.security_notes.length > 0) {
+    md += `### ⚠️ Security Notes\n\n`
+    for (const note of chunk.security_notes) {
+      md += `- ${note}\n`
+    }
+    md += `\n`
+  }
+  
+  // Metadata section (collapsible details)
+  md += `<details>\n`
+  md += `<summary>Metadata</summary>\n\n`
+  md += `**Workspace:** ${workspace}  \n`
+  md += `**Sandbox:** ${sandbox}  \n`
+  md += `**Chunk ID:** \`${chunk.id}\`\n\n`
+  md += `</details>\n\n`
+  
+  // Architecture footer
+  md += `---\n\n`
+  md += `**HITLy** = decide + evidence (inbox, signed resume)  \n`
+  md += `**OpenShell** = enforce (sandbox policy / kernel isolation)  \n`
+  md += `**NVIDIA Sentry** = silicon watchdog`
+  
+  return md
 }
 
 class OpenShellPoller {
@@ -154,44 +266,7 @@ class OpenShellPoller {
   }
 
   private formatChunkContext(chunk: PolicyChunk, sandbox: string): string {
-    let md = `# OpenShell Draft Policy Chunk\n\n`
-    md += `**Workspace:** ${this.config.openshell.workspace}  \n`
-    md += `**Sandbox:** ${sandbox}  \n`
-    md += `**Chunk ID:** \`${chunk.id}\`\n\n`
-
-    if (chunk.proposed_rule) {
-      md += `## Proposed Network Policy Rule\n\n`
-      const rule = chunk.proposed_rule
-      md += `\`\`\`\n`
-      if (rule.kind) md += `Kind: ${rule.kind}\n`
-      if (rule.protocol) md += `Protocol: ${rule.protocol}\n`
-      if (rule.destination) md += `Destination: ${rule.destination}\n`
-      if (rule.port) md += `Port: ${rule.port}\n`
-      md += `\`\`\`\n\n`
-    }
-
-    if (chunk.rationale) {
-      md += `## Rationale\n\n${chunk.rationale}\n\n`
-    }
-
-    if (chunk.security_notes && chunk.security_notes.length > 0) {
-      md += `## ⚠️ Security Notes\n\n`
-      for (const note of chunk.security_notes) {
-        md += `- ${note}\n`
-      }
-      md += `\n`
-    }
-
-    if (chunk.hit_count) {
-      md += `**Observed requests:** ${chunk.hit_count}\n\n`
-    }
-
-    md += `---\n\n`
-    md += `**HITLy** = decide + evidence (inbox, signed resume)  \n`
-    md += `**OpenShell** = enforce (sandbox policy / kernel isolation)  \n`
-    md += `**NVIDIA Sentry** = silicon watchdog`
-
-    return md
+    return buildChunkContextMarkdown(chunk, sandbox, this.config.openshell.workspace)
   }
 
   private async createHitlyApproval(chunk: PolicyChunk, sandbox: string): Promise<void> {
