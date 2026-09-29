@@ -10,13 +10,13 @@
 #
 # LOCKED DEMO NARRATIVE:
 #   1. Deny (fail-fast — blocked curl stays denied)
-#   2. Agent POSTs proposal (agent_policy_proposals)
-#   3. Agent GETs policy.local.../wait → parks (long-poll)
+#   2. Agent POSTs proposal to /v1/proposals
+#   3. Agent GETs /v1/proposals/{chunk_id}/wait → parks (long-poll)
 #   4. Human Accept in HITLy → ApproveDraftChunk
-#   5. /wait returns policy_reloaded
+#   5. /wait returns status: approved, policy_reloaded: true
 #   6. Agent retries (new request) → succeeds under new rule
 #
-#   SYNC in this demo = agent /wait long-poll, NOT same-socket curl resume.
+#   SYNC in this demo = agent long-poll on /v1/proposals/{chunk_id}/wait, NOT same-socket curl resume.
 #
 # PREREQUISITES:
 #   1. Running inside OpenShell sandbox
@@ -85,11 +85,11 @@ echo "Workspace: ${OPENSHELL_WORKSPACE:-<unknown>}"
 echo ""
 echo "Expected flow (agent-driven with /wait long-poll):"
 echo "  1. curl FAILS (Permission denied, fail-fast)"
-echo "  2. Agent POSTs proposal (agent_policy_proposals)"
-echo "  3. Agent GETs /wait → parks (long-poll)"
+echo "  2. Agent POSTs proposal to /v1/proposals"
+echo "  3. Agent GETs /v1/proposals/{chunk_id}/wait → parks (long-poll)"
 echo "  4. [Agent waiting on /wait while human reviews]"
 echo "  5. Human Accept in HITLy → policy updated"
-echo "  6. /wait returns policy_reloaded"
+echo "  6. /wait returns status: approved, policy_reloaded: true"
 echo "  7. Agent retries curl (new request) → succeeds"
 echo ""
 echo "SYNC = agent /wait long-poll, NOT same-socket curl resume."
@@ -140,7 +140,7 @@ else
   exit 1
 fi
 
-# Step 2: POST proposal (agent_policy_proposals)
+# Step 2: POST proposal to /v1/proposals
 echo "[Step 2] Agent POSTs policy proposal to $POLICY_LOCAL_URL/v1/proposals..."
 echo ""
 echo "   Extracted from URL:"
@@ -201,7 +201,7 @@ PROPOSAL_RESPONSE=$(curl -s -X POST \
   echo "   Response: $PROPOSAL_RESPONSE"
   echo ""
   echo "   This may indicate:"
-  echo "   - policy.local API not available (check agent_policy_proposals_enabled)"
+  echo "   - policy.local /v1/proposals API not available (check agent_policy_proposals_enabled)"
   echo "   - Network policy blocking policy.local"
   echo "   - Invalid JSON payload"
   exit 1
@@ -282,10 +282,10 @@ else
 fi
 
 if [[ "$STATUS" == "approved" ]]; then
-  echo "[Step 5] ✅ Proposal approved! Policy reloaded."
+  echo "[Step 5] ✅ Proposal approved! (status: approved, policy_reloaded: true)"
   echo ""
 elif [[ "$STATUS" == "rejected" ]]; then
-  echo "[Step 5] ❌ Proposal rejected by human reviewer"
+  echo "[Step 5] ❌ Proposal rejected by human reviewer (status: rejected)"
   echo ""
   echo "   Check HITLy inbox for rejection reason."
   exit 1
@@ -297,6 +297,7 @@ elif [[ "$STATUS" == "timeout" ]] || [[ "$WAIT_RESPONSE" =~ timeout ]]; then
   exit 1
 else
   echo "[Step 5] ⚠️  Unexpected /wait response status: ${STATUS:-<unknown>}"
+  echo "   Expected: approved | rejected | pending"
   echo ""
 fi
 
@@ -311,9 +312,9 @@ echo ""
 if [[ $RETRY_EXIT -eq 0 ]]; then
   echo "✅ SUCCESS: Agent retry succeeded under new policy"
   echo ""
-  echo "   Demo showed: deny → POST proposal → /wait parks → Accept → approved → retry succeeds"
+  echo "   Demo showed: deny → POST /v1/proposals → /wait parks → Accept → status:approved → retry succeeds"
   echo ""
-  echo "   SYNC = agent /wait long-poll (NOT same-socket curl resume)"
+  echo "   SYNC = agent long-poll on /v1/proposals/{chunk_id}/wait (NOT same-socket curl resume)"
   echo ""
   echo "   🎉 STICKY POLICY: Run this script again → should succeed immediately"
 else

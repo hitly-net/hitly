@@ -17,9 +17,9 @@ The **agent-driven demo** flow on OpenShell 0.1.2 using policy advisor `/wait` A
 ```
 Agent runs curl → Permission denied (fail-fast)
   ↓
-Agent POSTs proposal (agent_policy_proposals API)
+Agent POSTs proposal to /v1/proposals
   ↓
-Agent GETs policy.local.../wait → parks (long-poll)
+Agent GETs /v1/proposals/{chunk_id}/wait → parks (long-poll)
   ↓  [agent /wait request held open, parked]
 Poller: GetDraftPolicy(pending) → finds proposal (within 5s)
   ↓
@@ -31,21 +31,21 @@ HITLy: calls @hitly/plugin-openshell resume
   ↓
 Plugin: ApproveDraftChunk (gRPC) → policy updated (LASTING allow)
   ↓
-/wait returns policy_reloaded
+/wait returns status: approved, policy_reloaded: true
   ↓
 Agent retries curl (new request) → succeeds under new rule
   ↓
 Evidence: hitly.evidence.v1 signed receipt → configured sink
 ```
 
-**SYNC in this demo = agent `/wait` long-poll** (agent parks while human decides).
+**SYNC in this demo = agent long-poll on `/v1/proposals/{chunk_id}/wait`** (agent parks while human decides).
 
 **NOT same-socket curl resume** (impossible on 0.1.2 fail-fast).
 
 **Key points:**
-- Agent parks on `/wait` while human reviews (blocking behavior)
-- Human decision triggers `/wait` return with `policy_reloaded`
-- Agent auto-retries when `/wait` unblocks
+- Agent parks on `/v1/proposals/{chunk_id}/wait` while human reviews (blocking behavior)
+- Human decision triggers `/wait` return with status: approved/rejected, policy_reloaded: true/false
+- Agent auto-retries when `/wait` unblocks with status: approved
 - **Accept = durable merge** into `network_policies` (lasting allow)
 - **Known OpenShell limitation:** 2nd request to same destination passes **WITHOUT HITL** (no per-request approval)
 - **Future wish:** OpenShell `ephemeral_lease` / one-shot approval (not available now)
@@ -194,7 +194,7 @@ POLL_INTERVAL_MS=5000
   1. Run `trigger-agent-wait-demo.sh` → Permission denied (fail-fast)
   2. Observe agent script shows "[Step 3] Agent GETs /wait (long-poll, parks...)"
   3. Accept in HITLy (while agent parked on `/wait`)
-  4. Observe "[Step 5] /wait returned policy_reloaded"
+  4. Observe "[Step 5] /wait returned..." (real response with status: approved)
   5. Observe retry succeeds
   6. Run script again → succeeds immediately (sticky policy / known OpenShell limitation)
 - Update internal demo runbook with **agent `/wait` hero path** (Derek locked)
@@ -253,13 +253,13 @@ Shows mock pending chunks and architecture explanation.
 
 Demonstrate **agent-driven** OpenShell→HITLy flow using policy advisor where:
 1. Network request **fails immediately** (Permission denied, fail-fast)
-2. Agent **POSTs proposal** (agent_policy_proposals)
-3. Agent **GETs `/wait`** → parks (long-poll)
+2. Agent **POSTs proposal** to `/v1/proposals`
+3. Agent **GETs `/v1/proposals/{chunk_id}/wait`** → parks (long-poll)
 4. Human reviews and decides in HITLy inbox
-5. `/wait` returns **`policy_reloaded`**
+5. `/wait` returns **status: approved, policy_reloaded: true**
 6. Agent **retries** (new request) → succeeds under new rule
 
-**Sync in this demo:** Agent `/wait` long-poll (not same-socket curl resume).
+**Sync in this demo:** Agent long-poll on `/v1/proposals/{chunk_id}/wait` (not same-socket curl resume).
 
 **Hero path:** Agent parks on `/wait` while human decides, then auto-retries when policy reloads.
 
@@ -340,9 +340,79 @@ Operator re-runs curl → succeeds (policy now allows)
    cd examples/openshell && yarn start
    ```
 
-### Recording steps (async flow on OpenShell 0.1.2)
+### Recording steps (agent-driven /wait flow on OpenShell 0.1.2)
 
-#### Option A: Using the helper script (recommended)
+#### Option A: Agent `/wait` hero path (recommended — Derek locked)
+
+**Terminal 4: Inside OpenShell sandbox**
+
+```bash
+# Run the agent /wait hero script:
+./trigger-agent-wait-demo.sh https://api.anthropic.com/v1/models
+
+# OR: let it use the default URL
+./trigger-agent-wait-demo.sh
+```
+
+The script will:
+- Verify it's running inside a sandbox (warns if not)
+- Check for curl (errors if missing)
+- Run curl (fails immediately with Permission denied)
+- **POST real proposal** to `policy.local/v1/proposals`
+- **GET real long-poll** to `policy.local/v1/proposals/{chunk_id}/wait?timeout=300` (agent parks)
+- Wait for human Accept in HITLy (while parked on `/wait`)
+- Auto-retry when `/wait` returns status: approved
+
+**Expected output (OpenShell 0.1.2 agent-driven with `/wait`):**
+
+```
+=== OpenShell HITLy Agent-Driven Demo (0.1.2) ===
+
+HERO PATH: Agent POSTs proposal + GETs /wait + auto-retries
+
+Demo URL: https://api.anthropic.com/v1/models
+Policy advisor: http://policy.local
+Sandbox:  sandbox-demo-123
+Workspace: demo-workspace
+
+Expected flow (agent-driven with /wait long-poll):
+  1. curl FAILS (Permission denied, fail-fast)
+  2. Agent POSTs proposal to /v1/proposals
+  3. Agent GETs /v1/proposals/{chunk_id}/wait → parks (long-poll)
+  4. [Agent waiting on /wait while human reviews]
+  5. Human Accept in HITLy → policy updated
+  6. /wait returns status: approved, policy_reloaded: true
+  7. Agent retries curl (new request) → succeeds
+
+SYNC = agent long-poll on /v1/proposals/{chunk_id}/wait (NOT same-socket curl resume).
+
+[Step 1] Attempting initial request (expect Permission denied)...
+[curl fails with Permission denied]
+
+[Step 2] Agent POSTs policy proposal to http://policy.local/v1/proposals...
+[Real HTTP POST with JSON payload]
+[Step 2] ✅ Proposal submitted successfully (chunk_id: chunk-abc123)
+
+[Step 3] Agent GETs /wait (long-poll, parks until policy reload)...
+   Agent is now PARKED on /wait (blocking, waiting for human decision)
+   Check HITLy inbox: http://localhost:3001/inbox
+[Agent blocked here, waiting...]
+
+[Human Accepts in HITLy]
+
+[Step 5] /wait returned after 45s
+   Response: {"status": "approved", "policy_reloaded": true, ...}
+[Step 5] ✅ Proposal approved! (status: approved, policy_reloaded: true)
+
+[Step 6] Agent auto-retries (new request under new policy)...
+✅ SUCCESS: Agent retry succeeded under new policy
+
+   Demo showed: deny → POST /v1/proposals → /wait parks → Accept → status:approved → retry succeeds
+
+   SYNC = agent long-poll on /v1/proposals/{chunk_id}/wait (NOT same-socket curl resume)
+```
+
+#### Option B: Manual async fallback (no `/wait` long-poll)
 
 **Terminal 4: Inside OpenShell sandbox**
 
@@ -393,7 +463,7 @@ Check HITLy inbox: http://localhost:3001/inbox
 After Accept, re-run: ./trigger-async-demo.sh
 ```
 
-#### Option B: Manual (fallback, no `/wait` long-poll)
+#### Option B: Manual async fallback (no `/wait` long-poll)
 
 **Terminal 4: Inside OpenShell sandbox**
 
@@ -460,16 +530,16 @@ The agent's `/wait` long-poll unblocks and agent retries:
 - **Ops note:** For demo re-takes, Ops may manually clear rules via `openshell policy` CLI (not hero claim)
 
 **Demo narrative for Accept (hero path):**
-- "Deny → agent POSTs proposal → agent parks on `/wait` (blocking)"
+- "Deny → agent POSTs proposal to /v1/proposals → agent parks on /v1/proposals/{chunk_id}/wait (blocking)"
 - "Accept in HITLy → policy updated (durable merge into `network_policies`)"
-- "Agent `/wait` unblocks with `policy_reloaded` → agent auto-retries → succeeds"
+- "Agent `/wait` unblocks with status: approved, policy_reloaded: true → agent auto-retries → succeeds"
 - "2nd curl passes without HITL (known OpenShell limitation: sticky policy)"
 
 **To demonstrate Reject:**
 - Click **Reject** with optional reason (e.g., "Demo rejection")
 - HITLy calls `RejectDraftChunk`
 - OpenShell rejects the chunk
-- `/wait` API returns policy update (or timeout)
+- `/wait` API returns status: rejected (policy not updated)
 - Agent auto-retry still fails (policy denied)
 
 **Terminal 4 (sandbox) — agent auto-retry after Reject:**
@@ -493,11 +563,11 @@ The agent's `/wait` long-poll unblocks and agent retries:
    - Show terminal: curl exits immediately with error
 
 2. **Agent POSTs proposal:**
-   - Agent calls `POST policy.local/v1/agent_policy_proposals`
+   - Agent calls `POST policy.local/v1/proposals`
    - Proposal created (human_review_required)
 
 3. **Agent parks on `/wait` (SYNC blocking behavior):**
-   - Agent calls `GET policy.local/v1/wait?timeout=300`
+   - Agent calls `GET policy.local/v1/proposals/{chunk_id}/wait?timeout=300`
    - Agent long-poll **held open** (parks, waits for policy reload)
    - **This is the SYNC behavior** → agent blocked on `/wait`
 
@@ -511,9 +581,9 @@ The agent's `/wait` long-poll unblocks and agent retries:
    - Click **Accept** → HITLy calls `ApproveDraftChunk`
    - Policy updated (LASTING allow merged into `network_policies`)
 
-6. **`/wait` returns `policy_reloaded`:**
+6. **`/wait` returns approved:**
    - Agent's `/wait` long-poll **unblocks**
-   - Returns: `{"status": "policy_reloaded", "version": 2}`
+   - Returns: `{"status": "approved", "policy_reloaded": true, "version": 2}`
    - Agent knows policy changed → time to retry
 
 7. **Agent auto-retries (new request):**
