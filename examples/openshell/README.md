@@ -55,13 +55,38 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
    - API key and project ID from Config tab
 
 2. **OpenShell gateway** accessible via gRPC
-   - Gateway address (e.g., `openshell.example.com:443`)
-   - Bearer token with `config:read` and `config:write` scopes
+   - **Production:** OpenShell 0.1.2 on VM `openshell` (Tailscale `100.106.191.81`)
+     - `auth_mode=mtls`, loopback ONLY at `https://127.0.0.1:17670`
+     - **IMPORTANT:** Gateway is loopback-only by design for security. Do NOT weaken mTLS or bind port 17670 off loopback.
+     - Client certificates live under `~/.config/openshell/gateways/openshell/mtls/` on the VM
+   - Bearer token with `config:read` and `config:write` scopes (optional with mTLS)
    - Workspace name and sandbox ID(s)
+   - **Dev/test only:** Set `OPENSHELL_TLS_INSECURE=1` to disable TLS (explicit opt-in)
 
 3. **(Optional) Evidence sink** for `hitly.evidence.v1` events
    - Use `examples/evidence-http` on port 3100
    - Or omit to have HITLy log evidence only
+
+## Production deployment (VM openshell)
+
+**Infrastructure:**
+- VM: `openshell` (Tailscale `100.106.191.81`)
+- OpenShell: version 0.1.2
+- Gateway: `https://127.0.0.1:17670` (loopback-only, `auth_mode=mtls`)
+- HITLy: co-located on same VM (port 3001)
+- Evidence HTTP: co-located on same VM (port 3100)
+
+**Security constraints:**
+- Gateway is **loopback-only** by design for security
+- **Do NOT** weaken mTLS (keep `auth_mode=mtls`)
+- **Do NOT** bind port 17670 off loopback (e.g., `0.0.0.0:17670`)
+- Client certificates are pre-provisioned under `~/.config/openshell/gateways/openshell/mtls/`
+- Point env vars to certificate paths; **NEVER commit or paste PEMs/secrets**
+
+**Deployment status:**
+- Poller deployment is **blocked** until this PR lands
+- Ops will wire production configuration after branch merges
+- Cloud invite-only setup remains unchanged
 
 ## Setup
 
@@ -85,11 +110,24 @@ cp .env.example .env
 Edit `.env`:
 
 ```bash
-# OpenShell
-OPENSHELL_GATEWAY_ADDR=your-gateway.example.com:443
-OPENSHELL_BEARER_TOKEN=your_bearer_token
+# OpenShell (production on VM openshell / Tailscale 100.106.191.81)
+OPENSHELL_GATEWAY_ADDR=127.0.0.1:17670  # loopback-only mTLS gateway
+OPENSHELL_BEARER_TOKEN=your_bearer_token  # optional with mTLS
 OPENSHELL_WORKSPACE=your-workspace
 OPENSHELL_SANDBOX_IDS=sandbox-1,sandbox-2  # comma-separated
+
+# OpenShell TLS/mTLS (REQUIRED for production)
+# Client certs live under ~/.config/openshell/gateways/openshell/mtls/ on the VM
+# Point env vars to those paths. NEVER commit or paste PEMs/secrets.
+OPENSHELL_TLS_CA_FILE=$HOME/.config/openshell/gateways/openshell/mtls/ca.pem
+OPENSHELL_TLS_CERT_FILE=$HOME/.config/openshell/gateways/openshell/mtls/client-cert.pem
+OPENSHELL_TLS_KEY_FILE=$HOME/.config/openshell/gateways/openshell/mtls/client-key.pem
+
+# Optional: if cert CN != 127.0.0.1
+# OPENSHELL_TLS_SSL_TARGET_NAME_OVERRIDE=openshell.local
+
+# OpenShell TLS (dev/test ONLY - NEVER use in production)
+# OPENSHELL_TLS_INSECURE=1  # disables TLS for local testing
 
 # HITLy
 HITLY_API_URL=http://localhost:3001
@@ -101,6 +139,13 @@ POLL_INTERVAL_MS=5000
 ```
 
 **Never commit `.env` or API keys.**
+
+**Production deployment (VM openshell):**
+- OpenShell 0.1.2 gateway runs at loopback-only `https://127.0.0.1:17670` with `auth_mode=mtls`
+- **Security:** Gateway is loopback-only by design. Do NOT weaken mTLS or bind port 17670 off loopback.
+- Client certificates are pre-provisioned under `~/.config/openshell/gateways/openshell/mtls/` on the VM
+- Point `OPENSHELL_TLS_*_FILE` env vars to those paths (shown above)
+- Poller will be deployed after this PR lands (Ops-managed)
 
 ### 3. Start HITLy
 
@@ -210,6 +255,7 @@ Shows mock pending chunks and architecture explanation.
 - Only `human_review_required` / `proposal_approval_mode=manual` pending drafts
 - HITLy inbox as the primary decision surface
 - `hitly.evidence.v1` signed receipts
+- TLS/mTLS support for production gateway (OpenShell 0.1.2, `auth_mode=mtls`)
 
 **Out of scope:**
 - Every network allow-list / denial ping (use OpenShell TUI)
@@ -218,25 +264,49 @@ Shows mock pending chunks and architecture explanation.
 - Supervisor middleware
 - Auto-apply / reviewer-agent
 - Cloud GA / invite-only changes (OSS `hitly-net/hitly` only)
+- Weakening mTLS or binding port 17670 off loopback (security constraint)
 
 ## Env vars (production)
 
-For production, align with OpenShell client docs:
+Production deployment on VM `openshell` (Tailscale `100.106.191.81`):
 
 ```bash
-OPENSHELL_GATEWAY_ADDR=           # gRPC endpoint
-OPENSHELL_BEARER_TOKEN=           # config:read + config:write
-OPENSHELL_WORKSPACE=              # workspace name
-OPENSHELL_SANDBOX_IDS=            # comma-separated until multi-inbox API
+# OpenShell Gateway (OpenShell 0.1.2, auth_mode=mtls, loopback-only)
+OPENSHELL_GATEWAY_ADDR=127.0.0.1:17670  # loopback-only by design for security
+OPENSHELL_BEARER_TOKEN=                 # config:read + config:write (optional with mTLS)
+OPENSHELL_WORKSPACE=                    # workspace name
+OPENSHELL_SANDBOX_IDS=                  # comma-separated until multi-inbox API
 
-HITLY_API_URL=                    # HITLy instance (routable, not localhost)
-HITLY_API_KEY=                    # project API key
-HITLY_PROJECT_ID=                 # project ID
+# TLS/mTLS (REQUIRED for production - client certs under ~/.config/openshell/gateways/openshell/mtls/)
+OPENSHELL_TLS_CA_FILE=$HOME/.config/openshell/gateways/openshell/mtls/ca.pem
+OPENSHELL_TLS_CERT_FILE=$HOME/.config/openshell/gateways/openshell/mtls/client-cert.pem
+OPENSHELL_TLS_KEY_FILE=$HOME/.config/openshell/gateways/openshell/mtls/client-key.pem
 
-POLL_INTERVAL_MS=5000             # default 5s
+# Optional: override hostname verification (e.g., if cert CN != 127.0.0.1)
+# OPENSHELL_TLS_SSL_TARGET_NAME_OVERRIDE=openshell.local
+
+# TLS insecure mode (dev/test ONLY - NEVER use in production)
+# OPENSHELL_TLS_INSECURE=1
+
+# HITLy
+HITLY_API_URL=                          # HITLy instance (http://localhost:3001 for co-located)
+HITLY_API_KEY=                          # project API key
+HITLY_PROJECT_ID=                       # project ID
+
+# Polling
+POLL_INTERVAL_MS=5000                   # default 5s
 ```
 
-**Note:** Currently uses insecure gRPC connection with Bearer token authentication. TLS/mTLS support can be added when needed.
+**Security notes:**
+- Gateway is loopback-only (`127.0.0.1:17670`) by design. Do NOT weaken mTLS or bind port 17670 off loopback.
+- Client certificates are pre-provisioned on the VM under `~/.config/openshell/gateways/openshell/mtls/`
+- Point `OPENSHELL_TLS_*_FILE` to those paths; NEVER commit or paste PEMs/secrets
+- Bearer token is optional when using mTLS (gateway `auth_mode=mtls`)
+- Insecure mode (`OPENSHELL_TLS_INSECURE=1`) is for dev/test only with explicit opt-in
+
+**Deployment:**
+- Poller deployment is blocked until this PR lands
+- Ops will wire production config after branch merges
 
 ## Troubleshooting
 

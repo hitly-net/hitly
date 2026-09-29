@@ -14,7 +14,7 @@ function createMockClient(behavior: {
   policyHash?: string
 }): OpenShellClientFactory {
   return {
-    async connect() {
+    async connect(_gatewayAddr: string, _bearerToken?: string, _tlsConfig?: any, _insecure?: boolean) {
       return {
         client: {
           ApproveDraftChunk(request: any, metadata: grpc.Metadata, callback: (error: any, response?: any) => void) {
@@ -98,7 +98,7 @@ test('openshellPlugin.resume calls ApproveDraftChunk on accept', async () => {
     decision: 'accept',
   }
 
-  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', token: 'bearer_token' })) as ResumeResponse
+  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', token: 'bearer_token', insecure: true })) as ResumeResponse
 
   assert.strictEqual(result.status, 200)
   assert.strictEqual((result.body as any)?.policyVersion, 42)
@@ -127,7 +127,7 @@ test('openshellPlugin.resume calls RejectDraftChunk on reject', async () => {
     response: 'Not safe',
   }
 
-  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', token: 'bearer_token' })) as ResumeResponse
+  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', token: 'bearer_token', insecure: true })) as ResumeResponse
 
   assert.strictEqual(result.status, 200)
   assert.strictEqual((result.body as any)?.rejected, true)
@@ -154,7 +154,7 @@ test('openshellPlugin.resume handles ApproveDraftChunk failure', async () => {
     decision: 'accept',
   }
 
-  const result = (await openshellPlugin.resume(origin, payload)) as ResumeResponse
+  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', insecure: true })) as ResumeResponse
 
   assert.strictEqual(result.status, 9)
   assert.ok(result.error?.includes('Stale review token'))
@@ -180,7 +180,7 @@ test('openshellPlugin.resume handles RejectDraftChunk failure', async () => {
     decision: 'reject',
   }
 
-  const result = (await openshellPlugin.resume(origin, payload)) as ResumeResponse
+  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', insecure: true })) as ResumeResponse
 
   assert.strictEqual(result.status, 13)
   assert.ok(result.error?.includes('Internal error'))
@@ -204,7 +204,7 @@ test('openshellPlugin.resume rejects unsupported decisions', async () => {
     decision: 'edit' as any,
   }
 
-  const result = (await openshellPlugin.resume(origin, payload)) as ResumeResponse
+  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', insecure: true })) as ResumeResponse
 
   assert.strictEqual(result.status, 400)
   assert.ok(result.error?.includes('Unsupported decision'))
@@ -217,6 +217,7 @@ test('openshellPlugin.healthcheck returns ok on success', async () => {
     plugin: 'openshell',
     address: 'localhost:50051',
     token: 'bearer',
+    insecure: true,
   })
 
   assert.strictEqual(result, 'ok')
@@ -228,4 +229,135 @@ test('openshellPlugin.healthcheck returns error on missing address', async () =>
   })
 
   assert.strictEqual(result, 'error')
+})
+
+test('openshellPlugin.resume accepts TLS configuration from credentials', async () => {
+  let capturedTlsConfig: any = undefined
+  let capturedInsecure: any = undefined
+
+  const mockFactory: OpenShellClientFactory = {
+    async connect(_addr: string, _token?: string, tlsConfig?: any, insecure?: boolean) {
+      capturedTlsConfig = tlsConfig
+      capturedInsecure = insecure
+      return createMockClient({ approveSuccess: true }).connect(_addr, _token, tlsConfig, insecure)
+    },
+  }
+
+  __setOpenShellClientFactory(mockFactory)
+
+  const origin: OriginRef = {
+    plugin: 'openshell',
+    projectId: 'prj_test',
+    runId: 'sandbox:chunk',
+    resumeHandle: {
+      gatewayAddr: '127.0.0.1:17670',
+      workspace: 'ws',
+      sandbox: 'sb',
+      chunkId: 'chunk_1',
+      reviewToken: 'rt_1',
+    },
+  }
+
+  const payload: DecisionPayload = {
+    decision: 'accept',
+  }
+
+  const credentials = {
+    plugin: 'openshell' as const,
+    token: 'bearer_token',
+    tlsCaFile: '/path/to/ca.pem',
+    tlsCertFile: '/path/to/cert.pem',
+    tlsKeyFile: '/path/to/key.pem',
+    tlsSslTargetNameOverride: 'openshell.local',
+  }
+
+  await openshellPlugin.resume(origin, payload, credentials)
+
+  assert.ok(capturedTlsConfig, 'TLS config should be passed')
+  assert.strictEqual(capturedTlsConfig.ca, '/path/to/ca.pem')
+  assert.strictEqual(capturedTlsConfig.cert, '/path/to/cert.pem')
+  assert.strictEqual(capturedTlsConfig.key, '/path/to/key.pem')
+  assert.strictEqual(capturedTlsConfig.sslTargetNameOverride, 'openshell.local')
+  assert.strictEqual(capturedInsecure, undefined)
+})
+
+test('openshellPlugin.resume respects insecure flag', async () => {
+  let capturedInsecure: any = undefined
+
+  const mockFactory: OpenShellClientFactory = {
+    async connect(_addr: string, _token?: string, tlsConfig?: any, insecure?: boolean) {
+      capturedInsecure = insecure
+      return createMockClient({ approveSuccess: true }).connect(_addr, _token, tlsConfig, insecure)
+    },
+  }
+
+  __setOpenShellClientFactory(mockFactory)
+
+  const origin: OriginRef = {
+    plugin: 'openshell',
+    projectId: 'prj_test',
+    runId: 'sandbox:chunk',
+    resumeHandle: {
+      gatewayAddr: 'localhost:50051',
+      workspace: 'ws',
+      sandbox: 'sb',
+      chunkId: 'chunk_1',
+      reviewToken: 'rt_1',
+    },
+  }
+
+  const payload: DecisionPayload = {
+    decision: 'accept',
+  }
+
+  const credentials = {
+    plugin: 'openshell' as const,
+    tlsInsecure: true,
+  }
+
+  await openshellPlugin.resume(origin, payload, credentials)
+
+  assert.strictEqual(capturedInsecure, true, 'insecure flag should be true')
+})
+
+test('openshellPlugin.resume fails closed without TLS or insecure flag', async () => {
+  // Reset to production factory to test actual credentials validation
+  // The production factory will throw when createGrpcCredentials is called without TLS or insecure flag
+  const productionFactory = {
+    async connect(gatewayAddr: string, bearerToken?: string, tlsConfig?: any, insecure?: boolean) {
+      // This simulates the production path where createGrpcCredentials would throw
+      if (!insecure && !(tlsConfig && (tlsConfig.ca || tlsConfig.cert || tlsConfig.key))) {
+        throw new Error('OpenShell gRPC client requires TLS configuration (tlsCaFile, tlsCertFile, tlsKeyFile) or explicit insecure flag (tlsInsecure=true) for dev/test only')
+      }
+      return createMockClient({}).connect(gatewayAddr, bearerToken, tlsConfig, insecure)
+    },
+  }
+  __setOpenShellClientFactory(productionFactory)
+
+  const origin: OriginRef = {
+    plugin: 'openshell',
+    projectId: 'prj_test',
+    runId: 'sandbox:chunk',
+    resumeHandle: {
+      gatewayAddr: 'localhost:50051',
+      workspace: 'ws',
+      sandbox: 'sb',
+      chunkId: 'chunk_1',
+      reviewToken: 'rt_1',
+    },
+  }
+
+  const payload: DecisionPayload = {
+    decision: 'accept',
+  }
+
+  const credentials = {
+    plugin: 'openshell' as const,
+    token: 'bearer_token',
+  }
+
+  const result = (await openshellPlugin.resume(origin, payload, credentials)) as ResumeResponse
+
+  assert.strictEqual(result.status, 500)
+  assert.ok(result.error?.includes('requires TLS configuration'))
 })

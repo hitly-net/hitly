@@ -11,6 +11,7 @@ import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -22,6 +23,22 @@ export interface OpenShellResumeHandle {
   sandbox: string
   chunkId: string
   reviewToken: string
+}
+
+export interface TlsConfig {
+  /** Path to CA certificate file, or PEM-encoded CA cert string */
+  ca?: string
+  /** Path to client certificate file, or PEM-encoded client cert string */
+  cert?: string
+  /** Path to client private key file, or PEM-encoded client key string */
+  key?: string
+  /** 
+   * Optional channel override for hostname verification
+   * Use when connecting to 127.0.0.1 with a cert that has a different CN
+   * Example: 'grpc.ssl_target_name_override' -> 'openshell.local'
+   */
+  checkServerIdentity?: boolean
+  sslTargetNameOverride?: string
 }
 
 export interface OpenShellClient {
@@ -54,7 +71,12 @@ export interface OpenShellConnection {
 }
 
 export interface OpenShellClientFactory {
-  connect(gatewayAddr: string, bearerToken?: string): Promise<{ client: OpenShellClient; connection: OpenShellConnection }>
+  connect(
+    gatewayAddr: string,
+    bearerToken?: string,
+    tlsConfig?: TlsConfig,
+    insecure?: boolean
+  ): Promise<{ client: OpenShellClient; connection: OpenShellConnection }>
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -65,9 +87,59 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 
+/**
+ * Load TLS material from file path or return as PEM string if already in PEM format.
+ * Detects PEM format by checking for BEGIN/END markers.
+ */
+function loadTlsMaterial(pathOrPem: string): Buffer {
+  const trimmed = pathOrPem.trim()
+  // If it looks like PEM (contains BEGIN/END markers), return as-is
+  if (trimmed.includes('-----BEGIN') && trimmed.includes('-----END')) {
+    return Buffer.from(trimmed, 'utf-8')
+  }
+  // Otherwise treat as file path
+  return readFileSync(pathOrPem)
+}
+
+/**
+ * Create gRPC channel credentials based on TLS configuration.
+ * - If insecure=true: createInsecure (dev/test only, explicit opt-in)
+ * - If tlsConfig provided: createSsl with CA + client cert/key for mTLS
+ * - Otherwise: throw error (fail-closed, require explicit TLS or insecure flag)
+ */
+function createGrpcCredentials(tlsConfig?: TlsConfig, insecure?: boolean): grpc.ChannelCredentials {
+  // Explicit insecure mode (dev/test only)
+  if (insecure === true) {
+    return grpc.credentials.createInsecure()
+  }
+
+  // TLS/mTLS mode
+  if (tlsConfig && (tlsConfig.ca || tlsConfig.cert || tlsConfig.key)) {
+    const rootCerts = tlsConfig.ca ? loadTlsMaterial(tlsConfig.ca) : undefined
+    const privateKey = tlsConfig.key ? loadTlsMaterial(tlsConfig.key) : undefined
+    const certChain = tlsConfig.cert ? loadTlsMaterial(tlsConfig.cert) : undefined
+
+    // Validate mTLS: if client cert is provided, key must also be provided
+    if ((certChain && !privateKey) || (!certChain && privateKey)) {
+      throw new Error('TLS client cert and key must both be provided for mTLS')
+    }
+
+    const sslCreds = grpc.credentials.createSsl(rootCerts, privateKey, certChain)
+
+    // Apply channel options if SSL target name override is specified
+    // (This is handled via channel args in the client constructor below)
+    return sslCreds
+  }
+
+  // Fail-closed: require explicit TLS config or insecure flag
+  throw new Error(
+    'OpenShell gRPC client requires TLS configuration (tlsCaFile, tlsCertFile, tlsKeyFile) or explicit insecure flag (tlsInsecure=true) for dev/test only'
+  )
+}
+
 // Production gRPC client factory
 const productionClientFactory: OpenShellClientFactory = {
-  async connect(gatewayAddr: string, bearerToken?: string) {
+  async connect(gatewayAddr: string, bearerToken?: string, tlsConfig?: TlsConfig, insecure?: boolean) {
     const protoPath = join(__dirname, '../proto/openshell.proto')
     const packageDefinition = protoLoader.loadSync(protoPath, {
       keepCase: true,
@@ -81,9 +153,20 @@ const productionClientFactory: OpenShellClientFactory = {
     const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any
     const OpenShellService = protoDescriptor.openshell.v1.OpenShell
 
-    // Use insecure for now; add TLS support when needed
-    const credentials = grpc.credentials.createInsecure()
-    const client = new OpenShellService(gatewayAddr, credentials) as OpenShellClient
+    // Create channel credentials (TLS/mTLS or insecure)
+    const credentials = createGrpcCredentials(tlsConfig, insecure)
+
+    // Build channel args for SSL target name override if needed
+    const channelArgs: Record<string, any> = {}
+    if (tlsConfig?.sslTargetNameOverride) {
+      channelArgs['grpc.ssl_target_name_override'] = tlsConfig.sslTargetNameOverride
+    }
+    if (tlsConfig?.checkServerIdentity === false) {
+      // Disable hostname verification (use with caution)
+      channelArgs['grpc.ssl_target_name_override'] = tlsConfig.sslTargetNameOverride || 'localhost'
+    }
+
+    const client = new OpenShellService(gatewayAddr, credentials, channelArgs) as OpenShellClient
 
     return {
       client,
@@ -206,8 +289,28 @@ export const openshellPlugin: HitlyPlugin = {
 
     const bearerToken = typeof credentials?.token === 'string' ? credentials.token : undefined
 
+    // Extract TLS configuration from credentials
+    const tlsCa = optionalString(credentials?.tlsCaFile || credentials?.tlsCa)
+    const tlsCert = optionalString(credentials?.tlsCertFile || credentials?.tlsCert)
+    const tlsKey = optionalString(credentials?.tlsKeyFile || credentials?.tlsKey)
+    const tlsSslTargetNameOverride = optionalString(credentials?.tlsSslTargetNameOverride)
+    const tlsCheckServerIdentity = credentials?.tlsCheckServerIdentity
+
+    const tlsConfig: TlsConfig | undefined = 
+      tlsCa || tlsCert || tlsKey || tlsSslTargetNameOverride || tlsCheckServerIdentity !== undefined
+        ? {
+            ca: tlsCa,
+            cert: tlsCert,
+            key: tlsKey,
+            sslTargetNameOverride: tlsSslTargetNameOverride,
+            checkServerIdentity: tlsCheckServerIdentity === false ? false : undefined,
+          }
+        : undefined
+
+    const insecure = (credentials?.tlsInsecure === true || credentials?.insecure === true) ? true : undefined
+
     try {
-      const { client, connection } = await clientFactory.connect(gatewayAddr, bearerToken)
+      const { client, connection } = await clientFactory.connect(gatewayAddr, bearerToken, tlsConfig, insecure)
 
       const metadata = new grpc.Metadata()
       if (bearerToken) {
@@ -305,8 +408,28 @@ export const openshellPlugin: HitlyPlugin = {
 
     const bearerToken = typeof credentials.token === 'string' ? credentials.token : undefined
 
+    // Extract TLS configuration
+    const tlsCa = optionalString(credentials.tlsCaFile || credentials.tlsCa)
+    const tlsCert = optionalString(credentials.tlsCertFile || credentials.tlsCert)
+    const tlsKey = optionalString(credentials.tlsKeyFile || credentials.tlsKey)
+    const tlsSslTargetNameOverride = optionalString(credentials.tlsSslTargetNameOverride)
+    const tlsCheckServerIdentity = credentials.tlsCheckServerIdentity
+
+    const tlsConfig: TlsConfig | undefined = 
+      tlsCa || tlsCert || tlsKey || tlsSslTargetNameOverride || tlsCheckServerIdentity !== undefined
+        ? {
+            ca: tlsCa,
+            cert: tlsCert,
+            key: tlsKey,
+            sslTargetNameOverride: tlsSslTargetNameOverride,
+            checkServerIdentity: tlsCheckServerIdentity === false ? false : undefined,
+          }
+        : undefined
+
+    const insecure = (credentials.tlsInsecure === true || credentials.insecure === true) ? true : undefined
+
     try {
-      const { connection } = await clientFactory.connect(gatewayAddr, bearerToken)
+      const { connection } = await clientFactory.connect(gatewayAddr, bearerToken, tlsConfig, insecure)
       connection.close()
       return 'ok'
     } catch {

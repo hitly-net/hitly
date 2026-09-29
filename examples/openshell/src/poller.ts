@@ -9,9 +9,57 @@ import * as protoLoader from '@grpc/proto-loader'
 import fetch from 'node-fetch'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
+
+interface TlsConfig {
+  ca?: string
+  cert?: string
+  key?: string
+  sslTargetNameOverride?: string
+  insecure?: boolean
+}
+
+/**
+ * Load TLS material from file path or return as PEM string if already in PEM format.
+ */
+function loadTlsMaterial(pathOrPem: string): Buffer {
+  const trimmed = pathOrPem.trim()
+  if (trimmed.includes('-----BEGIN') && trimmed.includes('-----END')) {
+    return Buffer.from(trimmed, 'utf-8')
+  }
+  return readFileSync(pathOrPem)
+}
+
+/**
+ * Create gRPC channel credentials based on TLS configuration.
+ * - If insecure=true: createInsecure (dev/test only, explicit opt-in)
+ * - If tlsConfig provided: createSsl with CA + client cert/key for mTLS
+ * - Otherwise: throw error (fail-closed, require explicit TLS or insecure flag)
+ */
+function createGrpcCredentials(tlsConfig?: TlsConfig): grpc.ChannelCredentials {
+  if (tlsConfig?.insecure === true) {
+    return grpc.credentials.createInsecure()
+  }
+
+  if (tlsConfig && (tlsConfig.ca || tlsConfig.cert || tlsConfig.key)) {
+    const rootCerts = tlsConfig.ca ? loadTlsMaterial(tlsConfig.ca) : undefined
+    const privateKey = tlsConfig.key ? loadTlsMaterial(tlsConfig.key) : undefined
+    const certChain = tlsConfig.cert ? loadTlsMaterial(tlsConfig.cert) : undefined
+
+    if ((certChain && !privateKey) || (!certChain && privateKey)) {
+      throw new Error('TLS client cert and key must both be provided for mTLS')
+    }
+
+    return grpc.credentials.createSsl(rootCerts, privateKey, certChain)
+  }
+
+  throw new Error(
+    'OpenShell poller requires TLS configuration (OPENSHELL_TLS_CA_FILE, OPENSHELL_TLS_CERT_FILE, OPENSHELL_TLS_KEY_FILE) or explicit insecure flag (OPENSHELL_TLS_INSECURE=1) for dev/test only'
+  )
+}
 
 interface PolicyChunk {
   chunk_id: string
@@ -34,6 +82,7 @@ interface Config {
     bearerToken: string
     workspace: string
     sandboxIds: string[]
+    tls?: TlsConfig
   }
   hitly: {
     apiUrl: string
@@ -67,9 +116,17 @@ class OpenShellPoller {
     const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any
     const OpenShellService = protoDescriptor.openshell.v1.OpenShell
 
+    const credentials = createGrpcCredentials(this.config.openshell.tls)
+
+    const channelArgs: Record<string, any> = {}
+    if (this.config.openshell.tls?.sslTargetNameOverride) {
+      channelArgs['grpc.ssl_target_name_override'] = this.config.openshell.tls.sslTargetNameOverride
+    }
+
     this.grpcClient = new OpenShellService(
       this.config.openshell.gatewayAddr,
-      grpc.credentials.createInsecure()
+      credentials,
+      channelArgs
     )
   }
 
@@ -253,6 +310,11 @@ function loadConfig(): Config {
     return value
   }
 
+  const optional = (name: string): string | undefined => {
+    const value = process.env[name]?.trim()
+    return value || undefined
+  }
+
   const sandboxIds = required('OPENSHELL_SANDBOX_IDS')
     .split(',')
     .map(s => s.trim())
@@ -262,12 +324,35 @@ function loadConfig(): Config {
     throw new Error('OPENSHELL_SANDBOX_IDS must contain at least one sandbox ID')
   }
 
+  // Normalize gateway address: remove https:// prefix if present
+  let gatewayAddr = required('OPENSHELL_GATEWAY_ADDR')
+  gatewayAddr = gatewayAddr.replace(/^https?:\/\//, '')
+
+  // Load TLS configuration
+  const tlsCa = optional('OPENSHELL_TLS_CA_FILE')
+  const tlsCert = optional('OPENSHELL_TLS_CERT_FILE')
+  const tlsKey = optional('OPENSHELL_TLS_KEY_FILE')
+  const tlsSslTargetNameOverride = optional('OPENSHELL_TLS_SSL_TARGET_NAME_OVERRIDE')
+  const tlsInsecure = process.env.OPENSHELL_TLS_INSECURE === '1' || process.env.OPENSHELL_TLS_INSECURE === 'true'
+
+  const tlsConfig: TlsConfig | undefined = 
+    tlsCa || tlsCert || tlsKey || tlsInsecure
+      ? {
+          ca: tlsCa,
+          cert: tlsCert,
+          key: tlsKey,
+          sslTargetNameOverride: tlsSslTargetNameOverride,
+          insecure: tlsInsecure,
+        }
+      : undefined
+
   return {
     openshell: {
-      gatewayAddr: required('OPENSHELL_GATEWAY_ADDR'),
+      gatewayAddr,
       bearerToken: required('OPENSHELL_BEARER_TOKEN'),
       workspace: required('OPENSHELL_WORKSPACE'),
       sandboxIds,
+      tls: tlsConfig,
     },
     hitly: {
       apiUrl: required('HITLY_API_URL'),
