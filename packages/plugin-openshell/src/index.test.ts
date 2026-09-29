@@ -361,3 +361,55 @@ test('openshellPlugin.resume fails closed without TLS or insecure flag', async (
   assert.strictEqual(result.status, 500)
   assert.ok(result.error?.includes('requires TLS configuration'))
 })
+
+test('openshellPlugin.resume sets request_id to chunkId only (not sandbox-prefixed)', async () => {
+  let capturedRequestId: string | undefined
+
+  const mockFactory: OpenShellClientFactory = {
+    async connect(_addr: string, _token?: string, _tlsConfig?: any, _insecure?: boolean) {
+      return {
+        client: {
+          ApproveDraftChunk(request: any, _metadata: grpc.Metadata, callback: (error: any, response?: any) => void) {
+            capturedRequestId = request.request_id
+            callback(null, { policy_version: 42, policy_hash: 'abc123' })
+          },
+          RejectDraftChunk(request: any, _metadata: grpc.Metadata, callback: (error: any, response?: any) => void) {
+            capturedRequestId = request.request_id
+            callback(null, {})
+          },
+        },
+        connection: {
+          close() {},
+        },
+      } as any
+    },
+  }
+
+  __setOpenShellClientFactory(mockFactory)
+
+  const origin: OriginRef = {
+    plugin: 'openshell',
+    projectId: 'prj_test',
+    runId: 'sandbox:chunk',
+    resumeHandle: {
+      gatewayAddr: 'localhost:50051',
+      workspace: 'ws',
+      sandbox: 'test-sandbox',
+      chunkId: '550e8400-e29b-41d4-a716-446655440000',
+      reviewToken: 'rt_1',
+    },
+  }
+
+  const payload: DecisionPayload = {
+    decision: 'accept',
+  }
+
+  const credentials = {
+    plugin: 'openshell' as const,
+    insecure: true,
+  }
+
+  await openshellPlugin.resume(origin, payload, credentials)
+
+  assert.strictEqual(capturedRequestId, '550e8400-e29b-41d4-a716-446655440000', 'request_id should be chunkId only, not sandbox-prefixed')
+})
