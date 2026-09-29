@@ -46,7 +46,9 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
 - Agent parks on `/wait` while human reviews (blocking behavior)
 - Human decision triggers `/wait` return with `policy_reloaded`
 - Agent auto-retries when `/wait` unblocks
-- **Accept = lasting allow** (merged into `network_policies`; 2nd curl passes without HITLy)
+- **Accept = durable merge** into `network_policies` (lasting allow)
+- **Known OpenShell limitation:** 2nd request to same destination passes **WITHOUT HITL** (no per-request approval)
+- **Future wish:** OpenShell `ephemeral_lease` / one-shot approval (not available now)
 
 ## Integration lock
 
@@ -194,10 +196,14 @@ POLL_INTERVAL_MS=5000
   3. Accept in HITLy (while agent parked on `/wait`)
   4. Observe "[Step 5] /wait returned policy_reloaded"
   5. Observe retry succeeds
-  6. Run script again → succeeds immediately (sticky policy)
+  6. Run script again → succeeds immediately (sticky policy / known OpenShell limitation)
 - Update internal demo runbook with **agent `/wait` hero path** (Derek locked)
-- Document sticky policy behavior: Accept = lasting allow, 2nd curl passes
-- Optional: Document rule removal for demo re-takes (not hero claim)
+- Document sticky policy behavior:
+  - Accept = durable `network_policies` merge (lasting allow)
+  - 2nd request passes WITHOUT HITL (known OpenShell limitation)
+  - Future wish: OpenShell `ephemeral_lease` / one-shot (not available now)
+  - Do NOT implement revoke-after-use as HITLy product
+- Ops note: For demo re-takes, Ops may manually clear rules (not hero claim)
 
 ### 3. Start HITLy
 
@@ -437,7 +443,7 @@ The agent's `/wait` long-poll unblocks and agent retries:
 ✅ SUCCESS: Agent retry succeeded under new policy
 ```
 
-**Second curl to same destination (shows sticky policy):**
+**Second curl to same destination (shows sticky policy / known limitation):**
 
 ```bash
 # Run again (no agent /wait this time)
@@ -445,15 +451,19 @@ The agent's `/wait` long-poll unblocks and agent retries:
 ```
 
 **Second run succeeds immediately:**
-- Policy now allows this destination (Accept merged into `network_policies`)
-- No HITLy approval created (rule already exists)
-- This is **correct behavior**: Accept = lasting allow
+- **Accept = durable `network_policies` merge** (merged lasting rule)
+- 2nd request passes **WITHOUT HITL** (no human-in-the-loop on 2nd attempt)
+- **Known OpenShell limitation:** No per-request approval; Accept is sticky
+- **This is OpenShell behavior** (not HITLy product policy)
+- **Do NOT implement revoke-after-use** as HITLy product
+- **Future wish:** OpenShell `ephemeral_lease` / one-shot approval (upstream feature request, not available now)
+- **Ops note:** For demo re-takes, Ops may manually clear rules via `openshell policy` CLI (not hero claim)
 
 **Demo narrative for Accept (hero path):**
 - "Deny → agent POSTs proposal → agent parks on `/wait` (blocking)"
-- "Accept in HITLy → policy updated (lasting allow)"
+- "Accept in HITLy → policy updated (durable merge into `network_policies`)"
 - "Agent `/wait` unblocks with `policy_reloaded` → agent auto-retries → succeeds"
-- "2nd curl passes without HITLy (sticky policy, correct behavior)"
+- "2nd curl passes without HITL (known OpenShell limitation: sticky policy)"
 
 **To demonstrate Reject:**
 - Click **Reject** with optional reason (e.g., "Demo rejection")
@@ -510,15 +520,17 @@ The agent's `/wait` long-poll unblocks and agent retries:
    - Agent runs curl again (new process, new socket)
    - Succeeds (policy now allows)
 
-8. **Optional: Show sticky policy:**
+8. **Optional: Show sticky policy (known OpenShell limitation):**
    - Run script again → succeeds immediately (no HITLy approval)
-   - Policy now permanently allows this destination (correct behavior)
+   - Accept = durable `network_policies` merge (lasting allow)
+   - 2nd request passes WITHOUT HITL (known OpenShell limitation, not HITLy design)
+   - Future wish: OpenShell `ephemeral_lease` / one-shot approval (not available now)
 
 **Narrative for 0.1.2 hero path:**
 - "OpenShell 0.1.2 agent-driven: deny → agent POSTs proposal → agent parks on `/wait`"
 - "**SYNC behavior = agent `/wait` long-poll** (agent blocked while human decides)"
 - "Accept → `/wait` returns `policy_reloaded` → agent auto-retries → succeeds"
-- "2nd attempt passes without HITLy (sticky policy, correct)"
+- "2nd attempt passes without HITL (known OpenShell limitation: sticky policy)"
 
 **Log-review steps for complete demo:**
 
@@ -540,10 +552,11 @@ The agent's `/wait` long-poll unblocks and agent retries:
    - Click approval ID
    - Event chain: `requested` → `decided` (accept) → `resumed` (ApproveDraftChunk success)
 
-5. **2nd attempt (sticky policy):**
+5. **2nd attempt (sticky policy / known OpenShell limitation):**
    - Run script again
    - Show: succeeds immediately, no HITLy approval
-   - Policy allows destination (merged rule)
+   - Accept = durable `network_policies` merge (2nd request passes WITHOUT HITL)
+   - Known OpenShell limitation (future wish: `ephemeral_lease`)
 
 **Do NOT claim:**
 - ❌ "Same curl completes" (fail-fast killed first curl)
