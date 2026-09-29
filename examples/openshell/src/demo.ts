@@ -5,7 +5,7 @@
 import { randomBytes } from 'node:crypto'
 
 interface MockChunk {
-  chunk_id: string
+  id: string
   status: 'pending'
   proposed_rule: {
     kind: string
@@ -32,7 +32,7 @@ function generateMockChunk(): MockChunk {
   const ports = [443, 80, 8080, 5432, 6379]
 
   return {
-    chunk_id: `chunk_${randomBytes(8).toString('hex')}`,
+    id: `chunk_${randomBytes(8).toString('hex')}`,
     status: 'pending',
     proposed_rule: {
       kind: 'egress',
@@ -69,7 +69,7 @@ async function main() {
   for (let i = 0; i < 3; i++) {
     const chunk = generateMockChunk()
     console.log(`Chunk ${i + 1}:`)
-    console.log(`  ID: ${chunk.chunk_id}`)
+    console.log(`  ID: ${chunk.id}`)
     console.log(`  Rule: ${chunk.proposed_rule.kind} ${chunk.proposed_rule.protocol}://${chunk.proposed_rule.destination}:${chunk.proposed_rule.port}`)
     console.log(`  Rationale: ${chunk.rationale}`)
     if (chunk.security_notes) {
