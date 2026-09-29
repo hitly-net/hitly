@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
 import { openshellPlugin, __setOpenShellClientFactory, type OpenShellClientFactory } from './index.js'
+import type { OriginRef, DecisionPayload, ResumeResponse } from '@hitly/core'
 import type * as grpc from '@grpc/grpc-js'
 
 // Mock gRPC client for tests
@@ -80,11 +81,10 @@ test('openshellPlugin.ingest throws on missing required fields', () => {
 test('openshellPlugin.resume calls ApproveDraftChunk on accept', async () => {
   __setOpenShellClientFactory(createMockClient({ approveSuccess: true, policyVersion: 42, policyHash: 'abc' }))
 
-  const origin = {
+  const origin: OriginRef = {
     plugin: 'openshell',
     projectId: 'prj_test',
     runId: 'sandbox:chunk',
-    approvalId: 'apr_test',
     resumeHandle: {
       gatewayAddr: 'localhost:50051',
       workspace: 'ws',
@@ -92,25 +92,27 @@ test('openshellPlugin.resume calls ApproveDraftChunk on accept', async () => {
       chunkId: 'chunk_1',
       reviewToken: 'rt_1',
     },
-    details: {},
   }
 
-  const result = await openshellPlugin.resume(origin, { decision: 'accept' }, { token: 'bearer_token' })
+  const payload: DecisionPayload = {
+    decision: 'accept',
+  }
+
+  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', token: 'bearer_token' })) as ResumeResponse
 
   assert.strictEqual(result.status, 200)
-  assert.strictEqual(result.body?.policyVersion, 42)
-  assert.strictEqual(result.body?.policyHash, 'abc')
+  assert.strictEqual((result.body as any)?.policyVersion, 42)
+  assert.strictEqual((result.body as any)?.policyHash, 'abc')
   assert.strictEqual(result.error, undefined)
 })
 
 test('openshellPlugin.resume calls RejectDraftChunk on reject', async () => {
   __setOpenShellClientFactory(createMockClient({ rejectSuccess: true }))
 
-  const origin = {
+  const origin: OriginRef = {
     plugin: 'openshell',
     projectId: 'prj_test',
     runId: 'sandbox:chunk',
-    approvalId: 'apr_test',
     resumeHandle: {
       gatewayAddr: 'localhost:50051',
       workspace: 'ws',
@@ -118,28 +120,27 @@ test('openshellPlugin.resume calls RejectDraftChunk on reject', async () => {
       chunkId: 'chunk_1',
       reviewToken: 'rt_1',
     },
-    details: {},
   }
 
-  const result = await openshellPlugin.resume(
-    origin,
-    { decision: 'reject', response: 'Not safe' },
-    { token: 'bearer_token' }
-  )
+  const payload: DecisionPayload = {
+    decision: 'reject',
+    response: 'Not safe',
+  }
+
+  const result = (await openshellPlugin.resume(origin, payload, { plugin: 'openshell', token: 'bearer_token' })) as ResumeResponse
 
   assert.strictEqual(result.status, 200)
-  assert.strictEqual(result.body?.rejected, true)
+  assert.strictEqual((result.body as any)?.rejected, true)
   assert.strictEqual(result.error, undefined)
 })
 
 test('openshellPlugin.resume handles ApproveDraftChunk failure', async () => {
   __setOpenShellClientFactory(createMockClient({ approveSuccess: false, approveError: 'Stale review token' }))
 
-  const origin = {
+  const origin: OriginRef = {
     plugin: 'openshell',
     projectId: 'prj_test',
     runId: 'sandbox:chunk',
-    approvalId: 'apr_test',
     resumeHandle: {
       gatewayAddr: 'localhost:50051',
       workspace: 'ws',
@@ -147,23 +148,25 @@ test('openshellPlugin.resume handles ApproveDraftChunk failure', async () => {
       chunkId: 'chunk_1',
       reviewToken: 'rt_1',
     },
-    details: {},
   }
 
-  const result = await openshellPlugin.resume(origin, { decision: 'accept' })
+  const payload: DecisionPayload = {
+    decision: 'accept',
+  }
 
-  assert.strictEqual(result.status, 9) // FAILED_PRECONDITION
+  const result = (await openshellPlugin.resume(origin, payload)) as ResumeResponse
+
+  assert.strictEqual(result.status, 9)
   assert.ok(result.error?.includes('Stale review token'))
 })
 
 test('openshellPlugin.resume handles RejectDraftChunk failure', async () => {
   __setOpenShellClientFactory(createMockClient({ rejectSuccess: false, rejectError: 'Internal error' }))
 
-  const origin = {
+  const origin: OriginRef = {
     plugin: 'openshell',
     projectId: 'prj_test',
     runId: 'sandbox:chunk',
-    approvalId: 'apr_test',
     resumeHandle: {
       gatewayAddr: 'localhost:50051',
       workspace: 'ws',
@@ -171,21 +174,23 @@ test('openshellPlugin.resume handles RejectDraftChunk failure', async () => {
       chunkId: 'chunk_1',
       reviewToken: 'rt_1',
     },
-    details: {},
   }
 
-  const result = await openshellPlugin.resume(origin, { decision: 'reject' })
+  const payload: DecisionPayload = {
+    decision: 'reject',
+  }
 
-  assert.strictEqual(result.status, 13) // INTERNAL
+  const result = (await openshellPlugin.resume(origin, payload)) as ResumeResponse
+
+  assert.strictEqual(result.status, 13)
   assert.ok(result.error?.includes('Internal error'))
 })
 
 test('openshellPlugin.resume rejects unsupported decisions', async () => {
-  const origin = {
+  const origin: OriginRef = {
     plugin: 'openshell',
     projectId: 'prj_test',
     runId: 'sandbox:chunk',
-    approvalId: 'apr_test',
     resumeHandle: {
       gatewayAddr: 'localhost:50051',
       workspace: 'ws',
@@ -193,10 +198,13 @@ test('openshellPlugin.resume rejects unsupported decisions', async () => {
       chunkId: 'chunk_1',
       reviewToken: 'rt_1',
     },
-    details: {},
   }
 
-  const result = await openshellPlugin.resume(origin, { decision: 'edit' as any })
+  const payload: DecisionPayload = {
+    decision: 'edit' as any,
+  }
+
+  const result = (await openshellPlugin.resume(origin, payload)) as ResumeResponse
 
   assert.strictEqual(result.status, 400)
   assert.ok(result.error?.includes('Unsupported decision'))
@@ -205,13 +213,19 @@ test('openshellPlugin.resume rejects unsupported decisions', async () => {
 test('openshellPlugin.healthcheck returns ok on success', async () => {
   __setOpenShellClientFactory(createMockClient({}))
 
-  const result = await openshellPlugin.healthcheck({ address: 'localhost:50051', token: 'bearer' })
+  const result = await openshellPlugin.healthcheck({
+    plugin: 'openshell',
+    address: 'localhost:50051',
+    token: 'bearer',
+  })
 
   assert.strictEqual(result, 'ok')
 })
 
 test('openshellPlugin.healthcheck returns error on missing address', async () => {
-  const result = await openshellPlugin.healthcheck({})
+  const result = await openshellPlugin.healthcheck({
+    plugin: 'openshell',
+  })
 
   assert.strictEqual(result, 'error')
 })
