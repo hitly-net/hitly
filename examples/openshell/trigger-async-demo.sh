@@ -43,7 +43,8 @@
 #   2. Draft chunk created (human_review_required)
 #   3. Poller detects draft within 5 seconds → HITLy approval
 #   4. Human accepts in HITLy → policy updated
-#   5. RE-RUN this script → succeeds (policy now allows)
+#   5. VERIFY policy: openshell policy get <sandbox> --full
+#   6. RE-RUN this script (new curl, not same process) → succeeds
 #
 # DEMO RECORDING TIPS:
 #   - Show fail-fast: curl exits immediately with error
@@ -104,8 +105,9 @@ echo "  1. This curl will FAIL immediately (Permission denied)"
 echo "  2. OpenShell creates draft chunk (human_review_required)"
 echo "  3. Poller detects chunk and creates HITLy approval (within 5s)"
 echo "  4. Human reviews in HITLy inbox: http://localhost:3001/inbox"
-echo "  5. Accept → policy approved"
-echo "  6. RE-RUN this script → succeeds (policy now allows)"
+echo "  5. Accept → policy updated"
+echo "  6. VERIFY policy: openshell policy get <sandbox> --full"
+echo "  7. RE-RUN this script (new curl, not same process) → succeeds"
 echo ""
 echo "📹 Recording tip: Show fail → Accept in HITLy → re-run → success"
 echo ""
@@ -146,8 +148,9 @@ else
   echo "   2. Check HITLy inbox: http://localhost:3001/inbox"
   echo "   3. Check poller logs (Terminal 3) for draft detection"
   echo "   4. Accept in HITLy inbox → policy approved"
-  echo "   5. RE-RUN this script: $0 $URL"
-  echo "   6. Second run should succeed (policy now allows)"
+  echo "   5. VERIFY policy updated: openshell policy get <sandbox> --full"
+  echo "   6. RE-RUN this script (new curl): $0 $URL"
+  echo "   7. Second run should succeed (policy now allows; not same process)"
   echo ""
   echo "   If this is a SECOND run and still fails:"
   echo "   - Verify policy approved: openshell policy get <sandbox>"

@@ -62,7 +62,8 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
 | --- | --- |
 | `packages/plugin-openshell/` | Plugin (resume logic: `ApproveDraftChunk` / `RejectDraftChunk`) |
 | `examples/openshell/` | Poller (polls `GetDraftPolicy`, creates HITLy approvals) + demo |
-| `examples/openshell/trigger-async-demo.sh` | **Helper script:** Run inside sandbox to trigger async demo (fail-fast + retry) |
+| `examples/openshell/trigger-agent-wait-demo.sh` | **Hero script:** Agent-driven with POST proposal + GET /wait + auto-retry |
+| `examples/openshell/trigger-async-demo.sh` | **Fallback script:** Manual async (fail-fast + manual retry, no /wait) |
 | `examples/openshell/docs/` | **Advanced:** Gateway interceptor design (optional, not required for primary demo) |
 | `examples/openshell/interceptor/` | **Advanced:** Reference interceptor stub (disabled by default) |
 
@@ -222,21 +223,21 @@ yarn demo
 
 Shows mock pending chunks and architecture explanation.
 
-## How to record an async demo (Derek) — OpenShell 0.1.2
+## How to record agent-driven demo (Derek) — OpenShell 0.1.2
 
 ### Goal
 
-Demonstrate **async** OpenShell→HITLy flow on OpenShell 0.1.2 where:
+Demonstrate **agent-driven** OpenShell→HITLy flow using policy advisor where:
 1. Network request **fails immediately** (Permission denied, fail-fast)
-2. Draft chunk created for HITLy review
-3. Human reviews and decides in HITLy inbox
-4. Policy updated by HITLy
-5. **Retry** the request → succeeds (policy now allows)
+2. Agent **POSTs proposal** (agent_policy_proposals)
+3. Agent **GETs `/wait`** → parks (long-poll)
+4. Human reviews and decides in HITLy inbox
+5. `/wait` returns **`policy_reloaded`**
+6. Agent **retries** (new request) → succeeds under new rule
 
-**Preferred long-term product story** (requires future OpenShell held-connection feature):
-- In-flight request blocks → HITLy Accept → same request completes (no retry)
-- When available, update docs to emphasize sync resume
-- For now: **async flow is the honest, working path on 0.1.2**
+**Sync in this demo:** Agent `/wait` long-poll (not same-socket curl resume).
+
+**Hero path:** Agent parks on `/wait` while human decides, then auto-retries when policy reloads.
 
 ### Architecture
 
@@ -283,7 +284,8 @@ Operator re-runs curl → succeeds (policy now allows)
 
 ### Prerequisites
 
-1. **OpenShell sandbox running** with human-review mode enabled
+1. **OpenShell sandbox running** with agent-driven policy proposals enabled
+   - Gateway configured with **`agent_policy_proposals_enabled`**
    - Sandbox configured for `proposal_approval_mode=manual`
    - Check with: `openshell sandbox get <sandbox-id>` or gateway admin
    - **Note:** OpenShell 0.1.2 is fail-fast (not blocking); requests denied immediately
@@ -292,7 +294,11 @@ Operator re-runs curl → succeeds (policy now allows)
    - Ops prerequisite: install curl in sandbox image before demo
    - Alternative: use `/dev/tcp` or other built-in tools (see script comments)
 
-3. **HITLy app running**
+3. **Agent that understands policy advisor pattern** (POSTs proposals + GETs `/wait`)
+   - Reference: https://docs.nvidia.com/openshell/how-it-works/policies/advisor
+   - For demo: use provided `trigger-agent-wait-demo.sh` script
+
+4. **HITLy app running**
    ```bash
    # Terminal 1: from repo root
    yarn dev:app
@@ -363,24 +369,18 @@ Check HITLy inbox: http://localhost:3001/inbox
 After Accept, re-run: ./trigger-async-demo.sh
 ```
 
-#### Option B: Manual curl (also works)
+#### Option B: Manual (fallback, no `/wait` long-poll)
 
 **Terminal 4: Inside OpenShell sandbox**
 
-Run any network request that requires human approval:
+If agent `/wait` not available, use manual async fallback:
 
 ```bash
-# Example: curl to external API (requires curl installed in sandbox)
-curl -v https://api.anthropic.com/v1/models
-
-# Expected: Permission denied (fail-fast)
-# Then check HITLy inbox, Accept, and re-run curl
+# Run manual async script (no /wait long-poll)
+./trigger-async-demo.sh https://api.anthropic.com/v1/models
 ```
 
-**Expected behavior (OpenShell 0.1.2):**
-- Command **fails immediately** (Permission denied ~0s)
-- OpenShell creates a draft chunk with `human_review_required`
-- No blocking wait; curl exits with error
+This is the **fallback** path without agent `/wait` long-poll. See script for details.
 
 #### Terminal 3: Watch poller logs
 
