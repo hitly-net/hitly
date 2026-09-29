@@ -10,34 +10,61 @@
 
 This adapter is **not** a replacement for OpenShell TUI or Sentry. It handles only **pending drafts that need human review** (`human_review_required` / `proposal_approval_mode=manual`).
 
-## Flow
+## Flow (Agent-Driven with `/wait` Long-Poll)
+
+The **agent-driven demo** flow on OpenShell 0.1.2 using policy advisor `/wait` API:
 
 ```
-OpenShell agent triggers human-review draft
+Agent runs curl → Permission denied (fail-fast)
   ↓
-Poller: GetDraftPolicy(pending) → finds new chunk
+Agent POSTs proposal to /v1/proposals
+  ↓
+Agent GETs /v1/proposals/{chunk_id}/wait → parks (long-poll)
+  ↓  [agent /wait request held open, parked]
+Poller: GetDraftPolicy(pending) → finds proposal (within 5s)
   ↓
 Poller: POST /api/v1/approvals → HITLy (idempotent by sandbox:chunkId)
-  ↓
-Reviewer decides in HITLy inbox
+  ↓  [agent still parked on /wait]
+Reviewer decides in HITLy inbox → Accept
   ↓
 HITLy: calls @hitly/plugin-openshell resume
   ↓
-Plugin: ApproveDraftChunk or RejectDraftChunk (gRPC)
+Plugin: ApproveDraftChunk (gRPC) → policy updated (LASTING allow)
+  ↓
+/wait returns status: approved, policy_reloaded: true
+  ↓
+Agent retries curl (new request) → succeeds under new rule
   ↓
 Evidence: hitly.evidence.v1 signed receipt → configured sink
 ```
 
+**SYNC in this demo = agent long-poll on `/v1/proposals/{chunk_id}/wait`** (agent parks while human decides).
+
+**NOT same-socket curl resume** (impossible on 0.1.2 fail-fast).
+
+**Key points:**
+- Agent parks on `/v1/proposals/{chunk_id}/wait` while human reviews (blocking behavior)
+- Human decision triggers `/wait` return with status: approved/rejected, policy_reloaded: true/false
+- Agent auto-retries when `/wait` unblocks with status: approved
+- **Accept = durable merge** into `network_policies` (lasting allow)
+- **Known OpenShell limitation:** 2nd request to same destination passes **WITHOUT HITL** (no per-request approval)
+- **Future wish:** OpenShell `ephemeral_lease` / one-shot approval (not available now)
+
 ## Integration lock
 
-1. **PRIMARY:** OpenShell public gRPC client
+1. **PRIMARY:** OpenShell public gRPC client + **mTLS + review_token**
    - Ingest: `GetDraftPolicy` (polls per configured sandbox ID)
    - Decide: `ApproveDraftChunk` / `RejectDraftChunk`
-   - Auth: Bearer token (passed in `authorization` header)
+   - Auth: mTLS client certificates + Bearer token (optional with mTLS)
+   - **Demo uses this path exclusively** (no interceptor required)
 
 2. **Until** `WatchProposalInbox` / `ListProposalInbox` (NVIDIA #1612) ships: **poll `GetDraftPolicy` for `OPENSHELL_SANDBOX_IDS`**
 
-3. **NOT** primary inbox path: Gateway Interceptors (optional **advanced** defense-in-depth feature, see `docs/interceptor-design.md`, disabled by default, NOT required for demo)
+3. **NOT required for demo:** Gateway Interceptors
+   - Optional **advanced** defense-in-depth feature
+   - See `docs/interceptor-design.md` for advanced users
+   - **Disabled by default**, **NOT part of primary demo path**
+   - Primary security: mTLS + review_token only
 
 4. **NOT:** Supervisor middleware, network-denial spam, or auto-apply
 
@@ -47,6 +74,8 @@ Evidence: hitly.evidence.v1 signed receipt → configured sink
 | --- | --- |
 | `packages/plugin-openshell/` | Plugin (resume logic: `ApproveDraftChunk` / `RejectDraftChunk`) |
 | `examples/openshell/` | Poller (polls `GetDraftPolicy`, creates HITLy approvals) + demo |
+| `examples/openshell/trigger-agent-wait-demo.sh` | **Hero script:** Agent-driven with POST proposal + GET /wait + auto-retry |
+| `examples/openshell/trigger-async-demo.sh` | **Fallback script:** Manual async (fail-fast + manual retry, no /wait) |
 | `examples/openshell/docs/` | **Advanced:** Gateway interceptor design (optional, not required for primary demo) |
 | `examples/openshell/interceptor/` | **Advanced:** Reference interceptor stub (disabled by default) |
 
@@ -151,6 +180,31 @@ POLL_INTERVAL_MS=5000
 - Point `OPENSHELL_TLS_*_FILE` env vars to those paths (shown above)
 - Poller will be deployed after this PR lands (Ops-managed)
 
+**Ops follow-up after PR merge:**
+- Refresh demo scripts on production VM from this branch
+- **Enable agent-driven policy proposals:**
+  - Gateway config: set `agent_policy_proposals_enabled = true`
+  - Verify: check gateway config or admin console
+  - Required for agent `/wait` API to work
+- **Install curl in sandbox image** (0.1.2 default image missing `/usr/bin/curl`)
+- Verify sandbox configured for `proposal_approval_mode=manual` (human-review mode)
+  - Check: `openshell sandbox get <sandbox-id>` or gateway admin console
+  - **Note:** No "blocking" mode on 0.1.2; only `manual` or `auto`
+- Test hero recording path with agent `/wait`:
+  1. Run `trigger-agent-wait-demo.sh` → Permission denied (fail-fast)
+  2. Observe agent script shows "[Step 3] Agent GETs /wait (long-poll, parks...)"
+  3. Accept in HITLy (while agent parked on `/wait`)
+  4. Observe "[Step 5] /wait returned..." (real response with status: approved)
+  5. Observe retry succeeds
+  6. Run script again → succeeds immediately (sticky policy / known OpenShell limitation)
+- Update internal demo runbook with **agent `/wait` hero path** (Derek locked)
+- Document sticky policy behavior:
+  - Accept = durable `network_policies` merge (lasting allow)
+  - 2nd request passes WITHOUT HITL (known OpenShell limitation)
+  - Future wish: OpenShell `ephemeral_lease` / one-shot (not available now)
+  - Do NOT implement revoke-after-use as HITLy product
+- Ops note: For demo re-takes, Ops may manually clear rules (not hero claim)
+
 ### 3. Start HITLy
 
 From repo root:
@@ -193,56 +247,439 @@ yarn demo
 
 Shows mock pending chunks and architecture explanation.
 
-## How to record a walkthrough (Derek)
+## How to record agent-driven demo (Derek) — OpenShell 0.1.2
 
-### Dependencies
+### Goal
 
-1. **HITLy app**
+Demonstrate **agent-driven** OpenShell→HITLy flow using policy advisor where:
+1. Network request **fails immediately** (Permission denied, fail-fast)
+2. Agent **POSTs proposal** to `/v1/proposals`
+3. Agent **GETs `/v1/proposals/{chunk_id}/wait`** → parks (long-poll)
+4. Human reviews and decides in HITLy inbox
+5. `/wait` returns **status: approved, policy_reloaded: true**
+6. Agent **retries** (new request) → succeeds under new rule
+
+**Sync in this demo:** Agent long-poll on `/v1/proposals/{chunk_id}/wait` (not same-socket curl resume).
+
+**Hero path:** Agent parks on `/wait` while human decides, then auto-retries when policy reloads.
+
+### Architecture
+
+- **mTLS + review_token** is the primary path (interceptor is optional/advanced, OFF for this demo)
+- Poller detects draft and creates HITLy approval (within 5 seconds)
+- Human decides in HITLy inbox → HITLy calls plugin → policy updated
+- **Preferred long-term product story:** In-flight request blocks → HITLy decide → same request completes
+  - This requires OpenShell feature to **hold** denied connections (not available on 0.1.2)
+
+### ⚠️ Known Limitations (OpenShell 0.1.2) — Ops Verified
+
+**Synchronous resume FAILS on OpenShell 0.1.2.** The gateway is **fail-fast**, not blocking.
+
+**Ops probe confirmed (OpenShell 0.1.2):**
+
+1. **Denied TCP is fail-fast:** `Permission denied` (~0s) + pending draft created
+2. **Accept does NOT resume** that failed socket
+3. **No "blocking" approval mode** — only `manual` or `auto` (any docs mentioning `proposal_approval_mode=blocking` are wrong)
+4. **Working path on 0.1.2:** Async propose + retry after Accept
+
+**Actual 0.1.2 flow:**
+
+```
+Agent runs curl → Permission denied (fail-fast) + draft chunk created
+  ↓ [curl exits immediately with error]
+Poller detects draft (within 5s) → HITLy approval created
+  ↓
+Human reviews in HITLy inbox → Accept
+  ↓
+HITLy calls ApproveDraftChunk → policy updated
+  ↓
+Operator re-runs curl → succeeds (policy now allows)
+```
+
+**Demo narrative for 0.1.2:**
+
+- **Honest:** "Request denied → draft in HITLy → Accept → policy approved → retry succeeds"
+- **NOT:** "Request blocks → Accept → same request completes" (sync resume not available)
+- Emphasize: HITLy approval and policy update work correctly; held-connection resume is future OpenShell feature
+
+**Preferred long-term story** (requires OpenShell held-connection feature):
+- In-flight request blocks → HITLy Accept → same request completes (no retry)
+- When OpenShell supports this, update docs and demo narrative accordingly
+
+### Prerequisites
+
+1. **OpenShell sandbox running** with agent-driven policy proposals enabled
+   - Gateway configured with **`agent_policy_proposals_enabled`**
+   - Sandbox configured for `proposal_approval_mode=manual`
+   - Check with: `openshell sandbox get <sandbox-id>` or gateway admin
+   - **Note:** OpenShell 0.1.2 is fail-fast (not blocking); requests denied immediately
+
+2. **curl installed in sandbox** (OpenShell 0.1.2 default image missing `/usr/bin/curl`)
+   - Ops prerequisite: install curl in sandbox image before demo
+   - Alternative: use `/dev/tcp` or other built-in tools (see script comments)
+
+3. **Agent that understands policy advisor pattern** (POSTs proposals + GETs `/wait`)
+   - Reference: https://docs.nvidia.com/openshell/how-it-works/policies/advisor
+   - For demo: use provided `trigger-agent-wait-demo.sh` script
+
+4. **HITLy app running**
    ```bash
    # Terminal 1: from repo root
    yarn dev:app
    ```
 
-2. **Evidence sink** (optional)
+4. **Evidence sink (optional)**
    ```bash
    # Terminal 2: from repo root
    cd examples/evidence-http && yarn start
    ```
 
-3. **Poller**
+5. **Poller running**
    ```bash
-   # Terminal 3
+   # Terminal 3: from repo root
    cd examples/openshell && yarn start
    ```
 
-### Recording steps
+### Recording steps (agent-driven /wait flow on OpenShell 0.1.2)
 
-1. **Trigger a human-review draft chunk**
-   - Run an agent under OpenShell (OpenClaw or any agent)
-   - Agent triggers `human_review_required` draft (e.g., outbound API call)
-   - Poller detects within 5 seconds
+#### Option A: Agent `/wait` hero path (recommended — Derek locked)
 
-2. **Show HITLy inbox**
-   - Navigate to `http://localhost:3001/inbox`
-   - New approval appears: `approve-openshell-draft-chunk`
-   - Context shows: workspace, sandbox, chunk ID, proposed rule (protocol, destination, port), rationale, security notes
+**Terminal 4: Inside OpenShell sandbox**
 
-3. **Approve or reject**
-   - Click **Accept** (or **Reject** with optional response)
-   - HITLy calls `@hitly/plugin-openshell` resume
-   - Plugin calls `ApproveDraftChunk` or `RejectDraftChunk`
-   - Poller logs: "HITLy decided..."
-   - Terminal shows gRPC result (policy version, hash, or error)
+```bash
+# Run the agent /wait hero script:
+./trigger-agent-wait-demo.sh https://api.anthropic.com/v1/models
 
-4. **Show OpenShell chunk status**
-   - Use OpenShell CLI: `openshell draft list --sandbox <sandbox> --status approved` (or `rejected`)
-   - Confirm chunk moved from `pending` → `approved`/`rejected`
+# OR: let it use the default URL
+./trigger-agent-wait-demo.sh
+```
 
-5. **Show evidence**
-   - Open `http://localhost:3100` (if using evidence sink)
+The script will:
+- Verify it's running inside a sandbox (warns if not)
+- Check for curl (errors if missing)
+- Run curl (fails immediately with Permission denied)
+- **POST real proposal** to `policy.local/v1/proposals`
+- **GET real long-poll** to `policy.local/v1/proposals/{chunk_id}/wait?timeout=300` (agent parks)
+- Wait for human Accept in HITLy (while parked on `/wait`)
+- Auto-retry when `/wait` returns status: approved
+
+**Expected output (OpenShell 0.1.2 agent-driven with `/wait`):**
+
+```
+=== OpenShell HITLy Agent-Driven Demo (0.1.2) ===
+
+HERO PATH: Agent POSTs proposal + GETs /wait + auto-retries
+
+Demo URL: https://api.anthropic.com/v1/models
+Policy advisor: http://policy.local
+Sandbox:  sandbox-demo-123
+Workspace: demo-workspace
+
+Expected flow (agent-driven with /wait long-poll):
+  1. curl FAILS (Permission denied, fail-fast)
+  2. Agent POSTs proposal to /v1/proposals
+  3. Agent GETs /v1/proposals/{chunk_id}/wait → parks (long-poll)
+  4. [Agent waiting on /wait while human reviews]
+  5. Human Accept in HITLy → policy updated
+  6. /wait returns status: approved, policy_reloaded: true
+  7. Agent retries curl (new request) → succeeds
+
+SYNC = agent long-poll on /v1/proposals/{chunk_id}/wait (NOT same-socket curl resume).
+
+[Step 1] Attempting initial request (expect Permission denied)...
+[curl fails with Permission denied]
+
+[Step 2] Agent POSTs policy proposal to http://policy.local/v1/proposals...
+[Real HTTP POST with JSON payload]
+[Step 2] ✅ Proposal submitted successfully (chunk_id: chunk-abc123)
+
+[Step 3] Agent GETs /wait (long-poll, parks until policy reload)...
+   Agent is now PARKED on /wait (blocking, waiting for human decision)
+   Check HITLy inbox: http://localhost:3001/inbox
+[Agent blocked here, waiting...]
+
+[Human Accepts in HITLy]
+
+[Step 5] /wait returned after 45s
+   Response: {"status": "approved", "policy_reloaded": true, ...}
+[Step 5] ✅ Proposal approved! (status: approved, policy_reloaded: true)
+
+[Step 6] Agent auto-retries (new request under new policy)...
+✅ SUCCESS: Agent retry succeeded under new policy
+
+   Demo showed: deny → POST /v1/proposals → /wait parks → Accept → status:approved → retry succeeds
+
+   SYNC = agent long-poll on /v1/proposals/{chunk_id}/wait (NOT same-socket curl resume)
+```
+
+#### Option B: Manual async fallback (no `/wait` long-poll)
+
+**Terminal 4: Inside OpenShell sandbox**
+
+```bash
+# Copy the helper script into the sandbox (if not already there)
+# Then run:
+./trigger-async-demo.sh https://api.anthropic.com/v1/models
+
+# OR: let it use the default URL
+./trigger-async-demo.sh
+```
+
+The script will:
+- Verify it's running inside a sandbox (warns if not)
+- Check for curl (errors if missing, shows workaround)
+- Display expected flow (fail-fast on 0.1.2)
+- Run curl (fails immediately with Permission denied)
+- Guide user to Accept in HITLy, verify policy, then retry (new curl)
+
+**Expected output (OpenShell 0.1.2 fail-fast):**
+
+```
+=== OpenShell HITLy Async Demo (0.1.2) ===
+
+⚠️  OpenShell 0.1.2 is FAIL-FAST (Ops verified):
+   - Request will be DENIED immediately (Permission denied ~0s)
+   - Draft chunk created for HITLy review
+   - After Accept, RE-RUN this script (retry)
+
+Demo URL: https://api.anthropic.com/v1/models
+Sandbox:  sandbox-demo-123
+Workspace: demo-workspace
+
+Expected flow (0.1.2 fail-fast):
+  1. This curl will FAIL immediately (Permission denied)
+  2. OpenShell creates draft chunk (human_review_required)
+  3. Poller detects chunk and creates HITLy approval (within 5s)
+  4. Human reviews in HITLy inbox
+  5. Accept → policy approved
+  6. RE-RUN this script → succeeds (policy now allows)
+
+Starting request (expect fail-fast on first run)...
+
+curl: (7) Failed to connect: Permission denied
+
+[Request failed as expected - draft created]
+Check HITLy inbox: http://localhost:3001/inbox
+After Accept, re-run: ./trigger-async-demo.sh
+```
+
+#### Option B: Manual async fallback (no `/wait` long-poll)
+
+**Terminal 4: Inside OpenShell sandbox**
+
+If agent `/wait` not available, use manual async fallback:
+
+```bash
+# Run manual async script (no /wait long-poll)
+./trigger-async-demo.sh https://api.anthropic.com/v1/models
+```
+
+This is the **fallback** path without agent `/wait` long-poll. See script for details.
+
+#### Terminal 3: Watch poller logs
+
+Poller detects the draft within 5 seconds:
+
+```
+[Poller] Sandbox <sandbox>: 1 pending chunks
+[Poller] New pending chunk: chunk_abc123 in <sandbox>
+[HITLy] Created approval appr_xyz789 for chunk chunk_abc123
+```
+
+#### Browser: HITLy inbox
+
+1. Navigate to `http://localhost:3001/inbox`
+2. See new approval: `approve-openshell-draft-chunk`
+3. Review context:
+   - **Destination:** `https://api.anthropic.com` (or actual URL)
+   - **Rationale:** Agent observed repeated connection attempts
+   - **Security Notes:** External API access, credentials may be sent
+
+#### Browser: Accept or Reject (while agent parked on `/wait`)
+
+**To demonstrate Accept:**
+- Click **Accept** in HITLy inbox (while agent parked on `/wait`)
+- HITLy calls `ApproveDraftChunk`
+- OpenShell approves the chunk and updates policy (LASTING allow)
+- `/wait` API returns `policy_reloaded` to agent
+- Agent auto-retries (new curl)
+
+**Terminal 4 (sandbox) — agent auto-retry:**
+
+The agent's `/wait` long-poll unblocks and agent retries:
+
+```
+[Step 6] Agent auto-retries (new request under new policy)...
+✅ SUCCESS: Agent retry succeeded under new policy
+```
+
+**Second curl to same destination (shows sticky policy / known limitation):**
+
+```bash
+# Run again (no agent /wait this time)
+./trigger-agent-wait-demo.sh https://api.anthropic.com/v1/models
+```
+
+**Second run succeeds immediately:**
+- **Accept = durable `network_policies` merge** (merged lasting rule)
+- 2nd request passes **WITHOUT HITL** (no human-in-the-loop on 2nd attempt)
+- **Known OpenShell limitation:** No per-request approval; Accept is sticky
+- **This is OpenShell behavior** (not HITLy product policy)
+- **Do NOT implement revoke-after-use** as HITLy product
+- **Future wish:** OpenShell `ephemeral_lease` / one-shot approval (upstream feature request, not available now)
+- **Ops note:** For demo re-takes, Ops may manually clear rules via `openshell policy` CLI (not hero claim)
+
+**Demo narrative for Accept (hero path):**
+- "Deny → agent POSTs proposal to /v1/proposals → agent parks on /v1/proposals/{chunk_id}/wait (blocking)"
+- "Accept in HITLy → policy updated (durable merge into `network_policies`)"
+- "Agent `/wait` unblocks with status: approved, policy_reloaded: true → agent auto-retries → succeeds"
+- "2nd curl passes without HITL (known OpenShell limitation: sticky policy)"
+
+**To demonstrate Reject:**
+- Click **Reject** with optional reason (e.g., "Demo rejection")
+- HITLy calls `RejectDraftChunk`
+- OpenShell rejects the chunk
+- `/wait` API returns status: rejected (policy not updated)
+- Agent auto-retry still fails (policy denied)
+
+**Terminal 4 (sandbox) — agent auto-retry after Reject:**
+
+```
+[Step 6] Agent auto-retries (new request)...
+❌ FAILED: Agent retry still denied (policy rejected)
+```
+
+**Demo narrative for Reject:**
+- "Deny → agent POSTs proposal → agent parks on `/wait`"
+- "Reject in HITLy → policy NOT updated"
+- "Agent `/wait` timeout or returns → agent auto-retry → still fails"
+
+#### Demo narrative — Hero path with agent `/wait` long-poll (Derek locked)
+
+**Recording steps (agent-driven `/wait` blocking behavior):**
+
+1. **Deny (fail-fast):**
+   - Run curl in sandbox → Permission denied (~0s)
+   - Show terminal: curl exits immediately with error
+
+2. **Agent POSTs proposal:**
+   - Agent calls `POST policy.local/v1/proposals`
+   - Proposal created (human_review_required)
+
+3. **Agent parks on `/wait` (SYNC blocking behavior):**
+   - Agent calls `GET policy.local/v1/proposals/{chunk_id}/wait?timeout=300`
+   - Agent long-poll **held open** (parks, waits for policy reload)
+   - **This is the SYNC behavior** → agent blocked on `/wait`
+
+4. **Poller detects + HITLy approval:**
+   - Terminal 3 (poller logs): "New pending chunk" within 5s
+   - HITLy approval created in inbox
+
+5. **Human Accept (while agent parked):**
+   - Open HITLy inbox: `http://localhost:3001/inbox`
+   - Show approval card with context
+   - Click **Accept** → HITLy calls `ApproveDraftChunk`
+   - Policy updated (LASTING allow merged into `network_policies`)
+
+6. **`/wait` returns approved:**
+   - Agent's `/wait` long-poll **unblocks**
+   - Returns: `{"status": "approved", "policy_reloaded": true, "version": 2}`
+   - Agent knows policy changed → time to retry
+
+7. **Agent auto-retries (new request):**
+   - Agent runs curl again (new process, new socket)
+   - Succeeds (policy now allows)
+
+8. **Optional: Show sticky policy (known OpenShell limitation):**
+   - Run script again → succeeds immediately (no HITLy approval)
+   - Accept = durable `network_policies` merge (lasting allow)
+   - 2nd request passes WITHOUT HITL (known OpenShell limitation, not HITLy design)
+   - Future wish: OpenShell `ephemeral_lease` / one-shot approval (not available now)
+
+**Narrative for 0.1.2 hero path:**
+- "OpenShell 0.1.2 agent-driven: deny → agent POSTs proposal → agent parks on `/wait`"
+- "**SYNC behavior = agent `/wait` long-poll** (agent blocked while human decides)"
+- "Accept → `/wait` returns `policy_reloaded` → agent auto-retries → succeeds"
+- "2nd attempt passes without HITL (known OpenShell limitation: sticky policy)"
+
+**Log-review steps for complete demo:**
+
+1. **Pause/wait parked:**
+   - Show agent script output: "[Step 3] Agent GETs /wait (long-poll, parks...)"
+   - Emphasize: Agent blocked here (sync behavior via `/wait` API)
+
+2. **Resume OK / Accept:**
+   - Show HITLy inbox: Accept clicked
+   - Show agent script: "[Step 5] /wait returned policy_reloaded"
+   - Show agent retry succeeds
+
+3. **Optional: OpenShell logs:**
+   - `openshell logs --sandbox <sandbox> --since 5m`
+   - Shows: policy v1 → v2, draft approved, rule merged
+
+4. **Optional: Evidence on :3100:**
+   - Open `http://localhost:3100`
    - Click approval ID
-   - See event chain: `requested` → `decided` → `resumed` (or `resume_failed`)
-   - Show integrity hashes linking events
+   - Event chain: `requested` → `decided` (accept) → `resumed` (ApproveDraftChunk success)
+
+5. **2nd attempt (sticky policy / known OpenShell limitation):**
+   - Run script again
+   - Show: succeeds immediately, no HITLy approval
+   - Accept = durable `network_policies` merge (2nd request passes WITHOUT HITL)
+   - Known OpenShell limitation (future wish: `ephemeral_lease`)
+
+**Do NOT claim:**
+- ❌ "Same curl completes" (fail-fast killed first curl)
+- ❌ "In-flight curl resume" (not available on 0.1.2)
+- ❌ "Socket-level blocking → Accept → same socket" (impossible on fail-fast)
+
+**SYNC claim:**
+- ✅ "Agent `/wait` long-poll parks while human decides" (correct)
+- ✅ "Agent blocked on `/wait` until HITLy decision" (correct)
+- ✅ "Agent auto-retries when `/wait` returns policy_reloaded" (correct)
+
+### Troubleshooting async demo
+
+**"My curl fails immediately with Permission denied"**
+
+This is **expected on OpenShell 0.1.2** (fail-fast). Working as designed.
+- Verify draft chunk created: `openshell draft list --sandbox <sandbox> --status pending`
+- Check HITLy inbox for approval: `http://localhost:3001/inbox`
+- After Accept, **retry the request** (policy now allows)
+
+**"curl: command not found"**
+
+OpenShell 0.1.2 default sandbox image is **missing `/usr/bin/curl`**.
+
+**Workaround:**
+- Ops: Install curl in sandbox image before demo
+- Alternative: Use `/dev/tcp` for TCP connectivity test:
+  ```bash
+  timeout 3 bash -c '</dev/tcp/api.anthropic.com/443' 2>&1
+  # Expected: Permission denied (fail-fast)
+  # After Accept: Connection refused or success
+  ```
+- Document curl installation as Ops prerequisite
+
+**"Poller doesn't detect the chunk"**
+
+- Verify `OPENSHELL_SANDBOX_IDS` includes the sandbox you're testing in
+- Check poller is running: Terminal 3 should show poll logs every 5 seconds
+- Manually verify chunk exists: `openshell draft list --sandbox <sandbox> --status pending`
+
+**"HITLy shows approval but poller logs resume errors"**
+
+- Check Terminal 3 (poller) for errors
+- Look for: `ApproveDraftChunk failed: FAILED_PRECONDITION` (stale review_token)
+- Check plugin credentials in HITLy project Config tab (mTLS certs, bearer token)
+- This does NOT prevent policy update; on 0.1.2, **retry** the request after fixing
+
+**"Retry still fails after Accept"**
+
+- Verify policy approved: `openshell policy get <sandbox>` (look for approved chunk)
+- Check poller logs for successful `ApproveDraftChunk` response
+- Destination may need exact match (protocol, port, etc.)
+- Try: `openshell draft list --sandbox <sandbox> --status approved` to see approved rules
 
 ## Acceptance criteria (issue #71)
 
@@ -311,6 +748,7 @@ POLL_INTERVAL_MS=5000                   # default 5s
 **Deployment:**
 - Poller deployment is blocked until this PR lands
 - Ops will wire production config after branch merges
+- **Ops must install curl in sandbox image** before demo (see "Ops follow-up" above)
 
 ## Troubleshooting
 
