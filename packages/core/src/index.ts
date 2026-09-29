@@ -1,4 +1,4 @@
-export const PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes'] as const
+export const PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes', 'openshell'] as const
 
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
