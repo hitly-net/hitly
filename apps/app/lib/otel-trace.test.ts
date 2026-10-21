@@ -4,6 +4,11 @@ import type { ApprovalEnvelope, DecisionPayload, EvidenceEvent, OriginRef } from
 import { buildOtelSpan, exportOtelTrace, type OtelEndpointConfig } from './otel-trace'
 import { ProtobufTraceSerializer } from '@opentelemetry/otlp-transformer'
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
+import { globalFetchTransport, setDestinationCheckTestHooks } from '@hitly/core/destination-check'
+
+// These tests mock globalThis.fetch. The destination check still runs; only
+// name resolution and the socket are replaced.
+setDestinationCheckTestHooks({ resolve: async () => [{ address: '203.0.113.10' }], transport: globalFetchTransport })
 
 describe('OTEL trace mapper', () => {
   const mockEnvelope: ApprovalEnvelope = {

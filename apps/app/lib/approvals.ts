@@ -29,6 +29,7 @@ import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 import { approvalHasExpired } from './approval-expiry'
 import { appendEvidence, buildDecidedEvent, buildRequestedEvent, buildResumedEvent, loadLatestReceipt } from './evidence'
 import { exportOtelTrace } from './otel-trace'
+import { resumeFailureMessage } from './resume-error'
 
 export async function authenticateProjectKey(rawKey: string, projectId?: string) {
   const hashed = hashApiKey(rawKey)
@@ -506,7 +507,7 @@ export async function decideApproval(args: {
           })
         }
       } catch (error) {
-        resumeError = error instanceof Error ? error.message : 'Resume failed'
+        resumeError = resumeFailureMessage(error)
         status = 'failed_resume'
 
         try {

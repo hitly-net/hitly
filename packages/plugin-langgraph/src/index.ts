@@ -8,6 +8,7 @@ import {
   type ResumeResponse,
 } from '@hitly/core'
 import { signHitlyResume } from './resume-auth'
+import { checkedFetch, destinationHost, destinationStatusMessage } from '@hitly/core/destination-check'
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
@@ -64,12 +65,11 @@ async function postLangGraphResume(
   body: unknown,
   headers?: Record<string, string>,
 ): Promise<{ status: number; body: unknown; error?: string }> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  })
+  const response = await checkedFetch(
+    url,
+    { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) },
+    { totalTimeoutMs: 60_000 },
+  )
   const text = await response.text()
   let parsed: unknown = text || null
   if (text) {
@@ -80,11 +80,10 @@ async function postLangGraphResume(
     }
   }
   if (!response.ok) {
-    const snippet = text.length > 500 ? `${text.slice(0, 500)}…` : text
     return {
       status: response.status,
-      body: parsed,
-      error: `LangGraph resume failed (${response.status}): ${snippet}`,
+      body: null,
+      error: destinationStatusMessage('LangGraph resume', response.status, destinationHost(url)),
     }
   }
   return { status: response.status, body: parsed }
@@ -233,9 +232,9 @@ export const langgraphPlugin: HitlyPlugin = {
     if (!baseUrl) return 'error'
     try {
       const root = baseUrl.replace(/\/$/, '')
-      let response = await fetch(`${root}/ok`)
+      let response = await checkedFetch(`${root}/ok`)
       if (response.ok) return 'ok'
-      response = await fetch(`${root}/info`)
+      response = await checkedFetch(`${root}/info`)
       return response.ok ? 'ok' : 'error'
     } catch {
       return 'error'

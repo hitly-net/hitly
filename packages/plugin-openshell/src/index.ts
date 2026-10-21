@@ -12,6 +12,7 @@ import * as protoLoader from '@grpc/proto-loader'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { assertHostPortAllowed } from '@hitly/core/destination-check'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -310,6 +311,7 @@ export const openshellPlugin: HitlyPlugin = {
     const insecure = (credentials?.tlsInsecure === true || credentials?.insecure === true) ? true : undefined
 
     try {
+      await assertHostPortAllowed(gatewayAddr)
       const { client, connection } = await clientFactory.connect(gatewayAddr, bearerToken, tlsConfig, insecure)
 
       const metadata = new grpc.Metadata()
@@ -429,6 +431,7 @@ export const openshellPlugin: HitlyPlugin = {
     const insecure = (credentials.tlsInsecure === true || credentials.insecure === true) ? true : undefined
 
     try {
+      await assertHostPortAllowed(gatewayAddr)
       const { connection } = await clientFactory.connect(gatewayAddr, bearerToken, tlsConfig, insecure)
       connection.close()
       return 'ok'

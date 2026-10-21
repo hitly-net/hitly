@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { assertDestinationAllowed } from '@hitly/core/destination-check'
 import { workspaceOtelEndpoints } from '@hitly/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { getAppContext } from '@/lib/context'
@@ -38,6 +39,8 @@ export async function addOtelEndpoint(formData: FormData) {
 
   if (!name) throw new Error('Name is required')
   if (!endpoint) throw new Error('Endpoint is required')
+  // Save-time destination check; sending checks again.
+  await assertDestinationAllowed(endpoint)
   if (!protocol || (protocol !== 'http/protobuf' && protocol !== 'http/json')) {
     throw new Error('Protocol must be http/protobuf or http/json')
   }

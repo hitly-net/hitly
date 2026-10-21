@@ -7,6 +7,7 @@ import {
   type OriginRef,
   type ResumeResponse,
 } from '@hitly/core'
+import { checkedFetch, destinationHost, destinationStatusMessage } from '@hitly/core/destination-check'
 
 export type HermesKind = 'command' | 'kanban'
 
@@ -181,11 +182,11 @@ export async function resumeHermes(
   if (payload.editedArgs) resumeData.editedArgs = payload.editedArgs
   if (payload.response) resumeData.response = payload.response
 
-  const response = await fetch(resumeUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(resumeData),
-  })
+  const response = await checkedFetch(
+    resumeUrl,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(resumeData) },
+    { totalTimeoutMs: 60_000 },
+  )
 
   const text = await response.text()
   let body: unknown = text || null
@@ -198,12 +199,11 @@ export async function resumeHermes(
   }
 
   if (!response.ok) {
-    const snippet = text.length > 500 ? `${text.slice(0, 500)}…` : text
     return {
       resumeData,
       status: response.status,
-      body,
-      error: `Hermes resume failed (${response.status}): ${snippet}`,
+      body: null,
+      error: destinationStatusMessage('Hermes resume', response.status, destinationHost(resumeUrl)),
     }
   }
 

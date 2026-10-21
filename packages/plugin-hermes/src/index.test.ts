@@ -2,6 +2,11 @@ import { describe, it, mock } from 'node:test'
 import { strict as assert } from 'node:assert'
 import { hermesPlugin } from './index'
 import type { DecisionPayload, OriginRef, ResumeResponse } from '@hitly/core'
+import { globalFetchTransport, setDestinationCheckTestHooks } from '@hitly/core/destination-check'
+
+// These tests mock globalThis.fetch. The destination check still runs; only
+// name resolution and the socket are replaced.
+setDestinationCheckTestHooks({ resolve: async () => [{ address: '203.0.113.10' }], transport: globalFetchTransport })
 
 describe('@hitly/plugin-hermes', () => {
   describe('ingest', () => {
@@ -234,7 +239,8 @@ describe('@hitly/plugin-hermes', () => {
 
       assert.equal(result.status, 500)
       assert(result.error?.includes('Hermes resume failed (500)'))
-      assert(result.error?.includes('Internal Server Error'))
+      assert(!result.error?.includes('Internal Server Error'), 'error omits the response body')
+      assert.equal(result.body, null)
     })
 
     it('should include editedArgs when provided', async () => {

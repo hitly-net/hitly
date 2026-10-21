@@ -2,6 +2,11 @@ import { describe, it, mock } from 'node:test'
 import { strict as assert } from 'node:assert'
 import { langgraphPlugin } from './index'
 import type { DecisionPayload, OriginRef, ResumeResponse } from '@hitly/core'
+import { globalFetchTransport, setDestinationCheckTestHooks } from '@hitly/core/destination-check'
+
+// These tests mock globalThis.fetch. The destination check still runs; only
+// name resolution and the socket are replaced.
+setDestinationCheckTestHooks({ resolve: async () => [{ address: '203.0.113.10' }], transport: globalFetchTransport })
 
 describe('@hitly/plugin-langgraph', () => {
   describe('ingest', () => {

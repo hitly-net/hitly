@@ -8,6 +8,7 @@ import {
   type OriginRef,
   type ResumeResponse,
 } from '@hitly/core'
+import { checkedFetch, destinationHost, destinationStatusMessage } from '@hitly/core/destination-check'
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
@@ -105,11 +106,11 @@ export const httpPlugin: HitlyPlugin = {
     if (approvalId) resumeData.id = approvalId
     if (payload.editedArgs) resumeData.editedArgs = payload.editedArgs
     if (payload.response) resumeData.response = payload.response
-    const response = await fetch(resumeUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(resumeData),
-    })
+    const response = await checkedFetch(
+      resumeUrl,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(resumeData) },
+      { totalTimeoutMs: 60_000 },
+    )
     const text = await response.text()
     let body: unknown = text || null
     if (text) {
@@ -120,12 +121,11 @@ export const httpPlugin: HitlyPlugin = {
       }
     }
     if (!response.ok) {
-      const snippet = text.length > 500 ? `${text.slice(0, 500)}…` : text
-      return {
+        return {
         resumeData,
         status: response.status,
-        body,
-        error: `HTTP resume failed (${response.status}): ${snippet}`,
+        body: null,
+        error: destinationStatusMessage('HTTP resume', response.status, destinationHost(resumeUrl)),
       }
     }
     return { resumeData, status: response.status, body }

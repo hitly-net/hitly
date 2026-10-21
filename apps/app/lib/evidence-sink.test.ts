@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { HttpEvidenceSink } from './evidence-sink'
 import type { EvidenceEvent } from '@hitly/core'
+import { globalFetchTransport, setDestinationCheckTestHooks } from '@hitly/core/destination-check'
+
+// These tests mock globalThis.fetch. The destination check still runs; only
+// name resolution and the socket are replaced.
+setDestinationCheckTestHooks({ resolve: async () => [{ address: '203.0.113.10' }], transport: globalFetchTransport })
 
 test('HttpEvidenceSink sends custom headers', async () => {
   const mockEvent: EvidenceEvent = {
