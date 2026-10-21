@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { and, eq } from 'drizzle-orm'
-import { isOpenApprovalStatus, isPluginId, isProjectRole } from '@hitly/core'
+import { isListedPluginId, isOpenApprovalStatus, isProjectRole } from '@hitly/core'
 import {
   approvals,
   projectApiKeys,
@@ -64,7 +64,7 @@ export async function createProject(formData: FormData) {
   const description = String(formData.get('description') ?? '').trim()
   const plugin = String(formData.get('plugin') ?? '')
   if (!name) throw new Error('Name is required')
-  if (!isPluginId(plugin)) throw new Error('Choose a plugin')
+  if (!isListedPluginId(plugin)) throw new Error('Choose a plugin')
 
   const database = requireDb()
   const projectId = newId('prj').slice(0, 36)

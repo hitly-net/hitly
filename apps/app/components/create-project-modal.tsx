@@ -1,9 +1,8 @@
 'use client'
 
 import { useRef } from 'react'
-import { PLUGIN_IDS } from '@hitly/core'
-import { PLUGIN_BRANDS } from '@hitly/ui'
 import { createProject } from '@/actions/projects'
+import { PluginSelect } from '@/components/plugin-select'
 
 export function CreateProjectModal() {
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -42,21 +41,7 @@ export function CreateProjectModal() {
               className="min-h-20 rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
             />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-zinc-500">Plugin</span>
-            <select
-              name="plugin"
-              defaultValue="mastra"
-              className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            >
-              {PLUGIN_IDS.map((plugin) => (
-                <option key={plugin} value={plugin}>
-                  {PLUGIN_BRANDS[plugin].label}
-                  {plugin === 'http' ? ' — n8n, webhooks, custom callbacks' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+          <PluginSelect />
           <div className="mt-2 flex justify-end gap-2">
             <button
               type="button"

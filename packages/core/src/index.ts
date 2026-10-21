@@ -2,6 +2,15 @@ export const PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes', 
 
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
+/**
+ * Plugins offered as a choice when creating a project. Every id in PLUGIN_IDS
+ * stays valid, so existing projects and approvals keep loading and displaying.
+ * OpenShell is no longer listed as an integration.
+ */
+export const LISTED_PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes'] as const satisfies readonly PluginId[]
+
+export type ListedPluginId = (typeof LISTED_PLUGIN_IDS)[number]
+
 export const DECISIONS = ['accept', 'reject', 'edit', 'respond', 'ignore', 'cancel'] as const
 
 export type Decision = (typeof DECISIONS)[number]
@@ -191,6 +200,10 @@ export interface RuleActions {
 
 export function isPluginId(value: unknown): value is PluginId {
   return typeof value === 'string' && (PLUGIN_IDS as readonly string[]).includes(value)
+}
+
+export function isListedPluginId(value: unknown): value is ListedPluginId {
+  return typeof value === 'string' && (LISTED_PLUGIN_IDS as readonly string[]).includes(value)
 }
 
 export function isDecision(value: unknown): value is Decision {
