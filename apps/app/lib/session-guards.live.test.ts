@@ -3,11 +3,16 @@ import assert from 'node:assert/strict'
 
 /**
  * LIVE guarded-page tests: the real page server components are called with
- * no session available (no database is configured under test, so the session
- * lookup resolves to "no session") and must redirect to /login. The page
- * modules and the redirect from next/navigation run for real — nothing is
- * stubbed except the environment.
+ * no session available and must redirect to /login. The page modules and the
+ * redirect from next/navigation run for real — nothing is stubbed except the
+ * environment.
+ *
+ * DATABASE_URL is cleared before any page module is loaded, so there is no
+ * auth instance and the session lookup resolves to "no session" whether or
+ * not the runner has a database configured. Each test file runs in its own
+ * process, so this does not affect other suites.
  */
+delete process.env.DATABASE_URL
 
 type PageComponent = (props?: { params?: Promise<Record<string, string>> }) => Promise<unknown>
 
