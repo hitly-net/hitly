@@ -20,11 +20,12 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./destination-check": "./src/destination-check.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/evidence.test.ts"
+    "test": "tsx --test src/evidence.test.ts src/destination-check.test.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.12",
