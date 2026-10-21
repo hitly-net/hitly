@@ -3,7 +3,7 @@
 **Status:** Draft design for PM/Derek review and Test  
 **Audience:** Advanced users and Ops teams  
 **Positioning:** **Optional advanced feature** — NOT required for primary OpenShell→HITLy demo path  
-**Target:** OpenShell 0.1.2 production VM (`openshell` / Tailscale `100.106.191.81`)  
+**Target:** OpenShell 0.1.2 production VM (`openshell` / Tailscale `<your-gateway-host>`)  
 **Scope:** Demo-friendly interceptor; no Cloud/GA changes, no plugin HMAC changes
 
 ---
@@ -481,7 +481,7 @@ Test cases:
 
 ### 10.1. Production VM Configuration (Advanced/Optional)
 
-**VM:** `openshell` (Tailscale `100.106.191.81`)  
+**VM:** `openshell` (Tailscale `<your-gateway-host>`)  
 **Gateway:** OpenShell 0.1.2, `https://127.0.0.1:17670` (loopback-only, mTLS)
 
 **Required environment variables (only if enabling interceptor):**

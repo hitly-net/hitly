@@ -88,7 +88,7 @@ Evidence: hitly.evidence.v1 hash-chained, unsigned evidence → configured sink
    - API key and project ID from Config tab
 
 2. **OpenShell gateway** accessible via gRPC
-   - **Production:** OpenShell 0.1.2 on VM `openshell` (Tailscale `100.106.191.81`)
+   - **Production:** OpenShell 0.1.2 on VM `openshell` (Tailscale `<your-gateway-host>`)
      - `auth_mode=mtls`, loopback ONLY at `https://127.0.0.1:17670`
      - **IMPORTANT:** Gateway is loopback-only by design for security. Do NOT weaken mTLS or bind port 17670 off loopback.
      - Client certificates live under `~/.config/openshell/gateways/openshell/mtls/` on the VM
@@ -103,7 +103,7 @@ Evidence: hitly.evidence.v1 hash-chained, unsigned evidence → configured sink
 ## Production deployment (VM openshell)
 
 **Infrastructure:**
-- VM: `openshell` (Tailscale `100.106.191.81`)
+- VM: `openshell` (Tailscale `<your-gateway-host>`)
 - OpenShell: version 0.1.2
 - Gateway: `https://127.0.0.1:17670` (loopback-only, `auth_mode=mtls`)
 - HITLy: co-located on same VM (port 3001)
@@ -143,7 +143,7 @@ cp .env.example .env
 Edit `.env`:
 
 ```bash
-# OpenShell (production on VM openshell / Tailscale 100.106.191.81)
+# OpenShell (production on VM openshell / Tailscale <your-gateway-host>)
 OPENSHELL_GATEWAY_ADDR=127.0.0.1:17670  # loopback-only mTLS gateway
 OPENSHELL_BEARER_TOKEN=your_bearer_token  # optional with mTLS
 OPENSHELL_WORKSPACE=your-workspace
@@ -709,7 +709,7 @@ OpenShell 0.1.2 default sandbox image is **missing `/usr/bin/curl`**.
 
 ## Env vars (production)
 
-Production deployment on VM `openshell` (Tailscale `100.106.191.81`):
+Production deployment on VM `openshell` (Tailscale `<your-gateway-host>`):
 
 ```bash
 # OpenShell Gateway (OpenShell 0.1.2, auth_mode=mtls, loopback-only)
