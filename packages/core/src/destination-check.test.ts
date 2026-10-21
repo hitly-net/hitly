@@ -255,6 +255,8 @@ describe('checkedFetch against a 127.0.0.1 stub server', () => {
   let failing: Awaited<ReturnType<typeof startServer>>
   let silent: Awaited<ReturnType<typeof startServer>>
   let large: Awaited<ReturnType<typeof startServer>>
+  let endless: Awaited<ReturnType<typeof startServer>>
+  let endlessSentLength: boolean | undefined
 
   before(async () => {
     ok = await startServer((_req, res) => {
@@ -278,10 +280,18 @@ describe('checkedFetch against a 127.0.0.1 stub server', () => {
       res.write(`${CANARY}${'x'.repeat(4096)}`)
       res.end('x'.repeat(4096))
     })
+    // Streams without a content-length and never ends on its own.
+    endless = await startServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      endlessSentLength = res.hasHeader('content-length')
+      const chunk = `${CANARY}${'x'.repeat(1024)}`
+      const timer = setInterval(() => res.write(chunk), 5)
+      res.on('close', () => clearInterval(timer))
+    })
   })
 
   after(() => {
-    for (const s of [ok, other, redirector, failing, silent, large]) {
+    for (const s of [ok, other, redirector, failing, silent, large, endless]) {
       s.server.closeAllConnections()
       s.server.close()
     }
@@ -449,13 +459,18 @@ describe('checkedFetch against a 127.0.0.1 stub server', () => {
     assert.equal(other.hits.length, before)
   })
 
-  it('pins the checked address even if the name would resolve differently later', async () => {
+  it('pins the checked address even if the name would resolve differently later', { timeout: 10_000 }, async () => {
     let calls = 0
     const resolve = async () => {
       calls += 1
       return calls === 1 ? [{ address: '127.0.0.1' }] : [{ address: '203.0.113.99' }]
     }
-    const response = await checkedFetch(`http://pinned.example:${ok.port}/path?q=1`, {}, { policy: DEV, resolveAddresses: resolve })
+    const response = await checkedFetch(`http://pinned.example:${ok.port}/path?q=1`, {}, {
+      policy: DEV,
+      resolveAddresses: resolve,
+      connectTimeoutMs: 2000,
+      totalTimeoutMs: 3000,
+    })
     assert.equal(response.status, 200)
     assert.equal(calls, 1)
     const hit = ok.hits.at(-1)!
@@ -463,7 +478,7 @@ describe('checkedFetch against a 127.0.0.1 stub server', () => {
     assert.equal(hit.path, '/path?q=1')
   })
 
-  it('keeps the TLS server name when connecting to the pinned address', async () => {
+  it('keeps the TLS server name when connecting to the pinned address', { timeout: 10_000 }, async () => {
     let hello = Buffer.alloc(0)
     const raw = net.createServer((socket) => {
       socket.on('data', (chunk) => {
@@ -473,11 +488,19 @@ describe('checkedFetch against a 127.0.0.1 stub server', () => {
     })
     await new Promise<void>((r) => raw.listen(0, '127.0.0.1', () => r()))
     const port = (raw.address() as net.AddressInfo).port
-    await assert.rejects(
-      checkedFetch(`https://tls-name.example:${port}/`, {}, { policy: DEV, resolveAddresses: async () => [{ address: '127.0.0.1' }] }),
-      (e: DestinationCheckError) => e.code === 'connect',
-    )
-    raw.close()
+    try {
+      await assert.rejects(
+        checkedFetch(`https://tls-name.example:${port}/`, {}, {
+          policy: DEV,
+          resolveAddresses: async () => [{ address: '127.0.0.1' }],
+          connectTimeoutMs: 2000,
+          totalTimeoutMs: 3000,
+        }),
+        (e: DestinationCheckError) => e.code === 'connect',
+      )
+    } finally {
+      raw.close()
+    }
     assert.ok(hello.includes(Buffer.from('tls-name.example')), 'ClientHello carries the original host name')
   })
 
@@ -491,6 +514,20 @@ describe('checkedFetch against a 127.0.0.1 stub server', () => {
       checkedFetch(`http://127.0.0.1:${large.port}/`, {}, { policy: DEV, maxResponseBytes: 1024 }),
       (e: DestinationCheckError) => e.code === 'size' && !e.message.includes(CANARY),
     )
+  })
+
+  it('caps a streamed body that has no content-length', { timeout: 10_000 }, async () => {
+    const started = Date.now()
+    await assert.rejects(
+      checkedFetch(`http://127.0.0.1:${endless.port}/`, {}, { policy: DEV, maxResponseBytes: 4096, totalTimeoutMs: 3000 }),
+      (e: DestinationCheckError) => {
+        assert.equal(e.code, 'size')
+        assert.ok(!e.message.includes(CANARY))
+        return true
+      },
+    )
+    assert.equal(endlessSentLength, false)
+    assert.ok(Date.now() - started < 2500, 'stopped by the size cap, not the total timeout')
   })
 
   it('stops at the total timeout', async () => {

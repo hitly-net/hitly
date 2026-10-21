@@ -144,6 +144,12 @@ describe('isPrivateHost: further non-public ranges', () => {
     assert.equal(host('http://239.255.255.255'), true) // multicast, refused by its own rule
   })
 
+  it('IPv6 multicast ff00::/8', () => {
+    for (const url of ['http://[ff02::1]', 'http://[ff05::1:3]', 'http://[ff0e::1]', 'http://[FF02::2]', 'http://[ff01::1]']) {
+      assert.equal(host(url), true, url)
+    }
+  })
+
   it('broadcast 255.255.255.255', () => {
     assert.equal(host('http://255.255.255.255'), true)
   })
