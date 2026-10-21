@@ -12,6 +12,20 @@ import { isSignupEnabled } from './signup'
 
 const appUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
+/**
+ * Resolves the auth signing secret. Production must provide
+ * BETTER_AUTH_SECRET; startup fails when it is missing. Non-production may
+ * fall back to a clearly-labelled development value so local runs and tests
+ * work without extra configuration.
+ */
+export function resolveAuthSecret(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.BETTER_AUTH_SECRET) return env.BETTER_AUTH_SECRET
+  if (env.NODE_ENV === 'production') {
+    throw new Error('BETTER_AUTH_SECRET must be set in production; refusing to start.')
+  }
+  return 'dev-only-change-me-please-32ch'
+}
+
 const staticTrustedOrigins = [
   appUrl,
   'hitly://',
@@ -64,7 +78,7 @@ export const auth = db
         },
       },
       baseURL: appUrl,
-      secret: process.env.BETTER_AUTH_SECRET ?? 'dev-only-change-me-please-32ch',
+      secret: resolveAuthSecret(),
       trustedOrigins: async (request) => {
         const origin = request?.headers.get('origin')
         if (origin && isTrustedAppOrigin(origin) && !staticTrustedOrigins.includes(origin)) {
