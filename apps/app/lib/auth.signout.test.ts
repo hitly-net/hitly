@@ -22,12 +22,12 @@ function readLibSignOut() {
  */
 
 describe('sign-out request shape', () => {
-  it('posts to the auth sign-out endpoint', () => {
+  it('posts to the server sign-out route', () => {
     assert.ok(
-      readLibSignOut().includes("'/api/auth/sign-out'"),
-      'sign-out must POST to /api/auth/sign-out'
+      readLibSignOut().includes("'/api/session/sign-out'"),
+      'sign-out must POST to /api/session/sign-out'
     )
-    assert.equal(SIGN_OUT_ENDPOINT, '/api/auth/sign-out')
+    assert.equal(SIGN_OUT_ENDPOINT, '/api/session/sign-out')
   })
 
   it('must include credentials', () => {

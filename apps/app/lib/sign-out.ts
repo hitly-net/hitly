@@ -1,10 +1,11 @@
 /**
  * Sign-out flow shared by the profile-menu button and tests.
  *
- * The auth router (mounted at /api/auth via the catch-all route) is configured
- * to accept only application/json bodies, so the POST must send a JSON
- * content type and a `{}` body, or it is rejected with 415
- * Unsupported Media Type before sign-out runs.
+ * The client calls POST /api/session/sign-out (a route outside the better-auth
+ * catch-all). That route best-effort revokes the session through the server
+ * auth instance and ALWAYS expires the HttpOnly session cookies plus the
+ * workspace cookie on its response, so the session is truly ended even when
+ * revocation fails — the browser cannot clear HttpOnly cookies from JS.
  *
  * Whichever way the request ends — 200, 401, 415, any other non-ok status, or
  * a network error — we clear the client-readable session state exactly once
@@ -12,7 +13,7 @@
  * user in an error state or a redirect loop.
  */
 
-export const SIGN_OUT_ENDPOINT = '/api/auth/sign-out'
+export const SIGN_OUT_ENDPOINT = '/api/session/sign-out'
 export const LOGIN_PATH = '/login'
 
 /**
