@@ -2,7 +2,9 @@
 
 HITLy is the human-in-the-loop inbox for Mastra, LangGraph, Hermes Agent, HTTP / n8n / Make, and Temporal.
 
-The origin keeps its pause. A reviewer decides in HITLy. Mastra and LangGraph resumes carry an HMAC-signed proof; HTTP, Hermes and Temporal resumes are not yet signed. Use it when an agent would send, spend, or write.
+The origin keeps its pause. A reviewer decides in HITLy. The original run resumes with a Signed resume*. Use it when an agent would send, spend, or write.
+
+*Mastra and LangGraph plugins only.
 
 Apache-2.0. Self-host this repo. Hosted cloud (billing, SSO) is waitlist-only at [hitly.net](https://hitly.net).
 
