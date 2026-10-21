@@ -1,17 +1,17 @@
-# Hitly production deploy (LAN)
+# HITLy production deploy (LAN)
 
-User-level systemd units for **production** Next.js on the Ubuntu host `192.168.10.176` (repo at `~/hitly`).
+User-level systemd units for **production** Next.js on the Ubuntu host `<your-host>` (repo at `~/hitly`).
 
 Local Mac development still uses `yarn dev:web` / `yarn dev:app` and `yarn db:up`. Agent procedure: [`.cursor/skills/hitly-deployment/SKILL.md`](../.cursor/skills/hitly-deployment/SKILL.md).
 
 | Item | Value |
 |------|--------|
-| Host | `192.168.10.176` |
-| SSH | `derek@192.168.10.176` |
+| Host | `<your-host>` |
+| SSH | `<user>@<your-host>` |
 | App path | `/home/derek/hitly` |
 | Git remote | `https://github.com/hitly-net/hitly.git` (`main`) |
-| Web | `http://192.168.10.176:3000` |
-| App | `http://192.168.10.176:3001` |
+| Web | `http://<your-host>:3000` |
+| App | `http://<your-host>:3001` |
 | DB | Docker Compose Postgres 16 (`docker-compose.yml`, port 5432) |
 
 Existing LAN hosts that still have MariaDB on 3306 need a new Postgres volume and `yarn db:migrate`. There is no automated MariaDB data migration.
@@ -41,17 +41,17 @@ On the host, with SSH key auth already working:
 `apps/web/.env.production`:
 
 ```
-NEXT_PUBLIC_APP_URL=http://192.168.10.176:3001
+NEXT_PUBLIC_APP_URL=http://<your-host>:3001
 ```
 
 `apps/app/.env.production`:
 
 ```
-WEB_URL=http://192.168.10.176:3000
-BETTER_AUTH_URL=http://192.168.10.176:3001
+WEB_URL=http://<your-host>:3000
+BETTER_AUTH_URL=http://<your-host>:3001
 BETTER_AUTH_SECRET=<openssl rand -hex 32>
-DATABASE_URL=postgres://hitly:hitly@127.0.0.1:5432/hitly
-NEXT_PUBLIC_WEB_URL=http://192.168.10.176:3000
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/hitly
+NEXT_PUBLIC_WEB_URL=http://<your-host>:3000
 ```
 
 Generate the secret with `openssl rand -hex 32`. `NEXT_PUBLIC_*` is inlined at `yarn build`; changing those URLs later requires a rebuild.
@@ -76,7 +76,7 @@ Units should keep running after SSH logout (`loginctl show-user "$USER" -p Linge
 From the laptop, after commit + `git push origin main`:
 
 ```bash
-ssh derek@192.168.10.176 'bash -lc "
+ssh <user>@<your-host> 'bash -lc "
 set -euo pipefail
 source \$HOME/.nvm/nvm.sh
 cd \$HOME/hitly

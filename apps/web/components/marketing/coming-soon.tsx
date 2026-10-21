@@ -12,7 +12,7 @@ export function ComingSoon() {
         <div className="mt-6 max-w-lg space-y-1 text-sm text-zinc-500">
           <p>Cloud — Join the waitlist</p>
           <p>
-            Local — open source (alpha) is available on{' '}
+            Local — open source is available on{' '}
             <a
               href="https://github.com/hitly-net/hitly"
               target="_blank"

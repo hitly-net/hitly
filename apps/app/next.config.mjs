@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  allowedDevOrigins: ['192.168.68.107', '192.168.10.137'],
+  allowedDevOrigins: ['localhost', '127.0.0.1'],
   transpilePackages: [
     '@hitly/mail',
     '@hitly/cloud',

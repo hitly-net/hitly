@@ -19,7 +19,7 @@ The marketing/docs site is optional (`yarn dev:web`). The Expo reviewer app is `
 
 ## Database
 
-Local Compose runs **Postgres 16** (`postgres://hitly:hitly@localhost:5432/hitly`). OSS does not enable row-level security or envelope encryption; those are Cloud overlay concerns.
+Local Compose runs **Postgres 16** (`postgres://USER:PASSWORD@localhost:5432/hitly`; `apps/app/.env.example` ships the local dev defaults). OSS does not enable row-level security or envelope encryption; those are Cloud overlay concerns.
 
 Older self-host installs used MariaDB. There is no in-place upgrade: stand up Postgres, run `yarn db:migrate` on an empty database, and re-create workspaces. Schema was squashed to a single Postgres migration.
 
@@ -39,6 +39,6 @@ The app process runs due jobs about once a minute:
 | `purge-completed-approvals` | daily | Deletes closed items older than the workspace plan retention |
 | `purge-expired-audit-events` | weekly | Deletes project events older than `auditRetentionDays` |
 
-Self-hosted workspaces keep completed items forever. Hosted plans: solo 10 days, pro 30, team 365, enterprise 1000.
+Self-hosted workspaces keep completed items forever. Cloud (invite-only) plans: solo 10 days, pro 30, team 365, enterprise 1000.
 
 Set `HITLY_HOUSEKEEPING=0` to disable the in-process timer (for example when a process manager or cron should own it). Then `POST /api/v1/housekeeping` with `Authorization: Bearer $HITLY_CRON_SECRET`. Optional JSON `{ "job": "purge-completed-approvals", "force": true }` runs one job immediately.

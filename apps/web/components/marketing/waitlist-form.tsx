@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { Button } from '@hitly/ui'
+import { Button, HitlyWordmark } from '@hitly/ui'
 import { WAITLIST_INTEGRATIONS, type WaitlistIntegration } from '@/lib/waitlist'
 
 const LABELS: Record<WaitlistIntegration, string> = {
@@ -58,7 +58,7 @@ export function WaitlistForm() {
         <p className="text-sm font-medium uppercase tracking-widest text-zinc-500">You are on the list</p>
         <h2 className="mt-3 text-2xl font-semibold tracking-tight">Thank you</h2>
         <p className="mt-3 text-zinc-600 dark:text-zinc-400">
-          We will email you when HITLy is ready for {name.trim() || 'you'}.
+          We will email you when <HitlyWordmark /> is ready for {name.trim() || 'you'}.
         </p>
       </div>
     )

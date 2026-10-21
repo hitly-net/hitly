@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Keep Hitly production processes up when user linger is not enabled.
-# Intended for 192.168.10.176 until `loginctl enable-linger derek` can run as root.
+# Intended for <your-host> until `loginctl enable-linger <user>` can run as root.
 set -euo pipefail
 
 export PATH="${HOME}/.local/bin:${HOME}/.local/envs/dev/bin:${PATH}"

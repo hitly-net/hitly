@@ -32,7 +32,7 @@ HITL<sub><i>y</i></sub> never POSTs into `hermes dashboard` (localhost-only by d
 
 ### What HITL<sub><i>y</i></sub> cannot wait on
 
-| Path | Hermes gate | HITLy |
+| Path | Hermes gate | HITL<sub><i>y</i></sub> |
 | --- | --- | --- |
 | Cron jobs | `approvals.cron_mode`: `deny` or `approve` | No wait. Documented only. |
 | Kanban **shell** commands | `approvals.kanban_mode`: `deny` or `approve` | Same. Workers should `kanban_block` instead. |
@@ -75,7 +75,7 @@ The `resumeUrl` must be reachable from the HITL<sub><i>y</i></sub> process. Same
 
 ## Decision mapping
 
-| HITLy | Command transport | Kanban |
+| HITL<sub><i>y</i></sub> | Command transport | Kanban |
 | --- | --- | --- |
 | `accept` | Hermes `once` | comment + unblock |
 | `respond` | — | comment (body) + unblock |

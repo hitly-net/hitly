@@ -2,4 +2,4 @@
 "@hitly/plugin-mastra": minor
 ---
 
-Resume Mastra agents after Hitly decisions, in addition to workflows.
+Resume Mastra agents after HITLy decisions, in addition to workflows.

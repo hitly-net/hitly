@@ -76,13 +76,13 @@ interface OriginRef {
 
 `resumeHandle` is opaque per plugin (Mastra base URL + run/step ids, Hermes request/task ids, HTTP `resumeUrl` + optional `metadata`, LangGraph thread id, Temporal workflow id). Origin credentials live on the **project**.
 
-HTTP ingest may include `metadata` (a JSON object). It is stored on the envelope and echoed unchanged on the resume POST for both accept and reject, next to `decision` and the HITLy `id`.
+HTTP ingest may include `metadata` (a JSON object). It is stored on the envelope and echoed unchanged on the resume POST for both accept and reject, next to `decision` and the HITL<sub><i>y</i></sub> `id`.
 
 ## Typed Editable Fields
 
 When `allowedActions.edit` is true, the origin can declare which fields the reviewer may edit and how they are validated. `editableFields` is a dictionary where each key is an `action.args` field name and the value defines its type and constraints.
 
-**Keys not listed in `editableFields` are locked** and cannot be edited, even if the client sends them. If `allowedActions.edit` is true but `editableFields` is missing or empty, HITLy **fail-closes**: the Edit button is hidden in the UI, and any `edit` decision returns HTTP 400.
+**Keys not listed in `editableFields` are locked** and cannot be edited, even if the client sends them. If `allowedActions.edit` is true but `editableFields` is missing or empty, HITL<sub><i>y</i></sub> **fail-closes**: the Edit button is hidden in the UI, and any `edit` decision returns HTTP 400.
 
 ### Field Types
 
@@ -117,7 +117,7 @@ If the reviewer edits `amount` to 50, the decide POST must include:
 }
 ```
 
-HITLy merges locked fields (`orderId`) with the edited fields (`amount`) and validates:
+HITL<sub><i>y</i></sub> merges locked fields (`orderId`) with the edited fields (`amount`) and validates:
 
 - Extra keys (e.g., `orderId` in `editedArgs` when only `amount` is editable) → HTTP 400
 - Type mismatch (string in `int`, NaN, array of objects) → HTTP 400
@@ -204,7 +204,7 @@ Edit reason is persisted in the `DecisionPayload` and the evidence `decided` eve
 
 ## Evidence Fields
 
-Evidence fields provide audit context for compliance and governance. All are optional at ingest; HITLy persists them when present.
+Evidence fields provide audit context for compliance and governance. All are optional at ingest; HITL<sub><i>y</i></sub> persists them when present.
 
 | Field | Source | Description |
 |-------|--------|-------------|
@@ -220,7 +220,7 @@ Evidence fields provide audit context for compliance and governance. All are opt
 | `sensitivity` | Implementor | Sensitivity flags (not raw PII) |
 | `dataCategories` | Implementor | Data category flags for GDPR/compliance |
 
-**HITLy is deployer tooling, not the high-risk system.** `systemId` is the AI system you are governing (e.g. your agent or workflow deployment). `inventoryId` is that system's entry in your AI inventory/registry, not a business resource like an order ID or user ID.
+**HITL<sub><i>y</i></sub> is deployer tooling, not the high-risk system.** `systemId` is the AI system you are governing (e.g. your agent or workflow deployment). `inventoryId` is that system's entry in your AI inventory/registry, not a business resource like an order ID or user ID.
 
 ### What Mastra Fills Automatically
 
@@ -261,7 +261,7 @@ Evidence events are written to the configured HTTP sink (see [Evidence Storage](
 
 ## External URLs (Decision Context)
 
-The `externalUrls` field provides reviewers with by-reference links to external decision context: order pages, support tickets, policies, customer profiles, and other resources that should inform the decision. HITLy displays these links in the work item detail but **does not fetch or proxy** the remote content.
+The `externalUrls` field provides reviewers with by-reference links to external decision context: order pages, support tickets, policies, customer profiles, and other resources that should inform the decision. HITL<sub><i>y</i></sub> displays these links in the work item detail but **does not fetch or proxy** the remote content.
 
 ### Format
 
@@ -286,7 +286,7 @@ Reviewers see labeled links in the work item detail. Clicking a link opens it in
 
 ### Evidence
 
-Evidence events hash the **URL list and labels** (by-reference metadata only), not the remote page bytes. The `decided` event includes the same `externalUrls` array that was present at ingest. HITLy does not fetch, store, or verify the remote content—it is the integrator's responsibility to ensure links remain accessible for the evidence retention period.
+Evidence events hash the **URL list and labels** (by-reference metadata only), not the remote page bytes. The `decided` event includes the same `externalUrls` array that was present at ingest. HITL<sub><i>y</i></sub> does not fetch, store, or verify the remote content—it is the integrator's responsibility to ensure links remain accessible for the evidence retention period.
 
 ### Example: Mastra with External URLs
 
@@ -314,7 +314,7 @@ await notifyHitlyApproval(
 
 ### Out of Scope
 
-HITLy does **not** support:
+HITL<sub><i>y</i></sub> does **not** support:
 - File attachments (declared via `attachments`, but fetch/upload is not implemented)
 - Proxying or virus-scanning remote URLs
 - SSO or authentication to remote pages
@@ -322,11 +322,11 @@ HITLy does **not** support:
 
 ## Evidence Storage
 
-Configure an evidence sink in project settings. HITLy supports three sink types:
+Configure an evidence sink in project settings. HITL<sub><i>y</i></sub> supports three sink types:
 
 ### Sink Types
 
-1. **None** (default): No evidence storage. HITLy keeps a minimal receipt in the database.
+1. **None** (default): No evidence storage. HITL<sub><i>y</i></sub> keeps a minimal receipt in the database.
 2. **HTTP**: POST evidence events to an HTTP endpoint (e.g., your audit log service, SIEM collector).
 3. **S3**: Store evidence events in S3-compatible object storage (AWS S3, Cloudflare R2, Garage, on-premises Ceph/Cloudian).
 
@@ -353,7 +353,7 @@ See `examples/evidence-http` for a reference HTTP receiver.
 
 See [S3 evidence](/docs/s3) for S3 configuration fields, local setup with Garage, production settings (AWS S3, Cloudflare R2, on-premises Ceph/Cloudian), and `examples/evidence-s3`.
 
-HITLy stores a **receipt index only**, not the payload as system of record. Evidence lifecycle:
+HITL<sub><i>y</i></sub> stores a **receipt index only**, not the payload as system of record. Evidence lifecycle:
 
 - `requested` - Approval ingested (fail-open: continues on sink error)
 - `decided` - Reviewer decided (**fail-closed**: origin NOT resumed if sink fails)

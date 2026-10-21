@@ -23,7 +23,7 @@ export function CloudPlaceholder() {
               href="https://hitly.net"
               className="underline underline-offset-2 hover:text-zinc-800 dark:hover:text-zinc-300"
             >
-              Learn more about HITLy
+              Learn more about <HitlyWordmark />
             </a>
           </p>
         </div>

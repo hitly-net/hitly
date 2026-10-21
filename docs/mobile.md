@@ -30,7 +30,7 @@ Delegate, audit tables, SSO, Slack/Telegram, and project admin stay on web.
 
 ## Navigation
 
-Expo Router file-based routes. Tabs are Home and Inbox. A **system bar** at the top shows Hitly branding, the hamburger, and an alert when pending or failed-resume items need a decision. A hamburger menu opens Workspace, Projects, Config, and the same Home/Inbox destinations. Work item detail sits **outside** the tab navigator so a cold-start push can open it without flashing Home.
+Expo Router file-based routes. Tabs are Home and Inbox. A **system bar** at the top shows HITLy branding, the hamburger, and an alert when pending or failed-resume items need a decision. A hamburger menu opens Workspace, Projects, Config, and the same Home/Inbox destinations. Work item detail sits **outside** the tab navigator so a cold-start push can open it without flashing Home.
 
 ```
 (auth)
@@ -263,7 +263,7 @@ v1 **always pushes the assignee** when they have a registered device, in additio
 | `platform` | `enum('ios','android')` | |
 | `created_at` / `updated_at` | timestamp(3) | |
 
-The instance is implied by the server. Self-hosted operators do not need their own APNs/FCM certs: they send through Expo Push using tokens from the official Hitly app.
+The instance is implied by the server. Self-hosted operators do not need their own APNs/FCM certs: they send through Expo Push using tokens from the official HITLy app.
 
 ### Payload
 

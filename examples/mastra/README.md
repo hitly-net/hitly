@@ -23,7 +23,7 @@ For more on envelope fields and decision context URLs, see [hitly.net/docs](http
 The local model defaults:
 
 ```
-OPENAI_BASE_URL=http://192.168.10.199:1234/v1
+OPENAI_BASE_URL=http://localhost:1234/v1
 MASTRA_MODEL=qwen3.6-35b-a3b-mtp
 ```
 
@@ -43,11 +43,11 @@ Both examples send complete evidence for the audit trail:
 Evidence events are written to the HTTP sink configured in project settings. To demo the evidence receiver:
 
 1. Run `examples/evidence-http` on port 3100 (or set `PORT`)
-2. In Hitly project settings, set Evidence Storage:
+2. In HITLy project settings, set Evidence Storage:
    - Type: HTTP
    - URL: `http://localhost:3100/events`
 3. Test the sink (button next to URL field)
-4. Approve a refund in Hitly
+4. Approve a refund in HITLy
 5. Check `examples/evidence-http/events/*.json` for the evidence chain
 
 Each approval creates 3-4 evidence events:

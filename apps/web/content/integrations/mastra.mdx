@@ -3,7 +3,7 @@ title: Mastra
 description: Suspend a Mastra agent tool or workflow step, review it in HITLy, resume or bail.
 ---
 
-[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses with `suspend()` and continues with `resume()` / `bail()`. HITL<sub><i>y</i></sub> owns the reviewer UI. Chat with the demo agent in [Mastra Studio](https://mastra.ai/docs/studio/overview) (`mastra dev`, http://localhost:4111).
+[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses with `suspend()` and continues with `resume()` / `bail()`. HITL<sub><i>y</i></sub> owns the reviewer UI. Note: Not yet on npm. Use inside the monorepo or copy `packages/plugin-mastra/src`. Chat with the demo agent in [Mastra Studio](https://mastra.ai/docs/studio/overview) (`mastra dev`, http://localhost:4111).
 
 ## How it works with HITL<sub><i>y</i></sub>
 
@@ -11,7 +11,7 @@ description: Suspend a Mastra agent tool or workflow step, review it in HITLy, r
 2. HITL<sub><i>y</i></sub> stores an [envelope](/docs/envelope) and shows it in the [inbox](/docs/inbox).
 3. A reviewer accepts, edits, or rejects.
 4. HITL<sub><i>y</i></sub> resumes the origin:
-   - **Workflow** — `POST /api/workflows/:workflowId/resume`
+   - **Workflow** — `POST /api/workflows/:workflowId/resume-async?runId=`
    - **Agent** — `POST /api/agents/:agentId/resume-stream`
 5. Reject maps to `resumeData.approved: false`. Workflows should `bail()`; agent tools should return a rejection result to the model.
 
@@ -53,7 +53,7 @@ MASTRA_BASE_URL=http://localhost:4111
 
 1. Scaffold a Mastra project (`yarn create mastra`) or open `examples/mastra`.
 2. In the tool or step `execute`, call `notifyHitlyApproval()`, then `suspend()`.
-3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the HITLy `hitly` proof survives.
+3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the HITL<sub><i>y</i></sub> `hitly` proof survives.
 4. Run `mastra dev` (default `http://localhost:4111`) and HITL<sub><i>y</i></sub> app (`http://localhost:3001`).
 5. Chat with the agent or start the workflow in Studio. Open `http://localhost:3001/inbox`, accept, watch the run resume.
 
@@ -209,7 +209,7 @@ Evidence events are written to the configured HTTP sink (project settings → Ev
 
 ## Decision mapping
 
-| HITLy | Mastra |
+| HITL<sub><i>y</i></sub> | Mastra |
 | --- | --- |
 | `accept` | `resume({ resumeData: { approved: true } })` |
 | `edit` | `resume({ resumeData: { approved: true, ...editedArgs } })` |

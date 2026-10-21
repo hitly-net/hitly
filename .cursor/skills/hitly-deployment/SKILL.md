@@ -1,14 +1,14 @@
 ---
 name: hitly-deployment
 description: >-
-  Deploy Hitly to the LAN production host (192.168.10.176): commit/push to
+  Deploy HITLy to the LAN production host (<your-host>): commit/push to
   github.com/hitly-net/hitly, pull + install + migrate + build on the host,
   refresh user systemd units, restart hitly-web (port 3000) and hitly-app
-  (port 3001). Use when the user asks to deploy Hitly, update the LAN server,
+  (port 3001). Use when the user asks to deploy HITLy, update the LAN server,
   restart hitly-web/hitly-app, or follow the production deploy guide.
 ---
 
-# Hitly deployment (LAN production)
+# HITLy deployment (LAN production)
 
 Project skill for shipping this monorepo to the Ubuntu host. Operator notes: [deploy/README.md](../../../deploy/README.md).
 
@@ -16,12 +16,12 @@ Project skill for shipping this monorepo to the Ubuntu host. Operator notes: [de
 
 | Item | Value |
 |------|--------|
-| Host | `192.168.10.176` |
-| SSH | `derek@192.168.10.176` (key auth) |
+| Host | `<your-host>` |
+| SSH | `<user>@<your-host>` (key auth) |
 | App path | `/home/derek/hitly` |
 | Git remote | `https://github.com/hitly-net/hitly.git` (`main`) |
-| Web | `http://192.168.10.176:3000` (`yarn workspace @hitly/web start`) |
-| App | `http://192.168.10.176:3001` (`yarn workspace @hitly/app start`) |
+| Web | `http://<your-host>:3000` (`yarn workspace @hitly/web start`) |
+| App | `http://<your-host>:3001` (`yarn workspace @hitly/app start`) |
 | Infra | Docker Compose Postgres in `~/hitly` |
 
 ## Runtime model
@@ -38,14 +38,14 @@ Install/refresh on the host: `bash scripts/systemd/install-user-units.sh`. Both 
 Docker (Postgres) is expected to already be up:
 
 ```bash
-ssh derek@192.168.10.176 'cd ~/hitly && docker compose ps'
+ssh <user>@<your-host> 'cd ~/hitly && docker compose ps'
 ```
 
 Mobile and the Mastra example stay off this host.
 
 ## Standard deploy procedure
 
-Run from the **local** Hitly clone. Prefer completing git locally, then deploying over SSH.
+Run from the **local** HITLy clone. Prefer completing git locally, then deploying over SSH.
 
 ### 1. Commit and push (local)
 
@@ -58,7 +58,7 @@ The server deploys by **pulling from GitHub**, not by rsync from the laptop.
 ### 2. Pull, install, migrate, build, refresh units, restart (remote)
 
 ```bash
-ssh derek@192.168.10.176 'bash -lc "
+ssh <user>@<your-host> 'bash -lc "
 set -euo pipefail
 source \$HOME/.nvm/nvm.sh
 cd \$HOME/hitly
@@ -96,12 +96,12 @@ Notes:
 ### 3. Verify
 
 - Units: `active (running)` for both services.
-- Web: HTTP 200 from `http://127.0.0.1:3000/` on the host (or `http://192.168.10.176:3000` from LAN).
-- App: reachable at `http://192.168.10.176:3001/` (login). Docs “Open app” should point at `:3001`.
+- Web: HTTP 200 from `http://127.0.0.1:3000/` on the host (or `http://<your-host>:3000` from LAN).
+- App: reachable at `http://<your-host>:3001/` (login). Docs “Open app” should point at `:3001`.
 
 ```bash
-ssh derek@192.168.10.176 'journalctl --user -u hitly-web.service -n 40 --no-pager'
-ssh derek@192.168.10.176 'journalctl --user -u hitly-app.service -n 40 --no-pager'
+ssh <user>@<your-host> 'journalctl --user -u hitly-web.service -n 40 --no-pager'
+ssh <user>@<your-host> 'journalctl --user -u hitly-app.service -n 40 --no-pager'
 ```
 
 ## One-time bootstrap
@@ -118,17 +118,17 @@ On a fresh Ubuntu host (SSH key auth already in place):
 `apps/web/.env.production`:
 
 ```
-NEXT_PUBLIC_APP_URL=http://192.168.10.176:3001
+NEXT_PUBLIC_APP_URL=http://<your-host>:3001
 ```
 
 `apps/app/.env.production`:
 
 ```
-WEB_URL=http://192.168.10.176:3000
-BETTER_AUTH_URL=http://192.168.10.176:3001
+WEB_URL=http://<your-host>:3000
+BETTER_AUTH_URL=http://<your-host>:3001
 BETTER_AUTH_SECRET=<openssl rand -hex 32>
-DATABASE_URL=postgres://hitly:hitly@127.0.0.1:5432/hitly
-NEXT_PUBLIC_WEB_URL=http://192.168.10.176:3000
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/hitly
+NEXT_PUBLIC_WEB_URL=http://<your-host>:3000
 ```
 
 7. `cd ~/hitly && docker compose up -d --wait`
@@ -149,13 +149,13 @@ chmod +x ~/hitly/scripts/systemd/ensure-up.sh
 ### Restart only
 
 ```bash
-ssh derek@192.168.10.176 'systemctl --user restart hitly-web.service hitly-app.service'
+ssh <user>@<your-host> 'systemctl --user restart hitly-web.service hitly-app.service'
 ```
 
 ### Restart infra (Postgres)
 
 ```bash
-ssh derek@192.168.10.176 'cd ~/hitly && docker compose up -d'
+ssh <user>@<your-host> 'cd ~/hitly && docker compose up -d'
 ```
 
 Preserve named volumes; do not `docker compose down -v` unless wiping data is intentional.
@@ -171,14 +171,14 @@ Preserve named volumes; do not `docker compose down -v` unless wiping data is in
 If `git pull --ff-only` fails:
 
 ```bash
-ssh derek@192.168.10.176 'cd ~/hitly && git status && git diff'
+ssh <user>@<your-host> 'cd ~/hitly && git status && git diff'
 ```
 
 Discard only deliberate local hacks, or stash, then pull. Do not force-push `main` to “fix” the server.
 
 ## Checklist (agent)
 
-When the user asks to deploy Hitly to the LAN server:
+When the user asks to deploy HITLy to the LAN server:
 
 1. Summarize pending local changes; commit if asked (or if they already asked to package/commit). Exclude secrets.
 2. Push to `origin/main` (`https://github.com/hitly-net/hitly.git`).
@@ -191,4 +191,4 @@ When the user asks to deploy Hitly to the LAN server:
 - TLS, public DNS, reverse proxy.
 - Cloud `@hitly/cloud` overlay, Expo mobile, Mastra example on this host.
 - Overwriting remote env from the laptop.
-- Deploying to hosts other than `192.168.10.176` without updating this skill.
+- Deploying to hosts other than `<your-host>` without updating this skill.

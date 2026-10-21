@@ -50,4 +50,4 @@ After a successful resume, the work item stores the full origin response (`resum
 
 Expired approvals (`expiresAt`) stop accepting decisions. An hourly housekeeping job also flips overdue pending items to `expired`.
 
-Closed items (`decided`, `expired`, `cancelled`) are kept according to the workspace plan: solo 10 days, pro 30, team 365, enterprise 1000. Self-hosted keeps them forever. Daily housekeeping deletes items past that window.
+Closed items (`decided`, `expired`, `cancelled`) are kept according to the workspace plan (Cloud (invite-only): solo 10 days, pro 30, team 365, enterprise 1000). Self-hosted keeps them forever. Daily housekeeping deletes items past that window.
