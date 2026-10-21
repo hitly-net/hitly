@@ -8,7 +8,12 @@ import {
   type ResumeResponse,
 } from '@hitly/core'
 import { Connection, WorkflowClient } from '@temporalio/client'
-import { assertHostPortAllowed } from '@hitly/core/destination-check'
+import {
+  connectInOrder,
+  grpcPinnedChannelOptions,
+  pinnedHostPort,
+  resolveHostPortAllowed,
+} from '@hitly/core/destination-check'
 
 export const HITLY_TEMPORAL_SIGNAL = 'hitly.decision'
 
@@ -25,12 +30,23 @@ export interface TemporalWorkflowClient {
   getHandle(workflowId: string): TemporalWorkflowHandle
 }
 
+export interface TemporalConnectOptions {
+  /** A checked IP address and port; the client does not resolve a name. */
+  address: string
+  tls?: boolean
+  apiKey?: string
+  /** Keeps the original host for the :authority header and the TLS server name. */
+  channelArgs?: Record<string, string | number>
+  /** Milliseconds allowed to open the connection. */
+  connectTimeout?: number
+}
+
 export interface TemporalClientFactory {
-  connect(options: { address: string; tls?: boolean; apiKey?: string }): Promise<TemporalConnection>
+  connect(options: TemporalConnectOptions): Promise<TemporalConnection>
   createClient(options: { connection: TemporalConnection; namespace: string }): TemporalWorkflowClient
 }
 
-let clientFactory: TemporalClientFactory = {
+const productionTemporalFactory: TemporalClientFactory = {
   async connect(options) {
     return (await Connection.connect(options)) as unknown as TemporalConnection
   },
@@ -39,12 +55,52 @@ let clientFactory: TemporalClientFactory = {
   },
 }
 
+let clientFactory: TemporalClientFactory = productionTemporalFactory
+
 /**
  * Override the Temporal client factory (test-only).
  * DO NOT use this in production code.
  */
 export function __setTemporalClientFactory(factory: TemporalClientFactory): void {
   clientFactory = factory
+}
+
+/** Restore the real gRPC client factory (test-only). */
+export function __resetTemporalClientFactory(): void {
+  clientFactory = productionTemporalFactory
+}
+
+/**
+ * Checks the address, then connects to the checked addresses in order until
+ * one opens. Connecting only reads server info; the signal is sent once, on
+ * the returned connection.
+ */
+async function openConnection(address: string, credentials?: ConnectionCredentials): Promise<TemporalConnection> {
+  const auth: { tls?: boolean; apiKey?: string } = {}
+  // Add TLS/credentials if available (for Temporal Cloud)
+  if (typeof credentials?.token === 'string' && credentials.token) {
+    auth.tls = true
+    auth.apiKey = credentials.token
+  } else if (typeof credentials?.apiKey === 'string' && credentials.apiKey) {
+    auth.tls = true
+    auth.apiKey = credentials.apiKey
+  }
+  const checked = await resolveHostPortAllowed(address)
+  const channelArgs = grpcPinnedChannelOptions(checked)
+  return connectInOrder(
+    checked.addresses,
+    (checkedAddress, timeoutMs) =>
+      clientFactory.connect({
+        ...auth,
+        address: pinnedHostPort(checkedAddress, checked.port),
+        channelArgs,
+        connectTimeout: timeoutMs,
+      }),
+    {
+      host: checked.serverName,
+      discard: (connection) => void (connection as TemporalConnection).close().catch(() => {}),
+    },
+  )
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -162,19 +218,7 @@ export const temporalPlugin: HitlyPlugin = {
     }
 
     try {
-      const connectionOptions: { address: string; tls?: boolean; apiKey?: string } = { address }
-
-      // Add TLS/credentials if available (for Temporal Cloud)
-      if (typeof credentials?.token === 'string' && credentials.token) {
-        connectionOptions.tls = true
-        connectionOptions.apiKey = credentials.token
-      } else if (typeof credentials?.apiKey === 'string' && credentials.apiKey) {
-        connectionOptions.tls = true
-        connectionOptions.apiKey = credentials.apiKey
-      }
-
-      await assertHostPortAllowed(address)
-      const connection = await clientFactory.connect(connectionOptions)
+      const connection = await openConnection(address, credentials)
       const client = clientFactory.createClient({ connection, namespace })
       const workflow = client.getHandle(workflowId)
 
@@ -211,19 +255,7 @@ export const temporalPlugin: HitlyPlugin = {
     if (!address) return 'error'
 
     try {
-      const connectionOptions: { address: string; tls?: boolean; apiKey?: string } = { address }
-
-      // Add TLS/credentials if available (for Temporal Cloud)
-      if (typeof credentials.token === 'string' && credentials.token) {
-        connectionOptions.tls = true
-        connectionOptions.apiKey = credentials.token
-      } else if (typeof credentials.apiKey === 'string' && credentials.apiKey) {
-        connectionOptions.tls = true
-        connectionOptions.apiKey = credentials.apiKey
-      }
-
-      await assertHostPortAllowed(address)
-      const connection = await clientFactory.connect(connectionOptions)
+      const connection = await openConnection(address, credentials)
       await connection.close()
       return 'ok'
     } catch {

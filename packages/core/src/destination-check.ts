@@ -270,10 +270,9 @@ export function parseHostPort(address: string): { host: string; port: number } {
 }
 
 /**
- * Check for "host:port" addresses used by gRPC clients (Temporal, OpenShell).
- * Only a bare host:port or [IPv6]:port is accepted. These clients resolve the
- * name themselves, so this is a check before connecting, not a pinned
- * connection.
+ * Save-time check for "host:port" addresses used by gRPC clients (Temporal,
+ * OpenShell). Only a bare host:port or [IPv6]:port is accepted. To connect,
+ * use resolveHostPortAllowed() and dial one of the checked addresses.
  */
 export async function assertHostPortAllowed(
   address: string,
@@ -281,6 +280,128 @@ export async function assertHostPortAllowed(
 ): Promise<CheckedUrl> {
   const { host, port } = parseHostPort(address)
   return assertDestinationAllowed(`http://${host}:${port}/`, options)
+}
+
+// --- gRPC targets -----------------------------------------------------------
+
+/** Most time spent opening one gRPC connection. */
+export const DEFAULT_GRPC_CONNECT_TIMEOUT_MS = 10_000
+/** Most time spent opening a gRPC connection across all checked addresses. */
+export const DEFAULT_GRPC_TOTAL_CONNECT_TIMEOUT_MS = 20_000
+
+/** A host:port address that passed the destination check. */
+export interface CheckedHostPort {
+  /** Host as given, IPv6 in brackets. Sent as the :authority with the port. */
+  host: string
+  /** Host without brackets, lower-case. Used as the TLS server name. */
+  serverName: string
+  port: number
+  /** Every checked address, in the order the resolver returned them. */
+  addresses: string[]
+}
+
+/**
+ * Parses and checks a gRPC "host:port" address and returns every checked
+ * address. Connect to one of these addresses (grpcPinnedTarget) so the
+ * client does not resolve the name again.
+ */
+export async function resolveHostPortAllowed(
+  address: string,
+  options: { policy?: DestinationPolicy; resolveAddresses?: ResolveAddresses } = {},
+): Promise<CheckedHostPort> {
+  const policy = options.policy ?? resolveDestinationPolicy()
+  const { host, port } = parseHostPort(address)
+  const target = parseCheckedUrl(`http://${host}:${port}/`, policy)
+  const addresses = await resolveAndCheck(target.host, policy, options.resolveAddresses)
+  return { host, serverName: target.host, port, addresses }
+}
+
+function bareAddress(address: string): string {
+  return address.startsWith('[') && address.endsWith(']') ? address.slice(1, -1) : address
+}
+
+/** grpc-js target that dials one checked address, with no name lookup. */
+export function grpcPinnedTarget(address: string, port: number): string {
+  const ip = bareAddress(address)
+  if (net.isIPv4(ip)) return `ipv4:${ip}:${port}`
+  if (net.isIPv6(ip)) return `ipv6:[${ip}]:${port}`
+  throw failure('bad_url', 'the address must be an IP address')
+}
+
+/** "host:port" form of one checked address, for clients that only take that form. */
+export function pinnedHostPort(address: string, port: number): string {
+  const ip = bareAddress(address)
+  if (net.isIPv4(ip)) return `${ip}:${port}`
+  if (net.isIPv6(ip)) return `[${ip}]:${port}`
+  throw failure('bad_url', 'the address must be an IP address')
+}
+
+/**
+ * Channel options for a pinned connection: the :authority header and the TLS
+ * server name (and certificate check) keep the original host.
+ */
+export function grpcPinnedChannelOptions(checked: CheckedHostPort): {
+  'grpc.default_authority': string
+  'grpc.ssl_target_name_override': string
+} {
+  return {
+    'grpc.default_authority': `${checked.host}:${checked.port}`,
+    'grpc.ssl_target_name_override': checked.serverName,
+  }
+}
+
+export interface ConnectInOrderOptions {
+  /** Most time for one attempt. */
+  connectTimeoutMs?: number
+  /** Most time across all attempts. */
+  totalTimeoutMs?: number
+  /** Host for error messages. */
+  host?: string
+  /** Called with a connection that opened after its attempt had timed out. */
+  discard?: (connection: unknown) => void
+}
+
+/**
+ * Opens a connection to the first checked address that accepts one, trying
+ * them in the resolver's order. `attempt` must only open the connection; the
+ * caller sends its request once, on the returned connection, and never
+ * repeats it on another address.
+ */
+export async function connectInOrder<T>(
+  addresses: string[],
+  attempt: (address: string, timeoutMs: number) => Promise<T>,
+  options: ConnectInOrderOptions = {},
+): Promise<T> {
+  const connectTimeoutMs = options.connectTimeoutMs ?? testHooks.connectTimeoutMs ?? DEFAULT_GRPC_CONNECT_TIMEOUT_MS
+  const totalTimeoutMs = options.totalTimeoutMs ?? testHooks.totalTimeoutMs ?? DEFAULT_GRPC_TOTAL_CONNECT_TIMEOUT_MS
+  const deadline = Date.now() + totalTimeoutMs
+  let lastError: unknown
+  for (const address of addresses) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    const timeoutMs = Math.min(connectTimeoutMs, remaining)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const pending = attempt(address, timeoutMs)
+    try {
+      return await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            reject(failure('timeout', 'the connection timed out', options.host))
+          }, timeoutMs)
+        }),
+      ])
+    } catch (error) {
+      lastError = error
+      if (timedOut) pending.then((connection) => options.discard?.(connection), () => {})
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  if (Date.now() >= deadline) throw failure('timeout', 'the connection timed out', options.host)
+  throw lastError ?? failure('connect', 'the connection failed', options.host)
 }
 
 /** Host for messages; never the full URL. */
@@ -337,6 +458,10 @@ export type DestinationTransport = (request: PinnedRequest) => Promise<PinnedRes
 interface TestHooks {
   resolve?: ResolveAddresses
   transport?: DestinationTransport
+  /** Default per-attempt timeout for connectInOrder(). */
+  connectTimeoutMs?: number
+  /** Default total timeout for connectInOrder(). */
+  totalTimeoutMs?: number
 }
 
 const testHooks: TestHooks = {}
@@ -357,6 +482,8 @@ function markNotConnected<T extends object>(error: T): T {
 export function setDestinationCheckTestHooks(hooks: TestHooks = {}): void {
   testHooks.resolve = hooks.resolve
   testHooks.transport = hooks.transport
+  testHooks.connectTimeoutMs = hooks.connectTimeoutMs
+  testHooks.totalTimeoutMs = hooks.totalTimeoutMs
 }
 
 /**
@@ -388,8 +515,12 @@ export const pinnedNodeTransport: DestinationTransport = (request) =>
     const lookup = (_hostname: string, options: { all?: boolean } | unknown, callback: (...args: unknown[]) => void) => {
       const cb = typeof options === 'function' ? (options as typeof callback) : callback
       const all = typeof options === 'object' && options !== null && (options as { all?: boolean }).all
-      if (all) cb(null, [{ address: request.address, family }])
-      else cb(null, request.address, family)
+      // Answer on a later turn: a synchronous answer lets an immediate connect
+      // error fire before the request's error handler is attached.
+      setImmediate(() => {
+        if (all) cb(null, [{ address: request.address, family }])
+        else cb(null, request.address, family)
+      })
     }
     const transport = request.url.protocol === 'https:' ? https : http
     let done = false
