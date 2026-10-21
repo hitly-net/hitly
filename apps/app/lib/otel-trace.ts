@@ -1,4 +1,5 @@
 import type { ApprovalEnvelope, DecisionPayload, EvidenceEvent, OriginRef } from '@hitly/core'
+import { checkedFetch, destinationErrorMessage, destinationHost } from '@hitly/core/destination-check'
 import { workspaceOtelEndpoints } from '@hitly/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { requireDb } from './tenant'
@@ -302,26 +303,19 @@ async function postOtelTrace(config: OtelEndpointConfig, trace: OtelTraceRequest
       'Content-Type': contentType,
     }
 
-    const response = await fetch(config.endpoint, {
-      method: 'POST',
-      headers,
-      body: body as BodyInit,
-      signal: controller.signal,
-    })
+    const response = await checkedFetch(
+      config.endpoint,
+      { method: 'POST', headers, body, signal: controller.signal },
+      { totalTimeoutMs: 5_000 },
+    )
 
     if (!response.ok) {
-      console.error(`[otel] Export to ${config.name} failed: ${response.status} ${response.statusText}`)
+      console.error(`[otel] Export to ${config.name} failed: ${response.status} for host "${destinationHost(config.endpoint)}"`)
     } else {
       console.log(`[otel] Exported ${trace.resourceSpans[0].scopeSpans[0].spans[0].name} to ${config.name}`)
     }
   } catch (error) {
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        console.error(`[otel] Export to ${config.name} timed out`)
-      } else {
-        console.error(`[otel] Export to ${config.name} failed:`, error.message)
-      }
-    }
+    console.error(`[otel] Export to ${config.name} failed: ${destinationErrorMessage('OTEL export', error, destinationHost(config.endpoint))}`)
   } finally {
     clearTimeout(timeout)
   }
