@@ -7,9 +7,9 @@ export function AuthForm({
   submitLabel,
   extraFields,
 }: {
-  action: '/api/auth/sign-in/email' | '/api/auth/sign-up/email' | '/api/auth/forget-password' | '/api/auth/reset-password'
+  action: '/api/auth/sign-in/email' | '/api/auth/sign-up/email'
   submitLabel: string
-  extraFields?: 'name' | 'token'
+  extraFields?: 'name'
 }) {
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
@@ -34,11 +34,7 @@ export function AuthForm({
         return
       }
       await response.json().catch(() => ({}))
-      const redirectPath = action.includes('sign-up')
-        ? '/inbox'
-        : extraFields === 'token' || action.includes('forget')
-          ? '/login'
-          : '/'
+      const redirectPath = action.includes('sign-up') ? '/inbox' : '/'
       window.location.href = redirectPath
     } catch {
       setError('Something went wrong')
@@ -51,22 +47,16 @@ export function AuthForm({
       {extraFields === 'name' ? (
         <input name="name" required placeholder="Name" autoComplete="name" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
       ) : null}
-      {action.includes('reset-password') ? (
-        <input name="token" required placeholder="Reset token" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
-      ) : (
-        <input name="email" type="email" required placeholder="Email" autoComplete="username" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
-      )}
-      {action.includes('forget-password') ? null : (
-        <input
-          name="password"
-          type="password"
-          required
-          minLength={8}
-          placeholder="Password"
-          autoComplete={action.includes('sign-up') || action.includes('reset-password') ? 'new-password' : 'current-password'}
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-      )}
+      <input name="email" type="email" required placeholder="Email" autoComplete="username" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
+      <input
+        name="password"
+        type="password"
+        required
+        minLength={8}
+        placeholder="Password"
+        autoComplete={action.includes('sign-up') ? 'new-password' : 'current-password'}
+        className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+      />
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       <button
         type="submit"

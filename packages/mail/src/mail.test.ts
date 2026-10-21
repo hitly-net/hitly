@@ -3,6 +3,7 @@ import { afterEach, test } from 'node:test'
 import { clearSentMail, resolveTransportName, sendMail, sentMail } from './index'
 
 const keys = [
+  'NODE_ENV',
   'HITLY_MAIL_TRANSPORT',
   'HITLY_MAIL_FROM',
   'SMTP_HOST',
@@ -60,4 +61,49 @@ test('memory transport records messages', async () => {
   assert.equal(sentMail.length, 1)
   assert.equal(sentMail[0]?.to, 'alex@example.com')
   assert.equal(sentMail[0]?.from, 'Hitly Test <noreply@hitly.net>')
+})
+
+async function captureInfo(fn: () => Promise<unknown>): Promise<string> {
+  const original = console.info
+  const lines: string[] = []
+  console.info = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '))
+  }
+  try {
+    await fn()
+  } finally {
+    console.info = original
+  }
+  return lines.join('\n')
+}
+
+const resetMessage = {
+  to: 'alex@example.com',
+  subject: 'HITLy: Reset your password',
+  text: 'http://localhost:3001/reset-password?token=tok_console_123',
+}
+
+test('console fallback prints the message outside production', async () => {
+  delete process.env.HITLY_MAIL_TRANSPORT
+  delete process.env.SMTP_HOST
+  delete process.env.RESEND_API_KEY
+  process.env.NODE_ENV = 'development'
+  const output = await captureInfo(() => sendMail(resetMessage))
+  assert.ok(output.includes('tok_console_123'))
+})
+
+test('console fallback in production logs only that a mail was suppressed', async () => {
+  delete process.env.HITLY_MAIL_TRANSPORT
+  delete process.env.SMTP_HOST
+  delete process.env.RESEND_API_KEY
+  process.env.NODE_ENV = 'production'
+  let result: unknown
+  const output = await captureInfo(async () => {
+    result = await sendMail(resetMessage)
+  })
+  assert.deepEqual(result, { delivered: false, reason: 'no_mailer' })
+  assert.ok(output.includes('suppressed'))
+  for (const part of ['tok_console_123', 'reset-password', 'alex@example.com', 'Reset your password']) {
+    assert.ok(!output.includes(part), `production log must not contain ${part}`)
+  }
 })

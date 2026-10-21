@@ -7,6 +7,7 @@ import * as schema from '@hitly/db/schema'
 import { db } from './db'
 import { isTrustedAppOrigin } from './cors'
 import { sendMail } from './mail'
+import { emailAndPasswordOptions } from './auth-email-password'
 import { bootstrapUserWorkspaces } from './workspace'
 import { isSignupEnabled } from './signup'
 
@@ -31,18 +32,7 @@ export const auth = db
           verification: schema.verifications,
         },
       }),
-      emailAndPassword: {
-        enabled: true,
-        sendResetPassword: async ({ user, url }) => {
-          void sendMail({
-            to: user.email,
-            subject: 'Hitly: Reset your password',
-            text: `Click the link to reset your password:\n\n${url}\n\nIf you did not request a password reset, please ignore this email.`,
-          }).catch((error) => {
-            console.error('[hitly password-reset] Failed to send reset email:', error)
-          })
-        },
-      },
+      emailAndPassword: emailAndPasswordOptions(appUrl, sendMail),
       socialProviders,
       databaseHooks: {
         user: {
