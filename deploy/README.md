@@ -54,6 +54,8 @@ DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/hitly
 NEXT_PUBLIC_WEB_URL=http://<your-host>:3000
 ```
 
+If evidence sinks, OTEL collectors or agents run on this host or the private network, also set `HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS=true` in `apps/app/.env.production`. Without it, production refuses private and loopback destinations (see the self-host guide, "Outbound destinations").
+
 Generate the secret with `openssl rand -hex 32`. `NEXT_PUBLIC_*` is inlined at `yarn build`; changing those URLs later requires a rebuild.
 
 7. `cd ~/hitly && docker compose up -d --wait`

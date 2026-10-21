@@ -424,7 +424,7 @@ export const globalFetchTransport: DestinationTransport = async (request) => {
   else if (typeof response.text === 'function') body = new TextEncoder().encode(await response.text())
   else body = new Uint8Array(0)
   const status = typeof response.status === 'number' ? response.status : response.ok === false ? 500 : 200
-  const headers = response.headers instanceof Headers ? response.headers : new Headers((response.headers as HeadersInit) ?? {})
+  const headers = response.headers instanceof Headers ? response.headers : new Headers((response.headers as unknown as HeadersInit | undefined) ?? {})
   return { status, statusText: response.statusText ?? '', headers, body }
 }
 

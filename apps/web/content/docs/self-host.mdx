@@ -42,3 +42,22 @@ The app process runs due jobs about once a minute:
 Self-hosted workspaces keep completed items forever. Cloud (invite-only) plans: solo 10 days, pro 30, team 365, enterprise 1000.
 
 Set `HITLY_HOUSEKEEPING=0` to disable the in-process timer (for example when a process manager or cron should own it). Then `POST /api/v1/housekeeping` with `Authorization: Bearer $HITLY_CRON_SECRET`. Optional JSON `{ "job": "purge-completed-approvals", "force": true }` runs one job immediately.
+
+## Outbound destinations
+
+HITLy sends requests to destinations you configure: HTTP and S3 evidence sinks, workspace OTEL endpoints, and plugin URLs (for example a Mastra or LangGraph base URL, or an HTTP resume URL). Every request runs a destination check when it is sent:
+
+- Only `http` and `https` URLs are accepted, without a user name or password in the URL.
+- The host name is resolved once, every address is checked, and the request goes to that checked address.
+- Redirects are not followed; a 3xx answer is reported as an error.
+- The connection must open within 5 seconds and the whole request must finish within 10 seconds (5 seconds for evidence sinks and OTEL, 60 seconds for plugin resume calls). Responses are capped at 1 MiB.
+- Error messages name the status code and host only, never the response body or the full URL.
+
+Private, loopback and link-local addresses (including `localhost`) are allowed when `NODE_ENV` is not `production`, so local development and the quickstart work as they are. In production they are refused unless the server sets:
+
+```bash
+HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS=true
+```
+
+Only the exact value `true` turns this on. It is read from the server environment, not from workspace or project settings, and the server logs one line at startup when it is on. Set it on a self-hosted production server whose evidence sink, collector or agents run on the same machine or private network. Multicast and broadcast addresses are always refused.
+
