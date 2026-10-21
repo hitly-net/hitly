@@ -1,12 +1,7 @@
 import { NextResponse } from 'next/server'
+import { isPrivateHost } from './host-classify'
 
-const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\]|10\.0\.2\.2)$/i
-const PRIVATE_LAN =
-  /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})$/
-
-function isPrivateHost(hostname: string) {
-  return LOOPBACK.test(hostname) || PRIVATE_LAN.test(hostname)
-}
+const DEFAULT_APP_URL = 'http://localhost:3001'
 
 /**
  * Explicit browser origins allowed to call the API, configured per deployment
@@ -20,8 +15,14 @@ function configuredAllowedOrigins(): string[] {
     .filter(Boolean)
 }
 
-function appOwnOrigin() {
-  return (process.env.BETTER_AUTH_URL ?? 'http://localhost:3001').replace(/\/+$/, '')
+/** The app's own origin, derived from BETTER_AUTH_URL (path and trailing slash ignored). */
+export function appOwnOrigin(): string | null {
+  const configured = (process.env.BETTER_AUTH_URL ?? '').trim() || DEFAULT_APP_URL
+  try {
+    return new URL(configured).origin
+  } catch {
+    return null
+  }
 }
 
 export function isTrustedAppOrigin(origin: string | null) {
@@ -31,8 +32,9 @@ export function isTrustedAppOrigin(origin: string | null) {
     const url = new URL(origin)
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
     if (process.env.NODE_ENV === 'production') {
-      // Production: never trust a private-network or loopback origin with
-      // credentials. Only explicitly configured origins are trusted.
+      // Production: never trust a loopback, private, shared, link-local,
+      // unique-local, IPv4-mapped or localhost origin with credentials, even
+      // when configured. Only explicitly configured origins are trusted.
       if (isPrivateHost(url.hostname)) return false
       if (configuredAllowedOrigins().includes(url.origin)) return true
       if (url.origin === appOwnOrigin()) return true
@@ -86,7 +88,7 @@ export function withNativeAuthOrigin(request: Request) {
 
   const hinted = request.headers.get('x-hitly-origin')
   const fromUrl = new URL(request.url).origin
-  const appUrl = (process.env.BETTER_AUTH_URL ?? 'http://localhost:3001').replace(/\/+$/, '')
+  const appUrl = appOwnOrigin() ?? DEFAULT_APP_URL
   const candidate =
     [hinted, fromUrl, appUrl].find((value) => isTrustedAppOrigin(value ?? null)) ?? appUrl
 
