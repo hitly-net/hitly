@@ -6,8 +6,9 @@
  * endpoints, and plugin baseUrl settings. It:
  *   1. validates the URL (http/https only, no embedded credentials),
  *   2. resolves the host once and checks every returned address,
- *   3. connects to the checked address (original Host header and TLS server
- *      name kept) and does not follow redirects,
+ *   3. connects to a checked address, trying each answer in order until one
+ *      connects (original Host header and TLS server name kept), and does not
+ *      follow redirects,
  *   4. applies a connect timeout, a total timeout and a response size cap,
  *   5. reports errors with a fixed message, the status code and the host only.
  *
@@ -202,7 +203,7 @@ export type ResolveAddresses = (host: string) => Promise<Array<{ address: string
 
 const defaultResolve: ResolveAddresses = (host) => dns.lookup(host, { all: true, verbatim: true })
 
-/** Resolves once and checks every answer. The first answer is the one to connect to. */
+/** Resolves once and checks every answer. Answers are tried in order when sending. */
 export async function resolveAndCheck(
   host: string,
   policy: DestinationPolicy,
@@ -308,6 +309,14 @@ interface TestHooks {
 
 const testHooks: TestHooks = {}
 
+/** Errors raised before a connection was made; the next checked address may be tried. */
+const notConnectedErrors = new WeakSet<object>()
+
+function markNotConnected<T extends object>(error: T): T {
+  notConnectedErrors.add(error)
+  return error
+}
+
 /**
  * Test seam: replace name resolution and/or the socket layer. The URL and
  * address checks, redirect rule, size cap and messages still apply. Call with
@@ -352,6 +361,7 @@ export const pinnedNodeTransport: DestinationTransport = (request) =>
     }
     const transport = request.url.protocol === 'https:' ? https : http
     let done = false
+    let connected = false
     const finish = (error: DestinationCheckError | null, value?: PinnedResponse) => {
       if (done) return
       done = true
@@ -374,15 +384,21 @@ export const pinnedNodeTransport: DestinationTransport = (request) =>
       ...(request.url.protocol === 'https:' && !net.isIP(request.host) ? { servername: request.host } : {}),
     })
     const connectTimer = setTimeout(
-      () => finish(failure('timeout', 'the connection timed out', request.host)),
+      () => finish(markNotConnected(failure('timeout', 'the connection timed out', request.host))),
       request.connectTimeoutMs,
     )
     req.on('socket', (socket) => {
-      socket.once('connect', () => clearTimeout(connectTimer))
+      socket.once('connect', () => {
+        connected = true
+        clearTimeout(connectTimer)
+      })
     })
     request.signal.addEventListener('abort', onAbort, { once: true })
     if (request.signal.aborted) onAbort()
-    req.on('error', () => finish(failure('connect', 'the connection failed', request.host)))
+    req.on('error', () => {
+      const error = failure('connect', 'the connection failed', request.host)
+      finish(connected ? error : markNotConnected(error))
+    })
     req.on('response', (res) => {
       const status = res.statusCode ?? 0
       const headers = new Headers()
@@ -463,24 +479,37 @@ export async function checkedFetch(
     const body = init.body === undefined ? undefined : typeof init.body === 'string' ? new TextEncoder().encode(init.body) : init.body
     if (body) headers['content-length'] = String(body.byteLength)
     const transport = testHooks.transport ?? pinnedNodeTransport
-    let response: PinnedResponse
-    try {
-      response = await transport({
-        url: target.url,
-        host: target.host,
-        port: target.port,
-        address: addresses[0],
-        method: (init.method ?? 'GET').toUpperCase(),
-        headers,
-        body,
-        callerBody: init.body,
-        connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
-        maxResponseBytes,
-        signal: controller.signal,
-      })
-    } catch (error) {
+    // Every answer was checked above. Try them in order; move on only when no
+    // connection was made, so a request is never sent twice.
+    let response: PinnedResponse | undefined
+    let lastError: unknown
+    for (const address of addresses) {
+      if (addressRefused(address, policy)) throw refusedError(target.host, policy)
+      try {
+        response = await transport({
+          url: target.url,
+          host: target.host,
+          port: target.port,
+          address,
+          method: (init.method ?? 'GET').toUpperCase(),
+          headers,
+          body,
+          callerBody: init.body,
+          connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
+          maxResponseBytes,
+          signal: controller.signal,
+        })
+        break
+      } catch (error) {
+        lastError = error
+        if (timedOut || controller.signal.aborted) break
+        if (typeof error === 'object' && error !== null && notConnectedErrors.has(error)) continue
+        break
+      }
+    }
+    if (!response) {
       if (timedOut) throw failure('timeout', 'the request timed out', target.host)
-      if (error instanceof DestinationCheckError) throw error
+      if (lastError instanceof DestinationCheckError) throw lastError
       if (controller.signal.aborted) throw failure('aborted', 'the request was stopped', target.host)
       throw failure('connect', 'the connection failed', target.host)
     }

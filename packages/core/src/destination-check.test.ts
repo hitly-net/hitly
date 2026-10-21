@@ -312,10 +312,99 @@ describe('checkedFetch against a 127.0.0.1 stub server', () => {
     assert.deepEqual(await response.json(), { ok: true })
   })
 
-  it('allows 127.0.0.1 and localhost outside production', async () => {
+  it('allows 127.0.0.1 and localhost outside production', { timeout: 10_000 }, async () => {
     const policy = resolveDestinationPolicy({ NODE_ENV: 'development' })
-    assert.equal((await checkedFetch(`http://127.0.0.1:${ok.port}/`, {}, { policy })).status, 200)
-    assert.equal((await checkedFetch(`http://localhost:${ok.port}/`, {}, { policy })).status, 200)
+    assert.equal((await checkedFetch(`http://127.0.0.1:${ok.port}/`, {}, { policy, totalTimeoutMs: 5000 })).status, 200)
+    assert.equal((await checkedFetch(`http://localhost:${ok.port}/`, {}, { policy, totalTimeoutMs: 5000 })).status, 200)
+  })
+
+  it('tries each checked address in order until one connects (IPv6 loopback first)', { timeout: 10_000 }, async () => {
+    const before = ok.hits.length
+    const response = await checkedFetch(
+      `http://localhost:${ok.port}/both`,
+      {},
+      {
+        policy: DEV,
+        totalTimeoutMs: 5000,
+        resolveAddresses: async () => [
+          { address: '::1', family: 6 },
+          { address: '127.0.0.1', family: 4 },
+        ],
+      },
+    )
+    assert.equal(response.status, 200)
+    assert.equal(ok.hits.length, before + 1)
+    assert.equal(ok.hits.at(-1)!.path, '/both')
+  })
+
+  it('tries the next address for a dual-stack name', { timeout: 10_000 }, async () => {
+    const response = await checkedFetch(
+      `http://dual.example:${ok.port}/`,
+      {},
+      {
+        policy: DEV,
+        totalTimeoutMs: 5000,
+        resolveAddresses: async () => [
+          { address: '::1', family: 6 },
+          { address: '127.0.0.1', family: 4 },
+        ],
+      },
+    )
+    assert.equal(response.status, 200)
+    assert.equal(ok.hits.at(-1)!.host, `dual.example:${ok.port}`)
+  })
+
+  it('reports a fixed connect error when no checked address connects', { timeout: 10_000 }, async () => {
+    const closed = await startServer(() => {})
+    const port = closed.port
+    closed.server.close()
+    await assert.rejects(
+      checkedFetch(`http://dual.example:${port}/`, {}, {
+        policy: DEV,
+        totalTimeoutMs: 5000,
+        resolveAddresses: async () => [
+          { address: '::1', family: 6 },
+          { address: '127.0.0.1', family: 4 },
+        ],
+      }),
+      (e: DestinationCheckError) => e.code === 'connect' && !e.message.includes('ECONNREFUSED'),
+    )
+  })
+
+  it('does not try another address once a connection answered', { timeout: 10_000 }, async () => {
+    const before = ok.hits.length
+    const response = await checkedFetch(
+      `http://dual.example:${failing.port}/`,
+      {},
+      {
+        policy: DEV,
+        totalTimeoutMs: 5000,
+        resolveAddresses: async () => [
+          { address: '127.0.0.1', family: 4 },
+          { address: '::1', family: 6 },
+        ],
+      },
+    )
+    assert.equal(response.status, 500)
+    assert.equal(ok.hits.length, before)
+  })
+
+  it('connects to no address when any answer is refused', async () => {
+    const tried: string[] = []
+    setDestinationCheckTestHooks({
+      transport: async (request) => {
+        tried.push(request.address)
+        return { status: 200, statusText: 'OK', headers: new Headers(), body: new Uint8Array(0) }
+      },
+    })
+    await assert.rejects(
+      checkedFetch('https://sink.example.com/', {}, {
+        policy: PROD,
+        resolveAddresses: async () => [{ address: '203.0.113.10' }, { address: '::1' }],
+      }),
+      (e: DestinationCheckError) => e.code === 'refused',
+    )
+    assert.deepEqual(tried, [])
   })
 
   it('sends method, headers and body', async () => {
