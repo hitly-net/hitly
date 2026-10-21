@@ -53,7 +53,7 @@ MASTRA_BASE_URL=http://localhost:4111
 
 1. Scaffold a Mastra project (`yarn create mastra`) or open `examples/mastra`.
 2. In the tool or step `execute`, call `notifyHitlyApproval()`, then `suspend()`.
-3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the HITLy `hitly` proof survives.
+3. On resume, call `verifyHitlyResume(resumeData)` then read `resumeData.approved`. If `false`, `bail()` (workflow) or return a rejection (agent tool). Mastra Zod strips unknown keys — `resumeSchema` must `.passthrough()` so the HITL<sub><i>y</i></sub> `hitly` proof survives.
 4. Run `mastra dev` (default `http://localhost:4111`) and HITL<sub><i>y</i></sub> app (`http://localhost:3001`).
 5. Chat with the agent or start the workflow in Studio. Open `http://localhost:3001/inbox`, accept, watch the run resume.
 
@@ -209,7 +209,7 @@ Evidence events are written to the configured HTTP sink (project settings → Ev
 
 ## Decision mapping
 
-| HITLy | Mastra |
+| HITL<sub><i>y</i></sub> | Mastra |
 | --- | --- |
 | `accept` | `resume({ resumeData: { approved: true } })` |
 | `edit` | `resume({ resumeData: { approved: true, ...editedArgs } })` |

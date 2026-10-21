@@ -9,7 +9,7 @@ export function Hero() {
         Pause the agent. Review the action. Resume the run.
       </h1>
       <p className="mt-6 max-w-2xl text-lg text-zinc-600 dark:text-zinc-400">
-        <HitlyWordmark className="font-semibold" /> is an approval inbox for agent work. Mastra, Hermes, HTTP, LangGraph, and Temporal pause; your team decides; HITLy resumes the origin workflow. Self-host it, or join the Hosted Cloud waitlist (invite-only).
+        <HitlyWordmark className="font-semibold" /> is an approval inbox for agent work. Mastra, Hermes, HTTP, LangGraph, and Temporal pause; your team decides; <HitlyWordmark /> resumes the origin workflow. Self-host it, or join the Hosted Cloud waitlist (invite-only).
       </p>
       <div className="mt-8 flex gap-3">
         <Link
