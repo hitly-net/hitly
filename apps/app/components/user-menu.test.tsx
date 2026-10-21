@@ -54,7 +54,7 @@ describe('UserMenu email', () => {
       const trigger = screen.getByRole('button', { name: /Alex/ })
       assert.equal(trigger.hasAttribute('title'), false)
       openMenu()
-      assert.equal(screen.queryByTestId('user-menu-email'), null)
+      assert.equal(screen.queryByTestId('user-menu-email') === null, true, `email element rendered for ${JSON.stringify(userEmail)}`)
       cleanup()
     }
   })
