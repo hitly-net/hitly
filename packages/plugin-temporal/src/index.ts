@@ -8,6 +8,7 @@ import {
   type ResumeResponse,
 } from '@hitly/core'
 import { Connection, WorkflowClient } from '@temporalio/client'
+import { assertHostPortAllowed } from '@hitly/core/destination-check'
 
 export const HITLY_TEMPORAL_SIGNAL = 'hitly.decision'
 
@@ -172,6 +173,7 @@ export const temporalPlugin: HitlyPlugin = {
         connectionOptions.apiKey = credentials.apiKey
       }
 
+      await assertHostPortAllowed(address)
       const connection = await clientFactory.connect(connectionOptions)
       const client = clientFactory.createClient({ connection, namespace })
       const workflow = client.getHandle(workflowId)
@@ -220,6 +222,7 @@ export const temporalPlugin: HitlyPlugin = {
         connectionOptions.apiKey = credentials.apiKey
       }
 
+      await assertHostPortAllowed(address)
       const connection = await clientFactory.connect(connectionOptions)
       await connection.close()
       return 'ok'

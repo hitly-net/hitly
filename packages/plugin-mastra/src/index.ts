@@ -10,6 +10,7 @@ import {
   type ResumeResponse,
 } from '@hitly/core'
 import { signHitlyResume } from './resume-auth'
+import { checkedFetch, destinationHost, destinationStatusMessage } from '@hitly/core/destination-check'
 
 export type MastraResumeKind = 'workflow' | 'agent'
 
@@ -157,12 +158,11 @@ async function postMastraResume(
   body: unknown,
   headers?: Record<string, string>,
 ): Promise<{ status: number; body: unknown; error?: string }> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  })
+  const response = await checkedFetch(
+    url,
+    { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) },
+    { totalTimeoutMs: 60_000 },
+  )
   const text = await response.text()
   let parsed: unknown = text || null
   if (text) {
@@ -173,11 +173,10 @@ async function postMastraResume(
     }
   }
   if (!response.ok) {
-    const snippet = text.length > 500 ? `${text.slice(0, 500)}…` : text
     return {
       status: response.status,
-      body: parsed,
-      error: `Mastra resume failed (${response.status}): ${snippet}`,
+      body: null,
+      error: destinationStatusMessage('Mastra resume', response.status, destinationHost(url)),
     }
   }
   const error = mastraRunError(parsed)
@@ -378,7 +377,7 @@ export async function healthcheckMastra(credentials: ConnectionCredentials): Pro
   const baseUrl = String(credentials.baseUrl ?? '')
   if (!baseUrl) return 'error'
   try {
-    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/agents`)
+    const response = await checkedFetch(`${baseUrl.replace(/\/$/, '')}/api/agents`)
     return response.ok ? 'ok' : 'error'
   } catch {
     return 'error'

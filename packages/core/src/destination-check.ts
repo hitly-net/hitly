@@ -322,6 +322,22 @@ export async function assertDestinationAllowed(
   return target
 }
 
+/**
+ * Check for "host:port" style addresses used by gRPC clients (Temporal,
+ * OpenShell). These clients resolve the name themselves, so this is a
+ * check before connecting, not a pinned connection.
+ */
+export async function assertHostPortAllowed(
+  address: string,
+  options: { policy?: DestinationPolicy; resolveAddresses?: ResolveAddresses } = {},
+): Promise<CheckedUrl> {
+  let hostPort = address.trim()
+  const scheme = hostPort.match(/^[a-z][a-z0-9+.-]*:\/\//i)
+  if (scheme) hostPort = hostPort.slice(scheme[0].length)
+  hostPort = hostPort.replace(/^\/+/, '').split('/')[0]
+  return assertDestinationAllowed(`http://${hostPort}/`, options)
+}
+
 /** Host for messages; never the full URL. */
 export function destinationHost(input: string | URL): string {
   try {
@@ -395,15 +411,21 @@ export function setDestinationCheckTestHooks(hooks: TestHooks = {}): void {
  * to the current global fetch instead of opening a socket.
  */
 export const globalFetchTransport: DestinationTransport = async (request) => {
-  const response = await globalThis.fetch(request.url.href, {
+  // Mocks often return a partial Response, so read it defensively.
+  const response = (await globalThis.fetch(request.url.href, {
     method: request.method,
     headers: request.headers,
     body: (request.callerBody ?? request.body) as BodyInit | undefined,
     redirect: 'manual',
     signal: request.signal,
-  })
-  const body = new Uint8Array(await response.arrayBuffer())
-  return { status: response.status, statusText: response.statusText, headers: response.headers, body }
+  })) as Partial<Response>
+  let body: Uint8Array
+  if (typeof response.arrayBuffer === 'function') body = new Uint8Array(await response.arrayBuffer())
+  else if (typeof response.text === 'function') body = new TextEncoder().encode(await response.text())
+  else body = new Uint8Array(0)
+  const status = typeof response.status === 'number' ? response.status : response.ok === false ? 500 : 200
+  const headers = response.headers instanceof Headers ? response.headers : new Headers((response.headers as HeadersInit) ?? {})
+  return { status, statusText: response.statusText ?? '', headers, body }
 }
 
 /** Opens the socket to the checked address while keeping Host and TLS server name. */
