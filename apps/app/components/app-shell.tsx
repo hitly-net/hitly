@@ -33,6 +33,7 @@ export async function AppShell({
             projects={projects}
             activeProjectId={project?.id}
             userName={user.name}
+            userEmail={user.email}
           />
         </Suspense>
         <main className="min-h-0 flex-1 overflow-y-auto p-6">{children}</main>
