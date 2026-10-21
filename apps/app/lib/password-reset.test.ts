@@ -180,6 +180,24 @@ describe('setting a new password', () => {
     assert.equal(signInOld.status, 401)
   })
 
+  it('ends sessions created before the reset', async () => {
+    const signIn = await post('/api/auth/sign-in/email', { email: 'alex@example.com', password: 'old-password-1' })
+    assert.equal(signIn.status, 200)
+    const cookie = signIn.headers
+      .getSetCookie()
+      .map((c) => c.split(';')[0])
+      .join('; ')
+    assert.ok(cookie.includes('session_token'))
+    const sessionBefore = await appFetch('/api/auth/get-session', { headers: { cookie } })
+    assert.ok(((await sessionBefore.json()) as { user?: unknown } | null)?.user, 'session is valid before the reset')
+
+    const token = await tokenFromEmail()
+    assert.deepEqual(await submitNewPassword(token, 'new-password-2', appFetch), { ok: true })
+
+    const sessionAfter = await appFetch('/api/auth/get-session', { headers: { cookie } })
+    assert.equal(await sessionAfter.json(), null, 'session from before the reset no longer works')
+  })
+
   it('a token works once', async () => {
     const token = await tokenFromEmail()
     assert.deepEqual(await submitNewPassword(token, 'new-password-2', appFetch), { ok: true })

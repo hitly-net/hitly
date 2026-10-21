@@ -12,6 +12,7 @@ export function emailAndPasswordOptions(appUrl: string, send: MailFn) {
     enabled: true,
     minPasswordLength: MIN_PASSWORD_LENGTH,
     resetPasswordTokenExpiresIn: 60 * 60,
+    revokeSessionsOnPasswordReset: true,
     sendResetPassword: createSendResetPassword(appUrl, send),
   }
 }
