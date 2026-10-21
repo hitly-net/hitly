@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { performSignOut, SIGN_OUT_FAILURE_MESSAGE } from '@/lib/sign-out'
+import { performSignOut, signOutFailureMessage } from '@/lib/sign-out'
 
 export function SignOutButton({ className }: { className?: string }) {
   const [pending, setPending] = useState(false)
@@ -16,11 +16,12 @@ export function SignOutButton({ className }: { className?: string }) {
       if (outcome === 'redirected') {
         return // the page navigates to /login; keep the button disabled
       }
-      setFailure(SIGN_OUT_FAILURE_MESSAGE)
+      // Narrowed here to 'failed' | 'failed_server'.
+      setFailure(signOutFailureMessage(outcome))
     } catch (error) {
       // performSignOut normally resolves; never leave a thrown error silent.
       console.error('[hitly sign-out] Unexpected sign-out error:', error)
-      setFailure(SIGN_OUT_FAILURE_MESSAGE)
+      setFailure(signOutFailureMessage('failed'))
     } finally {
       setPending(false)
     }
