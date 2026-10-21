@@ -74,12 +74,83 @@ describe('isPrivateHost', () => {
       'http://169.253.0.1',
       'http://11.0.0.1',
       'http://[2001:db8::1]',
-      'http://[fec0::1]',
+      'http://[fe00::1]',
       'http://[::fffe:7f00:1]',
       'https://localhost.example.com',
       'https://notlocalhost',
     ]) {
       assert.equal(isPrivateHost(hostOf(url)), false, `${url} -> ${hostOf(url)}`)
+    }
+  })
+})
+
+describe('isPrivateHost: further non-public ranges', () => {
+  const host = (url: string) => isPrivateHost(hostOf(url))
+
+  it('IPv4-mapped ::ffff:0:0/96', () => {
+    assert.equal(host('http://[::ffff:127.0.0.1]'), true)
+    assert.equal(host('http://[::ffff:cb00:7101]'), true)
+  })
+
+  it('IPv4-translated ::ffff:0:0:0/96', () => {
+    assert.equal(host('http://[::ffff:0:7f00:1]'), true)
+  })
+
+  it('IPv4-compatible ::/96', () => {
+    assert.equal(host('http://[::7f00:1]'), true)
+    assert.equal(host('http://[::127.0.0.1]'), true)
+    assert.equal(host('http://[::cb00:7101]'), true)
+  })
+
+  it('6to4 2002::/16 classifies the embedded IPv4 address', () => {
+    assert.equal(host('http://[2002:7f00:1::]'), true)
+    assert.equal(host('http://[2002:c0a8:101::1]'), true)
+    assert.equal(host('http://[2002:a9fe:a9fe::]'), true)
+    assert.equal(host('http://[2002:cb00:7101::1]'), false)
+  })
+
+  it('NAT64 64:ff9b::/96 classifies the embedded IPv4 address', () => {
+    assert.equal(host('http://[64:ff9b::7f00:1]'), true)
+    assert.equal(host('http://[64:ff9b::10.0.0.1]'), true)
+    assert.equal(host('http://[64:ff9b::cb00:7101]'), false)
+  })
+
+  it('local-use NAT64 64:ff9b:1::/48', () => {
+    assert.equal(host('http://[64:ff9b:1::7f00:1]'), true)
+    assert.equal(host('http://[64:ff9b:1:cb00:71::1]'), true)
+  })
+
+  it('site-local fec0::/10', () => {
+    assert.equal(host('http://[fec0::1]'), true)
+    assert.equal(host('http://[feff::1]'), true)
+  })
+
+  it('benchmarking 198.18.0.0/15', () => {
+    assert.equal(host('http://198.18.0.1'), true)
+    assert.equal(host('http://198.19.255.254'), true)
+    assert.equal(host('http://198.20.0.1'), false)
+    assert.equal(host('http://198.17.255.255'), false)
+  })
+
+  it('IETF protocol assignments 192.0.0.0/24', () => {
+    assert.equal(host('http://192.0.0.1'), true)
+    assert.equal(host('http://192.0.0.255'), true)
+    assert.equal(host('http://192.0.1.1'), false)
+  })
+
+  it('reserved 240.0.0.0/4', () => {
+    assert.equal(host('http://240.0.0.1'), true)
+    assert.equal(host('http://254.255.255.255'), true)
+    assert.equal(host('http://239.255.255.255'), false)
+  })
+
+  it('broadcast 255.255.255.255', () => {
+    assert.equal(host('http://255.255.255.255'), true)
+  })
+
+  it('public IPv4 and IPv6 stay public', () => {
+    for (const url of ['http://203.0.113.1', 'http://[2001:db8::1]', 'https://app.example.com']) {
+      assert.equal(host(url), false, url)
     }
   })
 })

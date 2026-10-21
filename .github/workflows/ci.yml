@@ -38,7 +38,7 @@ jobs:
       - run: yarn test
         env:
           DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
-          BETTER_AUTH_SECRET: ci-only-change-me-please-32ch
+          BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
           BETTER_AUTH_URL: http://localhost:3001
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
@@ -46,7 +46,7 @@ jobs:
       - run: yarn typecheck
       - run: yarn build
         env:
-          BETTER_AUTH_SECRET: ci-only-change-me-please-32ch
+          BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
           BETTER_AUTH_URL: http://localhost:3001
           DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=

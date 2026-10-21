@@ -130,3 +130,23 @@ describe('SignOutButton', () => {
     await screen.findByRole('alert')
   })
 })
+
+describe('SignOutButton unexpected error', () => {
+  it('shows the fixed copy when sign-out throws unexpectedly', async () => {
+    const logged: string[] = []
+    // Make the sign-out helper's own logging throw so the error escapes it
+    // and reaches the button's catch branch.
+    console.error = (...args: unknown[]) => {
+      const first = String(args[0])
+      logged.push(first)
+      if (!first.includes('Unexpected')) throw new Error(RAW)
+    }
+    mockFetch(async () => jsonResponse(403, { error: 'forbidden' }))
+    render(<SignOutButton />)
+    const alert = await clickAndReadAlert()
+    assert.equal(alert.textContent, SIGN_OUT_FAILURE_MESSAGE)
+    assert.ok(!alert.textContent?.includes(RAW))
+    assert.ok(logged.some((line) => line.includes('Unexpected sign-out error')), 'the unexpected-error branch ran')
+  })
+})
+
