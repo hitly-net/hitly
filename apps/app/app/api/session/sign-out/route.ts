@@ -23,7 +23,24 @@ import { WORKSPACE_COOKIE } from '@/lib/context'
  *    workspace cookie are expired on the response either way.
  */
 
-const APP_URL = () => (process.env.BETTER_AUTH_URL ?? 'http://localhost:3001').replace(/\/+$/, '')
+const DEFAULT_DEV_ORIGIN = 'http://localhost:3001'
+
+/**
+ * The origin the sign-out route treats as its own. When BETTER_AUTH_URL is
+ * configured it wins. Outside production, an unset value falls back to the
+ * dev origin; in production there is no fallback — the check fails closed.
+ */
+function configuredAppOrigin(): string | null {
+  const configured = (process.env.BETTER_AUTH_URL ?? '').trim()
+  if (!configured) {
+    return process.env.NODE_ENV === 'production' ? null : DEFAULT_DEV_ORIGIN
+  }
+  try {
+    return new URL(configured).origin
+  } catch {
+    return null
+  }
+}
 
 /** True for application/json with an optional charset (and no other type). */
 export function isJsonContentType(contentType: string | null): boolean {
@@ -36,12 +53,15 @@ export function isJsonContentType(contentType: string | null): boolean {
  * Same-origin check for the sign-out route: the Origin header must match the
  * app's configured origin exactly. A missing or foreign Origin is rejected —
  * the sign-out is a state-changing request from the web client, which always
- * sends it.
+ * sends it. In production an unset or malformed BETTER_AUTH_URL leaves no
+ * reference origin, so every request fails closed (403).
  */
 export function isSameOrigin(origin: string | null): boolean {
   if (!origin) return false
+  const appOrigin = configuredAppOrigin()
+  if (!appOrigin) return false
   try {
-    return new URL(origin).origin === new URL(APP_URL()).origin
+    return new URL(origin).origin === appOrigin
   } catch {
     return false
   }

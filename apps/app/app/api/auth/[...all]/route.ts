@@ -15,7 +15,9 @@ function handlers() {
  * into a JSON 404, so an unknown auth path is a clean 404 rather than an
  * HTML error page.
  */
-async function handleAuthRequest(
+// Exported for tests: normalises the auth handler's replies so unknown paths
+// resolve to a JSON 404.
+export async function handleAuthRequest(
   request: Request,
   run: (request: Request) => Promise<Response>,
 ): Promise<Response> {

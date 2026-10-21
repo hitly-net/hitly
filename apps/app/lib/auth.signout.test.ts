@@ -7,6 +7,9 @@ import {
   performSignOut,
   SIGN_OUT_ENDPOINT,
   SIGN_OUT_FAILURE_MESSAGE,
+  SIGN_OUT_SERVER_FAILURE_MESSAGE,
+  SIGN_OUT_TIMEOUT_MS,
+  signOutFailureMessage,
   type SignOutOutcome,
 } from './sign-out'
 
@@ -73,9 +76,15 @@ describe('sign-out redirect policy (static)', () => {
 })
 
 describe('sign-out button (static)', () => {
-  it('shows the exact inline failure message', () => {
-    assert.ok(readButton().includes('SIGN_OUT_FAILURE_MESSAGE'))
+  it('shows the exact inline failure messages through the outcome mapping', () => {
+    assert.ok(readButton().includes('signOutFailureMessage'))
     assert.equal(SIGN_OUT_FAILURE_MESSAGE, 'Sign-out failed, you are still signed in. Try again.')
+    assert.equal(
+      SIGN_OUT_SERVER_FAILURE_MESSAGE,
+      'Signed out on this device, but we could not end your session on the server. Try again.',
+    )
+    assert.equal(signOutFailureMessage('failed'), SIGN_OUT_FAILURE_MESSAGE)
+    assert.equal(signOutFailureMessage('failed_server'), SIGN_OUT_SERVER_FAILURE_MESSAGE)
   })
 
   it('disables itself while a request is in flight and blocks re-entry', () => {
@@ -176,19 +185,25 @@ describe('sign-out behaviour', () => {
     assert.deepEqual(calls.navigations, ['/login'])
   })
 
-  for (const status of [415, 500]) {
-    it(`does NOT redirect on HTTP ${status}; reports failure without retrying`, async () => {
-      const { calls, hooks } = newSignOutMocks({ status })
-      assert.equal(await performSignOut(hooks), 'failed')
-      assert.equal(calls.fetchCalls.length, 1, `no retry on ${status}`)
-      assert.deepEqual(calls.navigations, [], 'must stay put: the user may still be signed in')
-      assert.deepEqual(calls.clearedCookies, [])
-      assert.ok(
-        calls.errors.some((args) => String(args[0]).includes(String(status))),
-        `the ${status} must be logged`,
-      )
-    })
-  }
+  it('does NOT redirect on HTTP 415; reports failure without retrying', async () => {
+    const { calls, hooks } = newSignOutMocks({ status: 415 })
+    assert.equal(await performSignOut(hooks), 'failed')
+    assert.equal(calls.fetchCalls.length, 1, 'no retry on 415')
+    assert.deepEqual(calls.navigations, [], 'must stay put: the user may still be signed in')
+    assert.deepEqual(calls.clearedCookies, [])
+    assert.ok(calls.errors.some((args) => String(args[0]).includes('415')), 'the 415 must be logged')
+  })
+
+  it('on HTTP 500 reports failed_server: the device is signed out, the server session may live', async () => {
+    const { calls, hooks } = newSignOutMocks({ status: 500 })
+    const outcome = await performSignOut(hooks)
+    assert.equal(outcome, 'failed_server')
+    assert.equal(calls.fetchCalls.length, 1, 'no retry on 500')
+    assert.deepEqual(calls.navigations, [], 'must stay put: ask the user to retry')
+    assert.deepEqual(calls.clearedCookies, [], 'the server already expired the cookies on its response')
+    assert.equal(signOutFailureMessage(outcome), SIGN_OUT_SERVER_FAILURE_MESSAGE)
+    assert.ok(calls.errors.some((args) => String(args[0]).includes('500')), 'the 500 must be logged')
+  })
 
   it('does NOT redirect on a network error; reports failure without retrying', async () => {
     const { calls, hooks } = newSignOutMocks({ rejectFetch: true })
@@ -203,5 +218,67 @@ describe('sign-out behaviour', () => {
     assert.equal(await performSignOut(hooks), 'failed')
     assert.equal(calls.fetchCalls.length, 1, 'the timeout must not spawn another request')
     assert.deepEqual(calls.navigations, [])
+  })
+})
+
+describe('sign-out timeout handling', () => {
+  it('uses the exported 10 second timeout value and always calls clearTimeout', async () => {
+    const realSet = globalThis.setTimeout
+    const realClear = globalThis.clearTimeout
+    const started: number[] = []
+    let cleared = 0
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number) => {
+      started.push(ms ?? 0)
+      return realSet(fn, ms)
+    }) as typeof globalThis.setTimeout
+    globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+      cleared += 1
+      return realClear(id)
+    }) as typeof globalThis.clearTimeout
+    try {
+      assert.equal(SIGN_OUT_TIMEOUT_MS, 10_000, 'the client timeout is 10 seconds')
+
+      const done = newSignOutMocks({ status: 200 })
+      assert.equal(await performSignOut(done.hooks), 'redirected')
+      assert.ok(
+        started.some((ms) => ms === SIGN_OUT_TIMEOUT_MS),
+        `the timer must be armed with SIGN_OUT_TIMEOUT_MS (${SIGN_OUT_TIMEOUT_MS}), got ${JSON.stringify(started)}`,
+      )
+      assert.ok(cleared >= 1, 'clearTimeout must run when the request settles')
+
+      const hang = newSignOutMocks({ neverSettleWithAbort: true, timeoutMs: 5 })
+      assert.equal(await performSignOut(hang.hooks), 'failed')
+      assert.ok(cleared >= 2, 'clearTimeout must run after the timeout fires too')
+    } finally {
+      globalThis.setTimeout = realSet
+      globalThis.clearTimeout = realClear
+    }
+  })
+})
+
+describe('client cookie expiry (default clearBrowserCookie)', () => {
+  it('writes the exact clear-cookie strings: Path=/ everywhere, Secure on the __Secure- cookie', async () => {
+    const written: string[] = []
+    const previousDocument = (globalThis as Record<string, unknown>).document
+    ;(globalThis as Record<string, unknown>).document = {
+      set cookie(value: string) {
+        written.push(value)
+      },
+      get cookie() {
+        return ''
+      },
+    }
+    try {
+      const { hooks } = newSignOutMocks({ status: 200 })
+      delete (hooks as Record<string, unknown>).clearBrowserCookie
+      assert.equal(await performSignOut(hooks), 'redirected')
+    } finally {
+      ;(globalThis as Record<string, unknown>).document = previousDocument
+    }
+    assert.deepEqual(written, [
+      'hitly-workspace-id=; Path=/; Max-Age=0; SameSite=Lax',
+      'better-auth.session_token=; Path=/; Max-Age=0; SameSite=Lax',
+      '__Secure-better-auth.session_token=; Path=/; Max-Age=0; SameSite=Lax; Secure',
+    ])
   })
 })
