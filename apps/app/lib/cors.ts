@@ -1,8 +1,29 @@
 import { NextResponse } from 'next/server'
+import { isPrivateHost } from './host-classify'
 
-const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\]|10\.0\.2\.2)$/i
-const PRIVATE_LAN =
-  /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})$/
+const DEFAULT_APP_URL = 'http://localhost:3001'
+
+/**
+ * Explicit browser origins allowed to call the API, configured per deployment
+ * via HITLY_CORS_ALLOWED_ORIGINS (comma-separated absolute origins). In
+ * production this is the only source of trust beyond the app's own origin.
+ */
+function configuredAllowedOrigins(): string[] {
+  return (process.env.HITLY_CORS_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((value) => value.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+}
+
+/** The app's own origin, derived from BETTER_AUTH_URL (path and trailing slash ignored). */
+export function appOwnOrigin(): string | null {
+  const configured = (process.env.BETTER_AUTH_URL ?? '').trim() || DEFAULT_APP_URL
+  try {
+    return new URL(configured).origin
+  } catch {
+    return null
+  }
+}
 
 export function isTrustedAppOrigin(origin: string | null) {
   if (!origin || origin === 'null') return false
@@ -10,11 +31,22 @@ export function isTrustedAppOrigin(origin: string | null) {
   try {
     const url = new URL(origin)
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
-    if (LOOPBACK.test(url.hostname) || PRIVATE_LAN.test(url.hostname)) return true
+    if (process.env.NODE_ENV === 'production') {
+      // Production: never trust a loopback, private, shared, link-local,
+      // unique-local, IPv4-mapped or localhost origin with credentials, even
+      // when configured. Only explicitly configured origins are trusted.
+      if (isPrivateHost(url.hostname)) return false
+      if (configuredAllowedOrigins().includes(url.origin)) return true
+      if (url.origin === appOwnOrigin()) return true
+      const extra = process.env.HITLY_EXPO_ORIGIN?.replace(/\/+$/, '')
+      if (extra && url.origin === extra) return true
+      return false
+    }
+    if (isPrivateHost(url.hostname)) return true
+    if (configuredAllowedOrigins().includes(url.origin)) return true
+    if (url.origin === appOwnOrigin()) return true
     const extra = process.env.HITLY_EXPO_ORIGIN?.replace(/\/+$/, '')
     if (extra && url.origin === extra) return true
-    const appUrl = (process.env.BETTER_AUTH_URL ?? 'http://localhost:3001').replace(/\/+$/, '')
-    if (url.origin === appUrl) return true
     return false
   } catch {
     return false
@@ -56,7 +88,7 @@ export function withNativeAuthOrigin(request: Request) {
 
   const hinted = request.headers.get('x-hitly-origin')
   const fromUrl = new URL(request.url).origin
-  const appUrl = (process.env.BETTER_AUTH_URL ?? 'http://localhost:3001').replace(/\/+$/, '')
+  const appUrl = appOwnOrigin() ?? DEFAULT_APP_URL
   const candidate =
     [hinted, fromUrl, appUrl].find((value) => isTrustedAppOrigin(value ?? null)) ?? appUrl
 

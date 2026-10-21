@@ -10,6 +10,8 @@ import { WORKSPACE_COOKIE } from '@/lib/context'
  * on 5xx — and verifies through the server auth instance that the session was
  * really deleted before reporting success:
  *
+ * 0. the request must come from the app's own origin (the configured app URL)
+ *    and carry a JSON content type; anything else is rejected up-front,
  * 1. best-effort revoke via the existing auth instance (failures are logged,
  *    never fatal — the verification below decides),
  * 2. confirm the session no longer exists via getSession on the request
@@ -20,6 +22,50 @@ import { WORKSPACE_COOKIE } from '@/lib/context'
  * 3. both better-auth session cookie variants (plain + __Secure-) and the
  *    workspace cookie are expired on the response either way.
  */
+
+const DEFAULT_DEV_ORIGIN = 'http://localhost:3001'
+
+/**
+ * The origin the sign-out route treats as its own. When BETTER_AUTH_URL is
+ * configured it wins. Outside production, an unset value falls back to the
+ * dev origin; in production there is no fallback — the check fails closed.
+ */
+function configuredAppOrigin(): string | null {
+  const configured = (process.env.BETTER_AUTH_URL ?? '').trim()
+  if (!configured) {
+    return process.env.NODE_ENV === 'production' ? null : DEFAULT_DEV_ORIGIN
+  }
+  try {
+    return new URL(configured).origin
+  } catch {
+    return null
+  }
+}
+
+/** True for application/json with an optional charset (and no other type). */
+export function isJsonContentType(contentType: string | null): boolean {
+  if (!contentType) return false
+  const [type] = contentType.split(';')
+  return type.trim().toLowerCase() === 'application/json'
+}
+
+/**
+ * Same-origin check for the sign-out route: the Origin header must match the
+ * app's configured origin exactly. A missing or foreign Origin is rejected —
+ * the sign-out is a state-changing request from the web client, which always
+ * sends it. In production an unset or malformed BETTER_AUTH_URL leaves no
+ * reference origin, so every request fails closed (403).
+ */
+export function isSameOrigin(origin: string | null): boolean {
+  if (!origin) return false
+  const appOrigin = configuredAppOrigin()
+  if (!appOrigin) return false
+  try {
+    return new URL(origin).origin === appOrigin
+  } catch {
+    return false
+  }
+}
 
 const SESSION_COOKIES: ReadonlyArray<{ name: string; httpOnly?: boolean; secure?: boolean }> = [
   { name: 'better-auth.session_token', httpOnly: true },
@@ -77,6 +123,12 @@ export async function handleSignOut(
   return response
 }
 
-export function POST(request: NextRequest) {
+export async function POST(request: NextRequest) {
+  if (!isSameOrigin(request.headers.get('origin'))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
+  if (!isJsonContentType(request.headers.get('content-type'))) {
+    return NextResponse.json({ error: 'unsupported_media_type' }, { status: 415 })
+  }
   return handleSignOut(request)
 }
