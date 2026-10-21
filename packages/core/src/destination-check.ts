@@ -100,7 +100,7 @@ function failure(code: DestinationCheckCode, reason: string, host?: string, stat
 
 /** Fixed message for a non-2xx answer; never includes the response body. */
 export function destinationStatusMessage(label: string, status: number, host: string): string {
-  return `${label} failed (status ${status})${hostPart(host)}.`
+  return `${label} failed (${status})${host ? ` for host "${host}"` : ''}.`
 }
 
 /** Message safe to show or log for any error raised while sending. */
@@ -357,6 +357,8 @@ export interface PinnedRequest {
   method: string
   headers: Record<string, string>
   body?: Uint8Array
+  /** The body as the caller passed it (used by globalFetchTransport). */
+  callerBody?: string | Uint8Array
   connectTimeoutMs: number
   maxResponseBytes: number
   signal: AbortSignal
@@ -396,7 +398,7 @@ export const globalFetchTransport: DestinationTransport = async (request) => {
   const response = await globalThis.fetch(request.url.href, {
     method: request.method,
     headers: request.headers,
-    body: request.body as BodyInit | undefined,
+    body: (request.callerBody ?? request.body) as BodyInit | undefined,
     redirect: 'manual',
     signal: request.signal,
   })
@@ -523,10 +525,7 @@ export async function checkedFetch(
     if (controller.signal.aborted) {
       throw timedOut ? failure('timeout', 'the request timed out', target.host) : failure('aborted', 'the request was stopped', target.host)
     }
-    const headers: Record<string, string> = {}
-    for (const [key, value] of Object.entries(init.headers ?? {})) {
-      if (key.toLowerCase() !== 'host') headers[key] = value
-    }
+    const headers: Record<string, string> = { ...(init.headers ?? {}) }
     const body = init.body === undefined ? undefined : typeof init.body === 'string' ? new TextEncoder().encode(init.body) : init.body
     if (body) headers['content-length'] = String(body.byteLength)
     const transport = testHooks.transport ?? pinnedNodeTransport
@@ -540,6 +539,7 @@ export async function checkedFetch(
         method: (init.method ?? 'GET').toUpperCase(),
         headers,
         body,
+        callerBody: init.body,
         connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
         maxResponseBytes,
         signal: controller.signal,

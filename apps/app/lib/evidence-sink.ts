@@ -1,4 +1,8 @@
 import type { AppendReceipt, EvidenceEvent, EvidenceSink } from '@hitly/core'
+import { checkedFetch, destinationErrorMessage, destinationHost, destinationStatusMessage } from '@hitly/core/destination-check'
+
+/** Evidence sinks answer quickly; the whole exchange must finish in 5 s. */
+const SINK_TIMEOUT_MS = 5_000
 
 export interface HttpSinkConfig {
   url: string
@@ -47,17 +51,14 @@ export class HttpEvidenceSink implements EvidenceSink {
       headers['X-Hitly-Metadata'] = JSON.stringify(this.config.metadata)
     }
 
-    const response = await fetch(this.config.url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(event),
-      signal: AbortSignal.timeout(5000),
-    })
+    const response = await checkedFetch(
+      this.config.url,
+      { method: 'POST', headers, body: JSON.stringify(event) },
+      { totalTimeoutMs: SINK_TIMEOUT_MS },
+    )
 
     if (!response.ok) {
-      const text = await response.text().catch(() => '')
-      const snippet = text.slice(0, 200)
-      throw new Error(`Evidence sink HTTP POST failed (${response.status}): ${snippet}`)
+      throw new Error(destinationStatusMessage('Evidence sink HTTP POST', response.status, destinationHost(this.config.url)))
     }
 
     const contentType = response.headers.get('content-type') || ''
@@ -187,7 +188,7 @@ export class S3EvidenceSink implements EvidenceSink {
 
     const putUrl = `${url.protocol}//${host}${canonicalUri}`
 
-    const response = await fetch(putUrl, {
+    const response = await checkedFetch(putUrl, {
       method: 'PUT',
       headers: {
         'content-type': 'application/json',
@@ -197,13 +198,10 @@ export class S3EvidenceSink implements EvidenceSink {
         'authorization': authorizationHeader,
       },
       body,
-      signal: AbortSignal.timeout(5000),
-    })
+    }, { totalTimeoutMs: SINK_TIMEOUT_MS })
 
     if (!response.ok) {
-      const text = await response.text().catch(() => '')
-      const snippet = text.slice(0, 200)
-      throw new Error(`Evidence sink S3 PutObject failed (${response.status}): ${snippet}`)
+      throw new Error(destinationStatusMessage('Evidence sink S3 PutObject', response.status, destinationHost(putUrl)))
     }
 
     const storedAt = new Date().toISOString()
@@ -274,4 +272,36 @@ export function createEvidenceSink(config: {
     })
   }
   return new NoneSink()
+}
+
+export interface EvidenceSinkPingResult {
+  ok: boolean
+  status: number
+  message: string
+}
+
+/**
+ * Sends the test ping for the project settings page. The message shown to the
+ * user carries the status and host only, never the sink's response body.
+ */
+export async function pingEvidenceSink(url: string, authHeader?: string): Promise<EvidenceSinkPingResult> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-hitly-ping': 'true',
+  }
+  if (authHeader) headers.authorization = authHeader
+  const host = destinationHost(url)
+  try {
+    const response = await checkedFetch(
+      url,
+      { method: 'POST', headers, body: JSON.stringify({ spec: 'hitly.evidence.v1', event_type: 'ping', test: true }) },
+      { totalTimeoutMs: SINK_TIMEOUT_MS },
+    )
+    if (!response.ok) {
+      return { ok: false, status: response.status, message: `Evidence sink returned ${response.status} for host "${host}".` }
+    }
+    return { ok: true, status: response.status, message: 'Evidence sink is reachable' }
+  } catch (error) {
+    return { ok: false, status: 0, message: destinationErrorMessage('Evidence sink test', error, host) }
+  }
 }
