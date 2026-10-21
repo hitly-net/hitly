@@ -235,20 +235,52 @@ export async function assertDestinationAllowed(
   return target
 }
 
+/** Target prefixes a gRPC client reads as something other than a host name. */
+const CLIENT_TARGET_PREFIXES = new Set(['dns', 'unix', 'unix-abstract', 'ipv4', 'ipv6', 'vsock', 'xds'])
+
+const NAME_PORT = /^([A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_.])?):([0-9]{1,5})$/
+const BRACKETED_PORT = /^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$/
+
 /**
- * Check for "host:port" style addresses used by gRPC clients (Temporal,
- * OpenShell). These clients resolve the name themselves, so this is a
- * check before connecting, not a pinned connection.
+ * Splits a bare "host:port" or "[IPv6]:port" address. Anything else (a
+ * scheme or prefix, a path, user info, spaces, a missing or out-of-range
+ * port) is refused, so the address is read the same way here and by the
+ * client.
+ */
+export function parseHostPort(address: string): { host: string; port: number } {
+  const invalid = () => failure('bad_url', 'the address must be host:port or [IPv6]:port')
+  if (typeof address !== 'string') throw invalid()
+  let host: string
+  let portText: string
+  const bracketed = address.match(BRACKETED_PORT)
+  if (bracketed) {
+    if (!net.isIPv6(bracketed[1])) throw invalid()
+    host = `[${bracketed[1]}]`
+    portText = bracketed[2]
+  } else {
+    const named = address.match(NAME_PORT)
+    if (!named) throw invalid()
+    if (CLIENT_TARGET_PREFIXES.has(named[1].toLowerCase())) throw invalid()
+    host = named[1]
+    portText = named[2]
+  }
+  const port = Number(portText)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw invalid()
+  return { host, port }
+}
+
+/**
+ * Check for "host:port" addresses used by gRPC clients (Temporal, OpenShell).
+ * Only a bare host:port or [IPv6]:port is accepted. These clients resolve the
+ * name themselves, so this is a check before connecting, not a pinned
+ * connection.
  */
 export async function assertHostPortAllowed(
   address: string,
   options: { policy?: DestinationPolicy; resolveAddresses?: ResolveAddresses } = {},
 ): Promise<CheckedUrl> {
-  let hostPort = address.trim()
-  const scheme = hostPort.match(/^[a-z][a-z0-9+.-]*:\/\//i)
-  if (scheme) hostPort = hostPort.slice(scheme[0].length)
-  hostPort = hostPort.replace(/^\/+/, '').split('/')[0]
-  return assertDestinationAllowed(`http://${hostPort}/`, options)
+  const { host, port } = parseHostPort(address)
+  return assertDestinationAllowed(`http://${host}:${port}/`, options)
 }
 
 /** Host for messages; never the full URL. */

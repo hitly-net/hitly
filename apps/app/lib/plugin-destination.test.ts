@@ -169,6 +169,36 @@ describe('plugin healthchecks', () => {
       raw.close()
     }
   })
+
+  it('temporal and openshell: only a bare host:port is accepted', async () => {
+    let connections = 0
+    const raw = net.createServer((socket) => {
+      connections += 1
+      socket.destroy()
+    })
+    await new Promise<void>((r) => raw.listen(0, '127.0.0.1', () => r()))
+    const port = (raw.address() as net.AddressInfo).port
+    const forms = [
+      `dns://203.0.113.53/127.0.0.1:${port}`,
+      `dns:127.0.0.1:${port}`,
+      `ipv4:127.0.0.1:${port}`,
+      `ipv6:[::1]:${port}`,
+      'unix:/tmp/hitly-test.sock',
+    ]
+    try {
+      for (const env of [PRODUCTION, DEVELOPMENT]) {
+        await withEnv(env, async () => {
+          for (const address of forms) {
+            assert.equal(await temporalPlugin.healthcheck({ plugin: 'temporal', address }), 'error', address)
+            assert.equal(await openshellPlugin.healthcheck({ plugin: 'openshell', address }), 'error', address)
+          }
+        })
+      }
+      assert.equal(connections, 0)
+    } finally {
+      raw.close()
+    }
+  })
 })
 
 describe('resumeFailureMessage', () => {

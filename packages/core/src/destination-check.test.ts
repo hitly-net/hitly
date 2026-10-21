@@ -6,10 +6,12 @@ import {
   DESTINATION_ALLOW_PRIVATE_FLAG,
   DestinationCheckError,
   addressRefused,
+  assertHostPortAllowed,
   checkedFetch,
   destinationPolicyStartupNotice,
   normalizeHost,
   parseCheckedUrl,
+  parseHostPort,
   resolveAndCheck,
   resolveDestinationPolicy,
   setDestinationCheckTestHooks,
@@ -621,5 +623,102 @@ describe('shared classifier ranges on the destination path', () => {
     )
     const ok = await resolveAndCheck('sink.example.com', PROD, async () => [{ address: '8.8.8.8', family: 4 }])
     assert.deepEqual(ok, ['8.8.8.8'])
+  })
+})
+
+describe('host:port addresses', () => {
+  const publicAnswer = async () => [{ address: '203.0.113.10' }]
+
+  it('accepts a bare host:port or [IPv6]:port', async () => {
+    for (const address of ['sink.example.com:7233', 'temporal_server:7233', '203.0.113.10:50051', '[2001:db8::1]:443', 'sink.example.com.:443']) {
+      const checked = await assertHostPortAllowed(address, { policy: PROD, resolveAddresses: publicAnswer })
+      assert.ok(checked.port > 0, address)
+    }
+    assert.deepEqual(parseHostPort('[2001:db8::1]:443'), { host: '[2001:db8::1]', port: 443 })
+    assert.deepEqual(parseHostPort('sink.example.com:7233'), { host: 'sink.example.com', port: 7233 })
+  })
+
+  const refusedForms = [
+    'dns://203.0.113.53/127.0.0.1:50051',
+    'dns://203.0.113.53:53/localhost:50051',
+    'dns:///127.0.0.1:50051',
+    'dns:127.0.0.1:50051',
+    'dns:localhost:50051',
+    'DNS:sink.example.com:50051',
+    'dns:50051',
+    'unix:/tmp/hitly.sock',
+    'unix:///tmp/hitly.sock',
+    'unix:hitly.sock',
+    'unix:50051',
+    'unix-abstract:hitly',
+    'unix-abstract:50051',
+    'ipv4:127.0.0.1:50051',
+    'ipv4:203.0.113.10:50051',
+    'ipv4:203.0.113.10:50051,127.0.0.1:50051',
+    'ipv6:[::1]:50051',
+    'ipv6:[2001:db8::1]:50051',
+    'IPV4:203.0.113.10:50051',
+    'vsock:2:50051',
+    'xds:///sink.example.com',
+    'http://sink.example.com:7233',
+    'https://sink.example.com:7233',
+    'grpc://sink.example.com:7233',
+    '//sink.example.com:7233',
+    '/sink.example.com:7233',
+    'sink.example.com:7233/',
+    'sink.example.com:7233/path',
+    'user@sink.example.com:7233',
+    'sink.example.com:7233,other.example.com:7233',
+    'sink.example.com:7233?x=1',
+    'sink.example.com:7233#x',
+    ' sink.example.com:7233',
+    'sink.example.com:7233 ',
+    'sink example.com:7233',
+    'sink.example.com',
+    'sink.example.com:',
+    ':7233',
+    'sink.example.com:0',
+    'sink.example.com:65536',
+    'sink.example.com:123456',
+    '-sink.example.com:7233',
+    '2001:db8::1:443',
+    '[2001:db8::1]',
+    '[2001:db8::1%eth0]:443',
+    '[sink.example.com]:7233',
+    '[203.0.113.10]:7233',
+    '',
+  ]
+
+  for (const address of refusedForms) {
+    it(`refuses ${JSON.stringify(address)} without resolving`, async () => {
+      for (const policy of [PROD, DEV]) {
+        let lookups = 0
+        await assert.rejects(
+          assertHostPortAllowed(address, {
+            policy,
+            resolveAddresses: async () => {
+              lookups += 1
+              return [{ address: '203.0.113.10' }]
+            },
+          }),
+          (e: unknown) => e instanceof DestinationCheckError && e.code === 'bad_url',
+        )
+        assert.equal(lookups, 0)
+      }
+    })
+  }
+
+  it('still applies the address check to host:port', async () => {
+    await assert.rejects(assertHostPortAllowed('127.0.0.1:50051', { policy: PROD }), (e: DestinationCheckError) => e.code === 'refused')
+    await assert.rejects(assertHostPortAllowed('[::1]:50051', { policy: PROD }), (e: DestinationCheckError) => e.code === 'refused')
+    await assert.rejects(assertHostPortAllowed('0x7f.1:50051', { policy: PROD }), (e: DestinationCheckError) => e.code === 'refused')
+    await assert.rejects(assertHostPortAllowed('localhost:50051', { policy: PROD }), (e: DestinationCheckError) => e.code === 'refused')
+    await assert.rejects(
+      assertHostPortAllowed('grpc.example.com:50051', { policy: PROD, resolveAddresses: async () => [{ address: '127.0.0.1' }] }),
+      (e: DestinationCheckError) => e.code === 'refused',
+    )
+    await assert.rejects(assertHostPortAllowed('[::ffff:127.0.0.1]:50051', { policy: PROD }), (e: DestinationCheckError) => e.code === 'refused')
+    await assertHostPortAllowed('127.0.0.1:50051', { policy: DEV })
+    await assertHostPortAllowed('localhost:50051', { policy: DEV, resolveAddresses: async () => [{ address: '127.0.0.1' }] })
   })
 })
