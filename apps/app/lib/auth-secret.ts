@@ -2,7 +2,7 @@
  * BETTER_AUTH_SECRET handling.
  *
  * Production requires a real secret: trimmed, at least 32 characters, and not
- * one of the documented placeholder values. The requirement is checked at
+ * one of the documented placeholder values (compared case-insensitively). The requirement is checked at
  * server start (instrumentation register), so a misconfigured production
  * server refuses to start, and again whenever the auth instance is created. Outside
  * production a clearly-labelled development value keeps local runs and tests
@@ -20,6 +20,10 @@ export const PLACEHOLDER_AUTH_SECRETS: ReadonlySet<string> = new Set([
   'replace-me-with-a-32-char-secret',
 ])
 
+const PLACEHOLDER_AUTH_SECRETS_LOWER: ReadonlySet<string> = new Set(
+  [...PLACEHOLDER_AUTH_SECRETS].map((value) => value.toLowerCase()),
+)
+
 /**
  * Returns why a value is not usable as the production secret, or null when it
  * is. Never includes the value itself.
@@ -30,7 +34,7 @@ export function productionAuthSecretProblem(value: string | undefined): string |
   if (secret.length < AUTH_SECRET_MIN_LENGTH) {
     return `BETTER_AUTH_SECRET must be at least ${AUTH_SECRET_MIN_LENGTH} characters in production`
   }
-  if (PLACEHOLDER_AUTH_SECRETS.has(secret)) {
+  if (PLACEHOLDER_AUTH_SECRETS_LOWER.has(secret.toLowerCase())) {
     return 'BETTER_AUTH_SECRET is a placeholder value; set a unique secret in production'
   }
   return null
@@ -43,7 +47,7 @@ export function productionAuthSecretProblem(value: string | undefined): string |
  */
 export function assertProductionAuthSecret(env: NodeJS.ProcessEnv = process.env): void {
   if (env.NODE_ENV !== 'production') return
-  const problem = productionAuthSecretProblem(env.BETTER_AUTH_SECRET)
+  const problem = productionAuthSecretProblem((env.BETTER_AUTH_SECRET ?? '').trim())
   if (problem) throw new Error(`${problem}; refusing to start.`)
 }
 

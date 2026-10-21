@@ -160,3 +160,36 @@ describe('auth secret check at server start', () => {
     assert.ok(check < source.indexOf('startHousekeeping()'), 'the check must run before housekeeping starts')
   })
 })
+
+describe('auth secret check: case and padding', () => {
+  it('refuses the placeholder values in any letter case', () => {
+    for (const value of ['REPLACE-ME-WITH-A-32-CHAR-SECRET', 'Replace-Me-With-A-32-Char-Secret']) {
+      assert.throws(() => assertProductionAuthSecret({ NODE_ENV: 'production', BETTER_AUTH_SECRET: value }), /refusing to start/)
+    }
+  })
+
+  it('trims the value at server start: a padded 31-character secret is refused', () => {
+    const padded = `  ${'k'.repeat(31)}  `
+    assert.ok(padded.length >= 32)
+    assert.throws(() => assertProductionAuthSecret({ NODE_ENV: 'production', BETTER_AUTH_SECRET: padded }), /at least 32 characters/)
+  })
+
+  it('the start check error never contains the secret value', () => {
+    const markers = [
+      `marker-${'a'.repeat(10)}`,
+      `  marker-short-31-${'b'.repeat(13)}  `,
+      'REPLACE-ME-WITH-A-32-CHAR-SECRET',
+    ]
+    for (const value of markers) {
+      try {
+        assertProductionAuthSecret({ NODE_ENV: 'production', BETTER_AUTH_SECRET: value })
+        assert.fail('expected the start check to refuse')
+      } catch (error) {
+        const message = (error as Error).message
+        assert.ok(!message.includes(value.trim()), 'message must not contain the value')
+        assert.ok(!message.toLowerCase().includes('marker'), 'message must not contain any part of the value')
+      }
+    }
+  })
+})
+
