@@ -11,6 +11,7 @@ export const AUTH_BASE_PATH = '/api/auth'
 export const REQUEST_PASSWORD_RESET_ENDPOINT = `${AUTH_BASE_PATH}/request-password-reset`
 export const RESET_PASSWORD_ENDPOINT = `${AUTH_BASE_PATH}/reset-password`
 export const RESET_PASSWORD_PAGE = '/reset-password'
+export const FORGOT_PASSWORD_PAGE = '/forgot-password'
 
 export const RESET_REQUESTED_MESSAGE = 'If that account exists, we have sent a reset link'
 export const INVALID_EMAIL_MESSAGE = 'Enter a valid email address.'
@@ -96,7 +97,12 @@ export async function requestPasswordReset(
   return { kind: 'sent', message: RESET_REQUESTED_MESSAGE }
 }
 
-export type ResetPasswordOutcome = { ok: true } | { ok: false; message: string }
+/**
+ * `requestNewLink` is true when the token was rejected (used, expired, or
+ * unknown) or the server failed in a way a fresh link may fix, so the form
+ * can offer "Request a new link".
+ */
+export type ResetPasswordOutcome = { ok: true } | { ok: false; message: string; requestNewLink: boolean }
 
 export async function submitNewPassword(
   token: string,
@@ -112,13 +118,15 @@ export async function submitNewPassword(
     })
     if (response.ok) return { ok: true }
     const data = (await response.json().catch(() => ({}))) as { code?: string }
-    if (data.code === 'INVALID_TOKEN') return { ok: false, message: RESET_LINK_INVALID_MESSAGE }
+    if (data.code === 'INVALID_TOKEN') return { ok: false, message: RESET_LINK_INVALID_MESSAGE, requestNewLink: true }
     if (data.code === 'PASSWORD_TOO_SHORT') {
-      return { ok: false, message: `Use at least ${MIN_PASSWORD_LENGTH} characters.` }
+      return { ok: false, message: `Use at least ${MIN_PASSWORD_LENGTH} characters.`, requestNewLink: false }
     }
-    if (data.code === 'PASSWORD_TOO_LONG') return { ok: false, message: 'That password is too long.' }
-    return { ok: false, message: RESET_PASSWORD_FAILED_MESSAGE }
+    if (data.code === 'PASSWORD_TOO_LONG') {
+      return { ok: false, message: 'That password is too long.', requestNewLink: false }
+    }
+    return { ok: false, message: RESET_PASSWORD_FAILED_MESSAGE, requestNewLink: true }
   } catch {
-    return { ok: false, message: RESET_REQUEST_NETWORK_MESSAGE }
+    return { ok: false, message: RESET_REQUEST_NETWORK_MESSAGE, requestNewLink: false }
   }
 }
