@@ -1,9 +1,9 @@
 ---
 name: hitly-coding
-description: Hitly monorepo coding conventions, package roles, and OSS vs Cloud edition split. Use whenever writing, moving, or reviewing Hitly code; adding a package, plugin, API route, or UI; touching entitlements, Stripe, billing, or self-host vs Cloud; or when unsure where a change belongs.
+description: HITLy monorepo coding conventions, package roles, and OSS vs Cloud edition split. Use whenever writing, moving, or reviewing HITLy code; adding a package, plugin, API route, or UI; touching entitlements, Stripe, billing, or self-host vs Cloud; or when unsure where a change belongs.
 ---
 
-# Hitly coding
+# HITLy coding
 
 Yarn 1 + Turbo. Prefer `yarn` over npm. Read [packages.md](packages.md) before adding or relocating a package.
 
@@ -30,7 +30,7 @@ Gate by **package presence**, not `HITLY_EDITION` env vars.
 - New origin frameworks: new `@hitly/plugin-<id>`, add the id to `PLUGIN_IDS` in `@hitly/core`.
 - Local DB is Postgres (`yarn db:up`, `yarn db:migrate`). Cloud overlay may enable RLS; OSS does not.
 - After code changes: `yarn typecheck` (and `yarn lint` / `yarn build` if you touched apps).
-- LAN production deploy (192.168.10.176): read [hitly-deployment](../hitly-deployment/SKILL.md).
+- LAN production deploy (<your-host>): read [hitly-deployment](../hitly-deployment/SKILL.md).
 
 ## Do not
 

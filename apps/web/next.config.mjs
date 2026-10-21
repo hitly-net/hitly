@@ -5,7 +5,7 @@ const withMDX = createMDX()
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  allowedDevOrigins: ['192.168.68.107'],
+  allowedDevOrigins: ['localhost'],
   transpilePackages: ['@hitly/core', '@hitly/ui', 'mermaid'],
   agentRules: false,
 }
