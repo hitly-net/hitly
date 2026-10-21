@@ -141,7 +141,7 @@ describe('isPrivateHost: further non-public ranges', () => {
   it('reserved 240.0.0.0/4', () => {
     assert.equal(host('http://240.0.0.1'), true)
     assert.equal(host('http://254.255.255.255'), true)
-    assert.equal(host('http://239.255.255.255'), false)
+    assert.equal(host('http://239.255.255.255'), true) // multicast, refused by its own rule
   })
 
   it('broadcast 255.255.255.255', () => {

@@ -22,6 +22,7 @@ import { promises as dns } from 'node:dns'
 import * as http from 'node:http'
 import * as https from 'node:https'
 import * as net from 'node:net'
+import { type AddressClass, classifyAddress, parseIPv6 } from './address-classify'
 
 export const DESTINATION_ALLOW_PRIVATE_FLAG = 'HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS'
 
@@ -111,79 +112,10 @@ export function destinationErrorMessage(label: string, error: unknown, host?: st
 
 // --- address ranges ---------------------------------------------------------
 
-function v4Number(bytes: ArrayLike<number>): number {
-  return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0
-}
-
-function inV4(n: number, base: number, bits: number): boolean {
-  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
-  return ((n & mask) >>> 0) === ((base & mask) >>> 0)
-}
-
-/** Private, loopback, unspecified, shared and link-local IPv4 ranges. */
-const PRIVATE_V4: Array<[number, number]> = [
-  [0x00000000, 8], // 0.0.0.0/8
-  [0x0a000000, 8], // 10.0.0.0/8
-  [0x64400000, 10], // 100.64.0.0/10
-  [0x7f000000, 8], // 127.0.0.0/8
-  [0xa9fe0000, 16], // 169.254.0.0/16
-  [0xac100000, 12], // 172.16.0.0/12
-  [0xc0a80000, 16], // 192.168.0.0/16
-]
-
-function v4Refused(n: number, policy: DestinationPolicy): boolean {
-  if (inV4(n, 0xe0000000, 4)) return true // multicast 224.0.0.0/4
-  if (n === 0xffffffff) return true // broadcast
-  if (policy.allowPrivate) return false
-  return PRIVATE_V4.some(([base, bits]) => inV4(n, base, bits))
-}
-
-function parseV4(text: string): number[] | null {
-  const parts = text.split('.')
-  if (parts.length !== 4) return null
-  const out: number[] = []
-  for (const part of parts) {
-    if (!/^(0|[1-9][0-9]{0,2})$/.test(part)) return null
-    const value = Number(part)
-    if (value > 255) return null
-    out.push(value)
-  }
-  return out
-}
-
 /** Expands an IPv6 literal (no brackets) to 16 bytes, or null. */
 export function expandIPv6(input: string): Uint8Array | null {
-  let text = input.toLowerCase()
-  if (text.includes('%')) text = text.slice(0, text.indexOf('%'))
-  const lastColon = text.lastIndexOf(':')
-  if (text.slice(lastColon + 1).includes('.')) {
-    const v4 = parseV4(text.slice(lastColon + 1))
-    if (!v4) return null
-    text = `${text.slice(0, lastColon + 1)}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`
-  }
-  const halves = text.split('::')
-  if (halves.length > 2) return null
-  const parse = (part: string): number[] | null => {
-    if (!part) return []
-    const groups: number[] = []
-    for (const group of part.split(':')) {
-      if (!/^[0-9a-f]{1,4}$/.test(group)) return null
-      groups.push(parseInt(group, 16))
-    }
-    return groups
-  }
-  const left = parse(halves[0])
-  const right = halves.length === 2 ? parse(halves[1]) : []
-  if (!left || !right) return null
-  let groups: number[]
-  if (halves.length === 2) {
-    const missing = 8 - left.length - right.length
-    if (missing < 1) return null
-    groups = [...left, ...new Array<number>(missing).fill(0), ...right]
-  } else {
-    if (left.length !== 8) return null
-    groups = left
-  }
+  const groups = parseIPv6(input)
+  if (!groups) return null
   const bytes = new Uint8Array(16)
   groups.forEach((group, i) => {
     bytes[i * 2] = group >> 8
@@ -192,42 +124,22 @@ export function expandIPv6(input: string): Uint8Array | null {
   return bytes
 }
 
-function zeros(bytes: Uint8Array, from: number, to: number): boolean {
-  for (let i = from; i < to; i++) if (bytes[i] !== 0) return false
-  return true
-}
-
-function v6Refused(bytes: Uint8Array, policy: DestinationPolicy): boolean {
-  if (bytes[0] === 0xff) return true // multicast ff00::/8
-  if (zeros(bytes, 0, 15) && (bytes[15] === 0 || bytes[15] === 1)) return !policy.allowPrivate // :: and ::1
-  // IPv4-mapped ::ffff:0:0/96 and IPv4-compatible ::/96
-  if (zeros(bytes, 0, 10) && ((bytes[10] === 0xff && bytes[11] === 0xff) || (bytes[10] === 0 && bytes[11] === 0))) {
-    return v4Refused(v4Number(bytes.subarray(12, 16)), policy)
-  }
-  // 64:ff9b::/96 (embedded IPv4 in the last 32 bits)
-  if (bytes[0] === 0 && bytes[1] === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b && zeros(bytes, 4, 12)) {
-    return v4Refused(v4Number(bytes.subarray(12, 16)), policy)
-  }
-  // 2002::/16 (embedded IPv4 in bits 16-47)
-  if (bytes[0] === 0x20 && bytes[1] === 0x02) return v4Refused(v4Number(bytes.subarray(2, 6)), policy)
-  if (bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0x80) return !policy.allowPrivate // fe80::/10
-  if ((bytes[0] & 0xfe) === 0xfc) return !policy.allowPrivate // fc00::/7
+/**
+ * Multicast and broadcast are refused in every environment. Other non-public
+ * addresses are refused unless the policy allows private destinations.
+ */
+function classRefused(kind: AddressClass, policy: DestinationPolicy): boolean {
+  if (kind === 'multicast') return true
+  if (kind === 'private') return !policy.allowPrivate
   return false
 }
 
 /** True when the IP literal is refused under the policy. Non-IP input is refused. */
 export function addressRefused(address: string, policy: DestinationPolicy): boolean {
   const host = address.startsWith('[') && address.endsWith(']') ? address.slice(1, -1) : address
-  const family = net.isIP(host)
-  if (family === 4) {
-    const v4 = parseV4(host)
-    return v4 ? v4Refused(v4Number(v4), policy) : true
-  }
-  if (family === 6) {
-    const bytes = expandIPv6(host)
-    return bytes ? v6Refused(bytes, policy) : true
-  }
-  return true
+  if (!net.isIP(host)) return true
+  const kind = classifyAddress(host)
+  return kind ? classRefused(kind, policy) : true
 }
 
 // --- host and URL -----------------------------------------------------------

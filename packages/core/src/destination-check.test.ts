@@ -439,3 +439,61 @@ describe('checkedFetch against a 127.0.0.1 stub server', () => {
     })
   })
 })
+
+describe('shared classifier ranges on the destination path', () => {
+  const refusedInProd = [
+    'http://198.18.0.1/',
+    'http://198.19.255.254/',
+    'http://192.0.0.1/',
+    'http://240.0.0.1/',
+    'http://254.255.255.255/',
+    'http://[fec0::1]/',
+    'http://[::ffff:0:808:808]/',
+    'http://[64:ff9b:1::808:808]/',
+    'http://[::8.8.8.8]/',
+    'http://[::ffff:8.8.8.8]/',
+    'http://[64:ff9b::c612:1]/',
+    'http://[2002:c612:1::]/',
+  ]
+  for (const url of refusedInProd) {
+    it(`refuses ${url} in production`, () => assert.equal(refusedIn(PROD, url), true))
+    it(`allows ${url} outside production`, () => assert.equal(refusedIn(DEV, url), false))
+  }
+
+  const refusedEverywhere = [
+    'http://224.0.0.1/',
+    'http://239.255.255.255/',
+    'http://255.255.255.255/',
+    'http://[ff02::1]/',
+    'http://[::ffff:224.0.0.1]/',
+    'http://[2002:e000:1::]/',
+    'http://[64:ff9b::e000:1]/',
+  ]
+  for (const url of refusedEverywhere) {
+    it(`refuses ${url} in every environment`, () => {
+      assert.equal(refusedIn(PROD, url), true)
+      assert.equal(refusedIn(DEV, url), true)
+    })
+  }
+
+  const publicTargets = [
+    'http://8.8.8.8/',
+    'http://198.20.0.1/',
+    'http://[2606:4700:4700::1111]/',
+    'http://[64:ff9b::808:808]/',
+    'http://[64:ff9b::1.1.1.1]/',
+    'http://[2002:808:808::]/',
+  ]
+  for (const url of publicTargets) {
+    it(`allows ${url} in production`, () => assert.equal(refusedIn(PROD, url), false))
+  }
+
+  it('refuses a resolved answer in a newly covered range', async () => {
+    await assert.rejects(
+      resolveAndCheck('sink.example.com', PROD, async () => [{ address: '198.18.0.1', family: 4 }]),
+      (error: unknown) => error instanceof DestinationCheckError && error.code === 'refused',
+    )
+    const ok = await resolveAndCheck('sink.example.com', PROD, async () => [{ address: '8.8.8.8', family: 4 }])
+    assert.deepEqual(ok, ['8.8.8.8'])
+  })
+})
