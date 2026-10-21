@@ -14,13 +14,14 @@ const appUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
 /**
  * Resolves the auth signing secret. Production must provide
- * BETTER_AUTH_SECRET; startup fails when it is missing. Non-production may
- * fall back to a clearly-labelled development value so local runs and tests
- * work without extra configuration.
+ * BETTER_AUTH_SECRET; startup fails when it is missing. The `next build`
+ * phase is not startup, so collecting page data there may use the
+ * development value; outside production a clearly-labelled dev-only value
+ * keeps local runs and tests working.
  */
 export function resolveAuthSecret(env: NodeJS.ProcessEnv = process.env): string {
   if (env.BETTER_AUTH_SECRET) return env.BETTER_AUTH_SECRET
-  if (env.NODE_ENV === 'production') {
+  if (env.NODE_ENV === 'production' && env.NEXT_PHASE !== 'phase-production-build') {
     throw new Error('BETTER_AUTH_SECRET must be set in production; refusing to start.')
   }
   return 'dev-only-change-me-please-32ch'

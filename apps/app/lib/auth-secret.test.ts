@@ -31,6 +31,14 @@ describe('auth secret resolution', () => {
     assert.notEqual(resolveAuthSecret({ NODE_ENV: 'development', BETTER_AUTH_SECRET: 'custom' }), devValue)
   })
 
+  it('does not treat the next build phase as startup', () => {
+    const building = resolveAuthSecret({
+      NODE_ENV: 'production',
+      NEXT_PHASE: 'phase-production-build',
+    })
+    assert.match(building, /dev-only/, 'page-data collection during build may use the dev-only value')
+  })
+
   it('the auth module wires the resolver instead of an inline fallback', () => {
     const source = fs.readFileSync(path.join(__dirname, 'auth.ts'), 'utf-8')
     assert.match(source, /secret: resolveAuthSecret\(\)/)
