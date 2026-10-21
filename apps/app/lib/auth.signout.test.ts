@@ -20,17 +20,14 @@ function readLibSignOut() {
   return fs.readFileSync(path.join(__dirname, 'sign-out.ts'), 'utf-8')
 }
 
-function readButton() {
-  return fs.readFileSync(path.join(__dirname, '../components/sign-out-button.tsx'), 'utf-8')
-}
-
 /**
  * Regression tests for sign-out (issue #68 and the 415 / session-ending work).
  *
- * Static assertions pin the request shape, the redirect-only-on-success rule
- * and the button's double-click guard; behavioural tests drive
- * performSignOut() with injected hooks and assert the outcome for every
- * result: 200/204, 401, 415, 5xx, network failure and timeout.
+ * Static assertions pin the request shape and the redirect-only-on-success
+ * rule; behavioural tests drive performSignOut() with injected hooks and
+ * assert the outcome for every result: 200/204, 401, 415, 5xx, network
+ * failure and timeout. The button itself is render-tested in
+ * components/sign-out-button.test.tsx.
  *
  * Run with: yarn workspace @hitly/app test
  */
@@ -76,9 +73,8 @@ describe('sign-out redirect policy (static)', () => {
   })
 })
 
-describe('sign-out button (static)', () => {
+describe('sign-out failure messages', () => {
   it('shows the exact inline failure messages through the outcome mapping', () => {
-    assert.ok(readButton().includes('signOutFailureMessage'))
     assert.equal(SIGN_OUT_FAILURE_MESSAGE, 'Sign-out failed, you are still signed in. Try again.')
     assert.equal(
       SIGN_OUT_SERVER_FAILURE_MESSAGE,
@@ -88,19 +84,7 @@ describe('sign-out button (static)', () => {
     assert.equal(signOutFailureMessage('failed_server'), SIGN_OUT_SERVER_FAILURE_MESSAGE)
   })
 
-  it('never shows raw error text: every message comes from the outcome mapping', async () => {
-    const code = readButton()
-    const setFailureArgs = [...code.matchAll(/setFailure\(([^)]*\)?)\)/g)].map((m) => m[1].trim())
-    assert.ok(setFailureArgs.length >= 2, 'expected the failure and catch paths')
-    for (const arg of setFailureArgs) {
-      assert.ok(
-        arg === 'null' || /^signOutFailureMessage\((outcome|'failed')\)$/.test(arg),
-        `setFailure must only receive null or signOutFailureMessage(...), got: ${arg}`,
-      )
-    }
-    assert.ok(!/\{\s*(error|err|e)(\.message)?\s*\}/.test(code), 'no error object is rendered')
-    assert.match(code, /\{failure\}/)
-
+  it('maps every failure to one of the two fixed messages, never raw error text', async () => {
     // Whatever the server or network says, the message is one of the two fixed strings.
     const allowed = new Set([SIGN_OUT_FAILURE_MESSAGE, SIGN_OUT_SERVER_FAILURE_MESSAGE])
     const raw = 'raw server detail: stack trace at line 42'
@@ -122,17 +106,6 @@ describe('sign-out button (static)', () => {
       const message = signOutFailureMessage(unexpected as unknown as 'failed')
       assert.equal(message, SIGN_OUT_FAILURE_MESSAGE, 'unknown outcomes fall back to the fixed message')
     }
-  })
-
-  it('disables itself while a request is in flight and blocks re-entry', () => {
-    const code = readButton()
-    assert.match(code, /disabled=\{pending\}/)
-    assert.match(code, /if \(pending\) return/)
-  })
-
-  it('does not swallow a thrown sign-out into a silent success', () => {
-    assert.match(readButton(), /catch\s*\(/)
-    assert.match(readButton(), /performSignOut/)
   })
 })
 
