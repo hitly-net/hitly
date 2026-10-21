@@ -42,6 +42,32 @@ describe('sign-out route request policy', () => {
     assert.equal(isSameOrigin('not-a-url'), false)
   })
 
+  it('accepts only the exact JSON content type', () => {
+    for (const type of ['application/jsonx', 'application/json-patch+json', 'application/jsonp', 'xapplication/json', 'application/json5', 'text/json']) {
+      assert.equal(isJsonContentType(type), false, type)
+    }
+  })
+
+  it('rejects application/jsonx with 415', async () => {
+    const response = await POST(requestWith({ origin: 'http://localhost:3001', contentType: 'application/jsonx' }))
+    assert.equal(response.status, 415)
+    assert.deepEqual(await response.json(), { error: 'unsupported_media_type' })
+  })
+
+  it('matches the origin exactly, never by prefix', async () => {
+    for (const origin of [
+      'http://localhost:30011',
+      'http://localhost:3001.example.com',
+      'http://localhost.example.com:3001',
+      'https://localhost:3001',
+      'http://localhost',
+    ]) {
+      assert.equal(isSameOrigin(origin), false, origin)
+      const response = await POST(requestWith({ origin }))
+      assert.equal(response.status, 403, origin)
+    }
+  })
+
   it('rejects a request without an Origin header with 403', async () => {
     const response = await POST(requestWith({ contentType: null }))
     assert.equal(response.status, 403)

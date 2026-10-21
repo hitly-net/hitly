@@ -10,9 +10,11 @@
  * Outcome handling (one request per click, never a retry loop):
  * - 2xx success, or 401 (the session is already gone): clear local state and
  *   hard-redirect to /login.
- * - HTTP 500: the server's response still carried the cookie-expiry headers,
- *   so this device is signed out, but the server-side session could not be
- *   ended. No redirect; the inline message says exactly that.
+ * - HTTP 500 whose JSON body carries error 'sign_out_failed': the sign-out
+ *   route expired the session cookies on its response, so this device is
+ *   signed out, but the server-side session could not be ended. No redirect;
+ *   the inline message says exactly that. Any other 500 is treated like any
+ *   other error below.
  * - Network failure, a ~10 s timeout (AbortController), or any other error
  *   response: nothing was cleared, the user is still signed in, so the button
  *   re-enables and shows SIGN_OUT_FAILURE_MESSAGE instead.
@@ -25,12 +27,15 @@ export const SIGN_OUT_TIMEOUT_MS = 10_000
 export const SIGN_OUT_FAILURE_MESSAGE = 'Sign-out failed, you are still signed in. Try again.'
 
 /**
- * Shown when the server responded 500: the response expired the session
- * cookies, so the device is signed out even though the server-side session
- * outlived the attempt.
+ * Shown when the sign-out route answered 500 with error 'sign_out_failed':
+ * its response expired the session cookies, so the device is signed out even
+ * though the server-side session outlived the attempt.
  */
 export const SIGN_OUT_SERVER_FAILURE_MESSAGE =
   'Signed out on this device, but we could not end your session on the server. Try again.'
+
+/** Error code the sign-out route returns when the server session outlived the attempt. */
+export const SIGN_OUT_SERVER_ERROR_CODE = 'sign_out_failed'
 
 export type SignOutOutcome = 'redirected' | 'failed' | 'failed_server'
 
@@ -85,11 +90,16 @@ export async function performSignOut(hooks: SignOutHooks = {}): Promise<SignOutO
       return 'redirected'
     }
     // 415 or any other error response: nothing was cleared; the user may
-    // still be signed in. HTTP 500 is special: the route's response expired
-    // the cookies either way, so this device is signed out even if the server
-    // session outlived the attempt.
+    // still be signed in. Only the sign-out route's own failure (500 with
+    // error 'sign_out_failed') means its response expired the cookies, so
+    // this device is signed out even if the server session outlived the
+    // attempt. Any other 500 (for example from the framework) is a plain
+    // failure.
     logError(`[hitly sign-out] Server returned error: ${response.status}`)
-    return response.status === 500 ? 'failed_server' : 'failed'
+    if (response.status === 500 && (await readErrorCode(response)) === SIGN_OUT_SERVER_ERROR_CODE) {
+      return 'failed_server'
+    }
+    return 'failed'
   } catch (error) {
     // Network failure or the timeout above.
     logError('[hitly sign-out] Failed to sign out:', error)
@@ -97,6 +107,19 @@ export async function performSignOut(hooks: SignOutHooks = {}): Promise<SignOutO
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Reads the `error` field of a JSON error body; null when absent or unreadable. */
+async function readErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body: unknown = await response.json()
+    if (body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+      return (body as { error: string }).error
+    }
+  } catch {
+    // Not JSON (for example an HTML error page): no error code.
+  }
+  return null
 }
 
 function defaultClearCookie(name: string, opts: { secure?: boolean } = {}): void {

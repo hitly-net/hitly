@@ -7,6 +7,7 @@ import {
   performSignOut,
   SIGN_OUT_ENDPOINT,
   SIGN_OUT_FAILURE_MESSAGE,
+  SIGN_OUT_SERVER_ERROR_CODE,
   SIGN_OUT_SERVER_FAILURE_MESSAGE,
   SIGN_OUT_TIMEOUT_MS,
   signOutFailureMessage,
@@ -87,6 +88,42 @@ describe('sign-out button (static)', () => {
     assert.equal(signOutFailureMessage('failed_server'), SIGN_OUT_SERVER_FAILURE_MESSAGE)
   })
 
+  it('never shows raw error text: every message comes from the outcome mapping', async () => {
+    const code = readButton()
+    const setFailureArgs = [...code.matchAll(/setFailure\(([^)]*\)?)\)/g)].map((m) => m[1].trim())
+    assert.ok(setFailureArgs.length >= 2, 'expected the failure and catch paths')
+    for (const arg of setFailureArgs) {
+      assert.ok(
+        arg === 'null' || /^signOutFailureMessage\((outcome|'failed')\)$/.test(arg),
+        `setFailure must only receive null or signOutFailureMessage(...), got: ${arg}`,
+      )
+    }
+    assert.ok(!/\{\s*(error|err|e)(\.message)?\s*\}/.test(code), 'no error object is rendered')
+    assert.match(code, /\{failure\}/)
+
+    // Whatever the server or network says, the message is one of the two fixed strings.
+    const allowed = new Set([SIGN_OUT_FAILURE_MESSAGE, SIGN_OUT_SERVER_FAILURE_MESSAGE])
+    const raw = 'raw server detail: stack trace at line 42'
+    for (const options of [
+      { status: 500, body: JSON.stringify({ error: raw }) },
+      { status: 500, body: JSON.stringify({ error: 'sign_out_failed', message: raw }) },
+      { status: 403, body: JSON.stringify({ error: raw }) },
+      { status: 500, body: raw, contentType: 'text/plain' },
+      { rejectFetch: true },
+    ]) {
+      const { hooks } = newSignOutMocks(options)
+      const outcome = await performSignOut(hooks)
+      assert.notEqual(outcome, 'redirected')
+      const message = signOutFailureMessage(outcome as Exclude<SignOutOutcome, 'redirected'>)
+      assert.ok(allowed.has(message), message)
+      assert.ok(!message.includes(raw))
+    }
+    for (const unexpected of ['boom', '', undefined]) {
+      const message = signOutFailureMessage(unexpected as unknown as 'failed')
+      assert.equal(message, SIGN_OUT_FAILURE_MESSAGE, 'unknown outcomes fall back to the fixed message')
+    }
+  })
+
   it('disables itself while a request is in flight and blocks re-entry', () => {
     const code = readButton()
     assert.match(code, /disabled=\{pending\}/)
@@ -110,6 +147,9 @@ interface RecordedCalls {
 function newSignOutMocks(
   options: {
     status?: number
+    /** Raw response body; defaults to {"ok": status < 400}. */
+    body?: string
+    contentType?: string
     rejectFetch?: boolean
     neverSettleWithAbort?: boolean
     timeoutMs?: number
@@ -135,9 +175,9 @@ function newSignOutMocks(
       if (options.rejectFetch) return Promise.reject(new TypeError('Failed to fetch'))
       const status = options.status ?? 200
       return Promise.resolve(
-        new Response(JSON.stringify({ ok: status < 400 }), {
+        new Response(options.body ?? JSON.stringify({ ok: status < 400 }), {
           status,
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': options.contentType ?? 'application/json' },
         }),
       )
     },
@@ -194,8 +234,9 @@ describe('sign-out behaviour', () => {
     assert.ok(calls.errors.some((args) => String(args[0]).includes('415')), 'the 415 must be logged')
   })
 
-  it('on HTTP 500 reports failed_server: the device is signed out, the server session may live', async () => {
-    const { calls, hooks } = newSignOutMocks({ status: 500 })
+  it("on the route's own 500 (error 'sign_out_failed') reports failed_server", async () => {
+    assert.equal(SIGN_OUT_SERVER_ERROR_CODE, 'sign_out_failed')
+    const { calls, hooks } = newSignOutMocks({ status: 500, body: JSON.stringify({ error: 'sign_out_failed' }) })
     const outcome = await performSignOut(hooks)
     assert.equal(outcome, 'failed_server')
     assert.equal(calls.fetchCalls.length, 1, 'no retry on 500')
@@ -203,6 +244,33 @@ describe('sign-out behaviour', () => {
     assert.deepEqual(calls.clearedCookies, [], 'the server already expired the cookies on its response')
     assert.equal(signOutFailureMessage(outcome), SIGN_OUT_SERVER_FAILURE_MESSAGE)
     assert.ok(calls.errors.some((args) => String(args[0]).includes('500')), 'the 500 must be logged')
+  })
+
+  it('treats any other HTTP 500 as a plain failure (still signed in)', async () => {
+    const bodies: Array<{ body: string; contentType?: string }> = [
+      { body: JSON.stringify({ ok: false }) },
+      { body: JSON.stringify({ error: 'internal_error' }) },
+      { body: JSON.stringify({ error: 'SIGN_OUT_FAILED' }) },
+      { body: JSON.stringify({ error: { code: 'sign_out_failed' } }) },
+      { body: JSON.stringify('sign_out_failed') },
+      { body: '' },
+      { body: '<!DOCTYPE html><html><body>Internal Server Error</body></html>', contentType: 'text/html' },
+    ]
+    for (const { body, contentType } of bodies) {
+      const { calls, hooks } = newSignOutMocks({ status: 500, body, contentType })
+      const outcome = await performSignOut(hooks)
+      assert.equal(outcome, 'failed', `500 with body ${body}`)
+      assert.equal(signOutFailureMessage(outcome), SIGN_OUT_FAILURE_MESSAGE)
+      assert.equal(calls.fetchCalls.length, 1, 'no retry')
+      assert.deepEqual(calls.navigations, [])
+    }
+  })
+
+  it("does not treat 'sign_out_failed' on a non-500 status as failed_server", async () => {
+    for (const status of [400, 403, 502, 503]) {
+      const { hooks } = newSignOutMocks({ status, body: JSON.stringify({ error: 'sign_out_failed' }) })
+      assert.equal(await performSignOut(hooks), 'failed', String(status))
+    }
   })
 
   it('does NOT redirect on a network error; reports failure without retrying', async () => {
