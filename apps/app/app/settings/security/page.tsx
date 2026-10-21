@@ -1,8 +1,10 @@
 import { AppShell } from '@/components/app-shell'
+import { requireSessionUser } from '@/lib/context'
 
 export const metadata = { title: 'Security' }
 
-export default function SecurityPage() {
+export default async function SecurityPage() {
+  await requireSessionUser()
   return (
     <AppShell>
       <h1 className="text-2xl font-semibold">Security</h1>

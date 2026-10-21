@@ -1,4 +1,5 @@
 import { WorkItemDetail } from '@/components/work-item-detail'
+import { requireSessionUser } from '@/lib/context'
 
 export const metadata = { title: 'Work item' }
 
@@ -9,6 +10,7 @@ export default async function ProjectItemPage({
   params: Promise<{ id: string; itemId: string }>
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
+  await requireSessionUser()
   const { id, itemId } = await params
   const search = await searchParams
   return <WorkItemDetail approvalId={itemId} projectId={id} errorMessage={typeof search.error === 'string' ? search.error : undefined} />
