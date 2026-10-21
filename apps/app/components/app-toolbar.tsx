@@ -22,12 +22,14 @@ export function AppToolbar({
   projects,
   activeProjectId,
   userName,
+  userEmail,
 }: {
   workspaces: { id: string; name: string }[]
   currentWorkspaceId: string
   projects: { id: string; name: string }[]
   activeProjectId?: string | null
   userName: string
+  userEmail?: string | null
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -81,7 +83,7 @@ export function AppToolbar({
         ))}
       </select>
       <div className="ml-auto">
-        <UserMenu userName={userName} />
+        <UserMenu userName={userName} userEmail={userEmail} />
       </div>
     </header>
   )

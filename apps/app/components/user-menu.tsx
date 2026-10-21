@@ -6,7 +6,8 @@ import { ChevronDown } from 'lucide-react'
 import { SignOutButton } from '@/components/sign-out-button'
 import { ThemePicker } from '@/components/theme-picker'
 
-export function UserMenu({ userName }: { userName: string }) {
+export function UserMenu({ userName, userEmail }: { userName: string; userEmail?: string | null }) {
+  const email = userEmail?.trim() || null
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
@@ -35,6 +36,7 @@ export function UserMenu({ userName }: { userName: string }) {
         aria-expanded={open}
         aria-haspopup="menu"
         aria-controls={menuId}
+        title={email ?? undefined}
         onClick={() => setOpen((value) => !value)}
       >
         {userName}
@@ -46,6 +48,14 @@ export function UserMenu({ userName }: { userName: string }) {
           role="menu"
           className="absolute right-0 z-20 mt-1 w-56 rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
         >
+          <div className="mb-2 border-b border-zinc-200 px-2 pb-2 dark:border-zinc-800">
+            <p className="truncate text-sm font-medium">{userName}</p>
+            {email ? (
+              <p data-testid="user-menu-email" className="truncate text-xs text-zinc-500" title={email}>
+                {email}
+              </p>
+            ) : null}
+          </div>
           <Link
             href="/settings/profile"
             role="menuitem"
