@@ -127,7 +127,7 @@ NEXT_PUBLIC_APP_URL=http://<your-host>:3001
 WEB_URL=http://<your-host>:3000
 BETTER_AUTH_URL=http://<your-host>:3001
 BETTER_AUTH_SECRET=<openssl rand -hex 32>
-DATABASE_URL=postgres://hitly:hitly@127.0.0.1:5432/hitly
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/hitly
 NEXT_PUBLIC_WEB_URL=http://<your-host>:3000
 ```
 
