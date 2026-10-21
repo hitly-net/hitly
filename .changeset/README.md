@@ -1,4 +1,4 @@
-# Hitly Changesets
+# HITLy Changesets
 
 User-facing SDK packages (`hitly.role === "sdk"`) are versioned here. Apps, `@hitly/db`, `@hitly/ui`, and `@hitly/cloud` are ignored and never published.
 

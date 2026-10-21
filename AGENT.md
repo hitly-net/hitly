@@ -1,32 +1,32 @@
-# AGENT.md — implement Hitly in an existing project
+# AGENT.md — implement HITLy in an existing project
 
-Use this file when the user asks you to add Hitly human-in-the-loop approvals to an **existing** agent, workflow, or automation project.
+Use this file when the user asks you to add HITLy human-in-the-loop approvals to an **existing** agent, workflow, or automation project.
 
-Hitly is the reviewer inbox. The origin framework (Mastra, Hermes, HTTP callbacks, LangGraph, Temporal) keeps the pause/resume primitive. You do not rebuild Hitly, and you do not approve inside the origin UI if Hitly should own the decision.
+HITLy is the reviewer inbox. The origin framework (Mastra, Hermes, HTTP callbacks, LangGraph, Temporal) keeps the pause/resume primitive. You do not rebuild HITLy, and you do not approve inside the origin UI if HITLy should own the decision.
 
 Docs: [hitly.net/docs](https://hitly.net/docs). Runnable Mastra sample: `examples/mastra` in this repo. Hermes drop-in plugin: `examples/hermes`. HTTP recipes: `examples/n8n`, `examples/notion`.
 
 ## What you are building
 
 ```
-origin pauses  →  POST /api/v1/approvals  →  reviewer decides in Hitly  →  plugin resumes origin
+origin pauses  →  POST /api/v1/approvals  →  reviewer decides in HITLy  →  plugin resumes origin
 ```
 
 1. Sensitive work hits a pause point (`suspend()`, wait node, `interrupt()`, etc.).
-2. The origin POSTs an envelope to Hitly (`Authorization: Bearer hitly_…`).
-3. A human accepts, edits, or rejects in the Hitly inbox.
-4. Hitly calls back into the origin. You must handle `approved: true` and `approved: false`.
+2. The origin POSTs an envelope to HITLy (`Authorization: Bearer hitly_…`).
+3. A human accepts, edits, or rejects in the HITLy inbox.
+4. HITLy calls back into the origin. You must handle `approved: true` and `approved: false`.
 
-Do not resume the run yourself after the POST. Hitly does that.
+Do not resume the run yourself after the POST. HITLy does that.
 
 ## Before you write code
 
 Confirm all of this exists. If it does not, stop and tell the user what to create.
 
-1. A running Hitly app (self-host `yarn dev:app` on http://localhost:3001; `cloud.hitly.net` is waitlist-only).
+1. A running HITLy app (self-host `yarn dev:app` on http://localhost:3001; `cloud.hitly.net` is waitlist-only).
 2. A **project** whose plugin matches the origin (`mastra`, `hermes`, `http`, `langgraph`, `temporal`).
 3. A project API key and `HITLY_PROJECT_ID` (Config tab → Origin `.env`).
-4. Origin **base URL** stored on the project (or sent as `mastraBaseUrl` / equivalent on ingest). Hitly must be able to reach that URL to resume. `localhost` only works when Hitly and the origin run on the same machine.
+4. Origin **base URL** stored on the project (or sent as `mastraBaseUrl` / equivalent on ingest). HITLy must be able to reach that URL to resume. `localhost` only works when HITLy and the origin run on the same machine.
 
 Env the origin process needs:
 
@@ -47,7 +47,7 @@ Apply this in any existing codebase:
 3. POST to `{HITLY_API_URL}/api/v1/approvals` with `plugin`, `projectId`, `runId`, `action`, and enough `resumeHandle` fields for the plugin to resume (see [API](https://hitly.net/docs/api) and [envelope](https://hitly.net/docs/envelope)).
 4. On resume, branch on the decision. Mastra maps:
 
-   | Hitly decision | Resume payload |
+   | HITLy decision | Resume payload |
    | --- | --- |
    | accept | `{ approved: true }` |
    | edit | `{ approved: true, ...editedArgs }` |
@@ -57,7 +57,7 @@ Apply this in any existing codebase:
 
    HTTP / n8n resume is `{ decision, id, metadata }` (not `{ approved }`). See [API](https://hitly.net/docs/api).
 5. Persist run snapshots so a pause survives process restart (Mastra: storage on the `Mastra` instance).
-6. Keep origin credentials on the Hitly project. Do not put Hitly secrets in git.
+6. Keep origin credentials on the HITLy project. Do not put HITLy secrets in git.
 
 Prefer `@hitly/plugin-*` helpers (`notifyHitlyApproval` for Mastra; copy `examples/hermes` for Hermes Agent) when the package is available. Until npm publish, copy the helper from `packages/plugin-mastra/src/index.ts` or POST the JSON yourself.
 
@@ -65,13 +65,13 @@ Prefer `@hitly/plugin-*` helpers (`notifyHitlyApproval` for Mastra; copy `exampl
 
 Install `@hitly/plugin-mastra` when you can. Copy `notifyHitlyApproval` from this repo if you cannot.
 
-**Do not** set `requireApproval: true` on a tool you want Hitly to see. That flag pauses *before* `execute`, so Hitly is never notified. Suspend inside `execute` after `notifyHitlyApproval()`.
+**Do not** set `requireApproval: true` on a tool you want HITLy to see. That flag pauses *before* `execute`, so HITLy is never notified. Suspend inside `execute` after `notifyHitlyApproval()`.
 
 Agent HITL needs a storage adapter (for example LibSQL `file:./mastra.db`) on `new Mastra({ storage })`.
 
 ### Workflow step
 
-Put this in an existing workflow. Notify Hitly, then `suspend()`. On reject, `bail()` so later steps do not run.
+Put this in an existing workflow. Notify HITLy, then `suspend()`. On reject, `bail()` so later steps do not run.
 
 ```ts
 import { createStep } from '@mastra/core/workflows'
@@ -117,7 +117,7 @@ const approval = createStep({
 })
 ```
 
-Wire it with `.then(approval).then(issueRefund).commit()`. Hitly resumes via `POST {MASTRA_BASE_URL}/api/workflows/{workflowId}/resume?runId=…`.
+Wire it with `.then(approval).then(issueRefund).commit()`. HITLy resumes via `POST {MASTRA_BASE_URL}/api/workflows/{workflowId}/resume-async?runId=…`.
 
 ### Agent tool
 
@@ -177,14 +177,14 @@ export const sendRefundTool = createTool({
 })
 ```
 
-Hitly resumes via `POST {MASTRA_BASE_URL}/api/agents/{agentId}/resume-stream` with `{ runId, toolCallId, resumeData }`.
+HITLy resumes via `POST {MASTRA_BASE_URL}/api/agents/{agentId}/resume-stream` with `{ runId, toolCallId, resumeData }`.
 
 Full wiring (storage, Studio, local model): `examples/mastra`. Integration notes: `apps/web/content/integrations/mastra.mdx`.
 
 ### Mastra checklist
 
 - [ ] `HITLY_*` and `MASTRA_BASE_URL` are set in the Mastra process env.
-- [ ] Hitly project plugin is `mastra`; origin base URL is the Mastra server Hitly can reach.
+- [ ] HITLy project plugin is `mastra`; origin base URL is the Mastra server HITLy can reach.
 - [ ] `new Mastra({ storage })` is configured so suspend snapshots persist.
 - [ ] Workflow `id` / agent `id` passed to `notifyHitlyApproval` match the registered ids.
 - [ ] Tool/step calls `notifyHitlyApproval` **then** `suspend()` (not `requireApproval: true`).
@@ -193,7 +193,7 @@ Full wiring (storage, Studio, local model): `examples/mastra`. Integration notes
 
 ## Other origins (short)
 
-| Origin | Pause | What to send Hitly | Resume (plugin) |
+| Origin | Pause | What to send HITLy | Resume (plugin) |
 | --- | --- | --- | --- |
 | HTTP | caller `resumeUrl` | `resumeUrl`, `projectId`, action, optional `metadata` | POST `{ decision, id, metadata }` to `resumeUrl` |
 | n8n | Wait node (webhook) | same as HTTP; `resumeUrl` is `$execution.resumeUrl`; create an **HTTP** project | POST `{ decision, id, metadata }` to `$execution.resumeUrl` |
@@ -206,15 +206,15 @@ Guides: `apps/web/content/integrations/`. Plugins: `packages/plugin-*`.
 ## Verify
 
 1. Trigger the pause (Studio chat, workflow run, HTTP callback, n8n execution, …).
-2. Confirm a pending item in Hitly inbox (`{HITLY_API_URL}/inbox`).
+2. Confirm a pending item in HITLy inbox (`{HITLY_API_URL}/inbox`).
 3. Accept: origin continues and the side effect runs.
 4. Reject: origin does **not** run the side effect (`bail()` / rejection result).
-5. If resume fails, Hitly status is `failed_resume`; fix reachability/`mastraBaseUrl`, then retry resume from the approval. If the origin is no longer suspended, **Force cancel** the item.
+5. If resume fails, HITLy status is `failed_resume`; fix reachability/`mastraBaseUrl`, then retry resume from the approval. If the origin is no longer suspended, **Force cancel** the item.
 
 ## Do not
 
-- Approve only in Mastra Studio if the user asked for Hitly.
+- Approve only in Mastra Studio if the user asked for HITLy.
 - Call the irreversible action before `resumeData.approved === true`.
-- Point a hosted Hitly workspace at `http://localhost:…`.
+- Point a hosted HITLy workspace at `http://localhost:…`.
 - Invent a second approval inbox in the origin app.
 - Commit `.env` files or API keys.

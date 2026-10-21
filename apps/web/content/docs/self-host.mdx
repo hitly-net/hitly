@@ -39,6 +39,6 @@ The app process runs due jobs about once a minute:
 | `purge-completed-approvals` | daily | Deletes closed items older than the workspace plan retention |
 | `purge-expired-audit-events` | weekly | Deletes project events older than `auditRetentionDays` |
 
-Self-hosted workspaces keep completed items forever. Hosted plans: solo 10 days, pro 30, team 365, enterprise 1000.
+Self-hosted workspaces keep completed items forever. Cloud (invite-only) plans: solo 10 days, pro 30, team 365, enterprise 1000.
 
 Set `HITLY_HOUSEKEEPING=0` to disable the in-process timer (for example when a process manager or cron should own it). Then `POST /api/v1/housekeeping` with `Authorization: Bearer $HITLY_CRON_SECRET`. Optional JSON `{ "job": "purge-completed-approvals", "force": true }` runs one job immediately.

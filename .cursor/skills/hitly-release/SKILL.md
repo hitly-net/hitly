@@ -1,9 +1,9 @@
 ---
 name: hitly-release
-description: Hitly npm release and versioning for @hitly SDK packages. Use when the user mentions release, publish, npm, version, changelog, changeset, tag, or cutting a SDK package; when preparing @hitly/core or @hitly/plugin-* for npm; or when asked how packages are versioned.
+description: HITLy npm release and versioning for @hitly SDK packages. Use when the user mentions release, publish, npm, version, changelog, changeset, tag, or cutting a SDK package; when preparing @hitly/core or @hitly/plugin-* for npm; or when asked how packages are versioned.
 ---
 
-# Hitly release
+# HITLy release
 
 Only packages with `"hitly": { "role": "sdk" }` are npm candidates. Everything else stays private. See [packages.md](packages.md).
 

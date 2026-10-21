@@ -1,6 +1,6 @@
 # OpenShell Origin Adapter for HITLy
 
-**Demo-ready** OpenShell → HITLy integration for **human-in-the-loop approval of pending draft policy chunks**.
+**Parked / experimental** OpenShell → HITLy integration for **human-in-the-loop approval of pending draft policy chunks**.
 
 ## Architecture (do not blur)
 
@@ -35,7 +35,7 @@ Plugin: ApproveDraftChunk (gRPC) → policy updated (LASTING allow)
   ↓
 Agent retries curl (new request) → succeeds under new rule
   ↓
-Evidence: hitly.evidence.v1 signed receipt → configured sink
+Evidence: hitly.evidence.v1 hash-chained, unsigned evidence → configured sink
 ```
 
 **SYNC in this demo = agent long-poll on `/v1/proposals/{chunk_id}/wait`** (agent parks while human decides).
@@ -695,7 +695,7 @@ OpenShell 0.1.2 default sandbox image is **missing `/usr/bin/curl`**.
 **In scope:**
 - Only `human_review_required` / `proposal_approval_mode=manual` pending drafts
 - HITLy inbox as the primary decision surface
-- `hitly.evidence.v1` signed receipts
+- `hitly.evidence.v1` hash-chained, unsigned evidence
 - TLS/mTLS support for production gateway (OpenShell 0.1.2, `auth_mode=mtls`)
 
 **Out of scope:**

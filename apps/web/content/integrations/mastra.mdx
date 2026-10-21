@@ -3,7 +3,7 @@ title: Mastra
 description: Suspend a Mastra agent tool or workflow step, review it in HITLy, resume or bail.
 ---
 
-[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses with `suspend()` and continues with `resume()` / `bail()`. HITL<sub><i>y</i></sub> owns the reviewer UI. Chat with the demo agent in [Mastra Studio](https://mastra.ai/docs/studio/overview) (`mastra dev`, http://localhost:4111).
+[Mastra](https://mastra.ai/docs/workflows/human-in-the-loop) pauses with `suspend()` and continues with `resume()` / `bail()`. HITL<sub><i>y</i></sub> owns the reviewer UI. Note: Not yet on npm. Use inside the monorepo or copy `packages/plugin-mastra/src`. Chat with the demo agent in [Mastra Studio](https://mastra.ai/docs/studio/overview) (`mastra dev`, http://localhost:4111).
 
 ## How it works with HITL<sub><i>y</i></sub>
 
@@ -11,7 +11,7 @@ description: Suspend a Mastra agent tool or workflow step, review it in HITLy, r
 2. HITL<sub><i>y</i></sub> stores an [envelope](/docs/envelope) and shows it in the [inbox](/docs/inbox).
 3. A reviewer accepts, edits, or rejects.
 4. HITL<sub><i>y</i></sub> resumes the origin:
-   - **Workflow** — `POST /api/workflows/:workflowId/resume`
+   - **Workflow** — `POST /api/workflows/:workflowId/resume-async?runId=`
    - **Agent** — `POST /api/agents/:agentId/resume-stream`
 5. Reject maps to `resumeData.approved: false`. Workflows should `bail()`; agent tools should return a rejection result to the model.
 
