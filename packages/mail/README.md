@@ -13,6 +13,6 @@ If `HITLY_MAIL_TRANSPORT` is unset: `SMTP_HOST` → smtp, else `RESEND_API_KEY` 
 
 | Env | Notes |
 | --- | --- |
-| `HITLY_MAIL_FROM` | Default `HITLy <noreply@hitly.net>`. |
+| `HITLY_MAIL_FROM` | Default `Hitly <noreply@hitly.net>`. |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` | SMTP. Port defaults to 587; Mailpit uses 1025. |
 | `RESEND_API_KEY` | Required for the Resend transport. |

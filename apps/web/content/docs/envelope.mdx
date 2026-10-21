@@ -342,7 +342,7 @@ Evidence events are POSTed to your URL with:
 - `Idempotency-Key: <event_id>`
 - `Authorization` header (if configured)
 - Custom HTTP headers (if configured)
-- `X-HITLy-Metadata` header with JSON-encoded metadata (if configured)
+- `X-Hitly-Metadata` header with JSON-encoded metadata (if configured)
 - Full event JSON body (see `packages/core/src/evidence.ts`)
 
 **Important**: Custom headers and metadata are **transport-only**. They are sent with the HTTP request but are **not stored in the evidence event body**. This preserves the `content_sha256` hash. Use them to pass routing information, credentials, or context to your storage backend without affecting the canonical evidence record.
