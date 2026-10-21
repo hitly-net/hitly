@@ -5,17 +5,20 @@ import { WORKSPACE_COOKIE } from '@/lib/context'
 /**
  * Server-side sign-out.
  *
- * The better-auth session cookie is HttpOnly, so the browser cannot drop it
- * from JavaScript and a failed call to /api/auth/sign-out used to leave a
- * fully valid session behind. This route:
+ * The browser cannot clear the HttpOnly session cookie from JavaScript, so
+ * this route expires every session cookie on its response — always, including
+ * on 5xx — and verifies through the server auth instance that the session was
+ * really deleted before reporting success:
  *
- * 1. best-effort revokes the current session via the existing server auth
- *    instance (no new auth logic; a failure is logged, never fatal), and
- * 2. ALWAYS expires the session cookie(s) — both the plain and the
- *    __Secure- better-auth variants plus the workspace cookie — on the
- *    response, so the session is ended whether or not revocation succeeded.
- *
- * It returns 200 JSON; the client always redirects to /login afterwards.
+ * 1. best-effort revoke via the existing auth instance (failures are logged,
+ *    never fatal — the verification below decides),
+ * 2. confirm the session no longer exists via getSession on the request
+ *    headers. No session at all (already signed out) counts as success and
+ *    returns 200 { ok: true }; a live session after revoke, or one that
+ *    cannot be verified, returns 500 { error: 'sign_out_failed' } and never
+ *    reports success,
+ * 3. both better-auth session cookie variants (plain + __Secure-) and the
+ *    workspace cookie are expired on the response either way.
  */
 
 const SESSION_COOKIES: ReadonlyArray<{ name: string; httpOnly?: boolean; secure?: boolean }> = [
@@ -35,20 +38,41 @@ function expireCookie(response: NextResponse, cookie: { name: string; httpOnly?:
   })
 }
 
+export interface SignOutRouteDeps {
+  /** Resolves to the current session (truthy) or null when none exists. */
+  getSession?: (headers: Headers) => Promise<unknown>
+  revoke?: (headers: Headers) => Promise<unknown>
+}
+
 export async function handleSignOut(
   request: { headers: Headers },
-  deps: { revoke?: () => Promise<unknown> } = {},
+  deps: SignOutRouteDeps = {},
 ): Promise<NextResponse> {
+  const authInstance = auth
+  const getSession =
+    deps.getSession ??
+    ((headers) => (authInstance ? authInstance.api.getSession({ headers }) : Promise.resolve(null)))
+  const revoke = deps.revoke ?? ((headers) => (authInstance ? authInstance.api.signOut({ headers }) : undefined))
+
   try {
-    const authInstance = auth
-    const revoke = deps.revoke ?? (authInstance ? () => authInstance.api.signOut({ headers: request.headers }) : undefined)
-    if (revoke) await revoke()
+    await revoke(request.headers)
   } catch (error) {
-    // Revocation failed, threw (e.g. 401 for an already-ended session) or
-    // there is no session to revoke: cookie expiry below still ends it.
+    // Revocation failed or threw (e.g. 401 for an already-ended session);
+    // whether the session still exists is decided by the check below.
     console.error('[hitly sign-out] Session revocation failed:', error)
   }
-  const response = NextResponse.json({ ok: true })
+
+  let deleted: boolean
+  try {
+    deleted = (await getSession(request.headers)) === null
+  } catch (error) {
+    console.error('[hitly sign-out] Could not confirm the session was deleted:', error)
+    deleted = false
+  }
+
+  const response = deleted
+    ? NextResponse.json({ ok: true })
+    : NextResponse.json({ error: 'sign_out_failed' }, { status: 500 })
   for (const cookie of SESSION_COOKIES) expireCookie(response, cookie)
   return response
 }

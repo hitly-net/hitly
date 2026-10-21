@@ -4,74 +4,105 @@ import { handleSignOut } from '../app/api/session/sign-out/route'
 
 /**
  * Tests for the server-side sign-out route (/api/session/sign-out).
- * Whatever happens to the session revocation call, the response must always
- * expire the HttpOnly session cookies and the workspace cookie.
+ *
+ * Every response must expire all three cookies with the exact attributes the
+ * browser needs (the client JS cannot touch the HttpOnly session cookie), and
+ * success may only be reported once the session has verifiably ceased to
+ * exist. An absent session counts as success (already signed out).
  */
 
 const request = { headers: new Headers({ cookie: 'better-auth.session_token=fake' }) }
 
-function setCookies(response: Response) {
-  const getSetCookie = (response.headers as { getSetCookie?: () => string[] }).getSetCookie
-  assert.ok(getSetCookie, 'response must expose set-cookie headers')
-  return getSetCookie.call(response.headers)
+// The exact Set-Cookie strings the route must emit.
+const EXPECTED_COOKIES = [
+  'better-auth.session_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; SameSite=lax',
+  '__Secure-better-auth.session_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Secure; HttpOnly; SameSite=lax',
+  'hitly-workspace-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; SameSite=lax',
+]
+
+function setCookies(response: Response): string[] {
+  return (response.headers as Headers).getSetCookie()
 }
 
-function expectAllCookiesExpired(response: Response) {
+function expectExactExpiredCookies(response: Response) {
   const cookies = setCookies(response)
-  for (const name of [
-    'better-auth.session_token',
-    '__Secure-better-auth.session_token',
-    'hitly-workspace-id',
-  ]) {
-    const cookie = cookies.find((c) => c.startsWith(`${name}=`))
-    assert.ok(cookie, `response must expire ${name}`)
-    assert.match(cookie, /Max-Age=0/)
-    assert.match(cookie, /Path=\//)
+  for (const expected of EXPECTED_COOKIES) {
+    assert.ok(
+      cookies.includes(expected),
+      `response must emit the exact cookie "${expected}", got: ${JSON.stringify(cookies)}`,
+    )
   }
-  const secureCookie = cookies.find((c) => c.startsWith('__Secure-better-auth.session_token='))!
-  assert.match(secureCookie, /Secure/, 'the __Secure- variant must be Secure')
-  const plainCookie = cookies.find((c) => c.startsWith('better-auth.session_token='))!
-  assert.match(plainCookie, /HttpOnly/, 'the session cookie is HttpOnly')
+  assert.equal(cookies.length, EXPECTED_COOKIES.length)
 }
+
+const sessionAlive = { user: { id: 'u1' }, session: { id: 's1' } }
 
 describe('session sign-out route', () => {
-  it('revokes the session and expires the cookies on success', async () => {
+  it('reports success when the session was revoked and is gone', async () => {
     let revoked = false
     const response = await handleSignOut(request, {
       revoke: async () => {
         revoked = true
       },
+      getSession: async () => null,
     })
     assert.equal(revoked, true)
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), { ok: true })
-    expectAllCookiesExpired(response)
+    expectExactExpiredCookies(response)
   })
 
-  it('still expires the cookies when revocation throws synchronously', async () => {
+  it('never reports success when the session still exists after revoke fails', async () => {
     const response = await handleSignOut(request, {
-      revoke: () => {
-        throw new Error('boom')
+      revoke: async () => {
+        throw new Error('revocation failed')
       },
+      getSession: async () => sessionAlive,
     })
-    assert.equal(response.status, 200)
-    expectAllCookiesExpired(response)
+    assert.equal(response.status, 500)
+    assert.deepEqual(await response.json(), { error: 'sign_out_failed' })
+    expectExactExpiredCookies(response)
   })
 
-  it('still expires the cookies when revocation rejects (e.g. 401, no session)', async () => {
+  it('reports success when revoke throws but the session is gone anyway (already ended)', async () => {
     const response = await handleSignOut(request, {
       revoke: async () => {
         throw Object.assign(new Error('UNAUTHORIZED'), { status: 401 })
       },
+      getSession: async () => null,
     })
     assert.equal(response.status, 200)
-    expectAllCookiesExpired(response)
+    assert.deepEqual(await response.json(), { ok: true })
+    expectExactExpiredCookies(response)
   })
 
-  it('expires the cookies when there is no session to revoke (no auth configured)', async () => {
-    // No revoke dep and no DB-configured auth instance in tests.
+  it('never reports success when deletion cannot be verified', async () => {
+    const response = await handleSignOut(request, {
+      revoke: async () => undefined,
+      getSession: async () => {
+        throw new Error('database unreachable')
+      },
+    })
+    assert.equal(response.status, 500)
+    assert.deepEqual(await response.json(), { error: 'sign_out_failed' })
+    expectExactExpiredCookies(response)
+  })
+
+  it('never reports success when the session still exists after a silent revoke', async () => {
+    const response = await handleSignOut(request, {
+      revoke: async () => undefined,
+      getSession: async () => sessionAlive,
+    })
+    assert.equal(response.status, 500)
+    expectExactExpiredCookies(response)
+  })
+
+  it('treats an absent session (already signed out, no auth configured) as success', async () => {
+    // No deps: falls back to the module auth instance, which is null when no
+    // database is configured — the verification then resolves "no session".
     const response = await handleSignOut(request)
     assert.equal(response.status, 200)
-    expectAllCookiesExpired(response)
+    assert.deepEqual(await response.json(), { ok: true })
+    expectExactExpiredCookies(response)
   })
 })
