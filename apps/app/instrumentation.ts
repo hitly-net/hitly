@@ -4,8 +4,9 @@ export async function register() {
   // start without a usable BETTER_AUTH_SECRET or with a development database
   // password; in every environment, refuse a malformed HITLY_TRUSTED_PROXIES.
   // The process exits with a message that names the variable, never its value.
-  const { exitOnStartupProblems } = await import('./lib/startup-checks')
+  const { exitOnStartupProblems, logStartupNotices } = await import('./lib/startup-checks')
   exitOnStartupProblems()
+  logStartupNotices()
   const { destinationPolicyStartupNotice } = await import('@hitly/core/destination-check')
   const destinationNotice = destinationPolicyStartupNotice()
   if (destinationNotice) console.info(destinationNotice)

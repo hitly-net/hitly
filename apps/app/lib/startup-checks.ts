@@ -1,5 +1,6 @@
 import { productionAuthSecretProblem } from './auth-secret'
-import { trustedProxiesProblem } from './trusted-proxies'
+import { MAX_TRUSTED_PROXY_COUNT, TRUSTED_PROXY_COUNT_ENV, trustedProxyCount } from './client-address'
+import { TRUSTED_PROXIES_ENV, parseTrustedProxies, trustedProxiesProblem } from './trusted-proxies'
 
 /**
  * Server start checks, run from instrumentation register() before anything
@@ -67,4 +68,56 @@ export function exitOnStartupProblems({
   if (problems.length === 0) return
   for (const problem of problems) log(`[hitly startup] ${problem}; refusing to start.`)
   exit(1)
+}
+
+/**
+ * Start-up notes about client addresses: the effective trusted proxy setting
+ * (a count, never addresses), and a warning when there is no per-client
+ * address at all.
+ */
+export function startupNotices(env: Record<string, string | undefined> = process.env): {
+  info: string[]
+  warn: string[]
+} {
+  const info: string[] = []
+  const warn: string[] = []
+  let list = null
+  try {
+    list = parseTrustedProxies(env[TRUSTED_PROXIES_ENV])
+  } catch {
+    return { info, warn } // reported by startupProblems
+  }
+  if (list) {
+    const n = list.entries.length
+    info.push(`[hitly startup] Client addresses: ${n} trusted proxy ${n === 1 ? 'entry' : 'entries'} from ${TRUSTED_PROXIES_ENV}.`)
+    return { info, warn }
+  }
+  const count = trustedProxyCount(env)
+  info.push(`[hitly startup] Client addresses: ${TRUSTED_PROXY_COUNT_ENV} is ${count}.`)
+  const raw = env[TRUSTED_PROXY_COUNT_ENV]?.trim()
+  if (raw && /^\d+$/.test(raw) && Number(raw) > MAX_TRUSTED_PROXY_COUNT) {
+    warn.push(`[hitly startup] ${TRUSTED_PROXY_COUNT_ENV} is above ${MAX_TRUSTED_PROXY_COUNT}; using ${MAX_TRUSTED_PROXY_COUNT}.`)
+  }
+  if (count === 0) {
+    warn.push(
+      `[hitly startup] ${TRUSTED_PROXY_COUNT_ENV} is 0, so requests have no per-client address; ` +
+        'per-client limits use one shared ceiling. Put a reverse proxy in front and set the count or ' +
+        `${TRUSTED_PROXIES_ENV}.`,
+    )
+  }
+  return { info, warn }
+}
+
+export function logStartupNotices({
+  env = process.env,
+  info = (line: string) => console.info(line),
+  warn = (line: string) => console.warn(line),
+}: {
+  env?: Record<string, string | undefined>
+  info?: (line: string) => void
+  warn?: (line: string) => void
+} = {}): void {
+  const notices = startupNotices(env)
+  notices.info.forEach(info)
+  notices.warn.forEach(warn)
 }

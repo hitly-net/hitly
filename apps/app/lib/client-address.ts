@@ -12,24 +12,65 @@ import { trustedProxiesFromEnv, type TrustedProxyList } from './trusted-proxies'
  * is not a trusted proxy is the client. This matches Better Auth's
  * `advanced.ipAddress.trustedProxies` handling, so both limiters agree.
  *
- * Without it, HITLY_TRUSTED_PROXY_COUNT (default 1) says how many proxies are
- * in front of the app, and the client is the entry that many places from the
- * right. With a count of 0, or no X-Forwarded-For header, the socket address
- * is used. Next.js does not expose the socket address to pages, but it fills
- * X-Forwarded-For from the socket when a request arrives without one, so the
- * default of one trusted proxy also covers a server with nothing in front.
+ * Without it, HITLY_TRUSTED_PROXY_COUNT (default 1, at most 5) says how many
+ * proxies are in front of the app, and the client is the entry that many
+ * places from the right.
+ *
+ * With no reverse proxy in front of the app, set HITLY_TRUSTED_PROXY_COUNT=0.
+ * Next.js does not give pages the socket address, and it only fills
+ * X-Forwarded-For from the socket when a request arrives without that header,
+ * so with nothing in front a client can pick the address it is counted under.
+ * With a count of 0 there is no client address, and per-client limits fall
+ * back to one shared ceiling (see lib/reset-check-limit.ts). The server warns
+ * about this at start.
  */
 
 export const TRUSTED_PROXY_COUNT_ENV = 'HITLY_TRUSTED_PROXY_COUNT'
 export const DEFAULT_TRUSTED_PROXY_COUNT = 1
+export const MAX_TRUSTED_PROXY_COUNT = 5
 
 type HeaderReader = { get(name: string): string | null }
 
-/** Reads the trusted proxy count; anything other than a whole number ≥ 0 gives the default. */
+/**
+ * Reads the trusted proxy count. Anything other than a whole number ≥ 0 gives
+ * the default; values above MAX_TRUSTED_PROXY_COUNT are capped.
+ */
 export function trustedProxyCount(env: Record<string, string | undefined> = process.env): number {
   const raw = env[TRUSTED_PROXY_COUNT_ENV]?.trim()
-  if (!raw || !/^\d{1,3}$/.test(raw)) return DEFAULT_TRUSTED_PROXY_COUNT
-  return Number(raw)
+  if (!raw || !/^\d+$/.test(raw)) return DEFAULT_TRUSTED_PROXY_COUNT
+  return Math.min(Number(raw), MAX_TRUSTED_PROXY_COUNT)
+}
+
+function ipv6Groups(address: string): number[] | null {
+  let text = address.toLowerCase()
+  const dotted = text.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+  if (dotted) {
+    const [a, b, c, d] = dotted.slice(1).map(Number) as [number, number, number, number]
+    text = `${text.slice(0, -dotted[0].length)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`
+  }
+  const halves = text.split('::')
+  if (halves.length > 2) return null
+  const head = halves[0] ? halves[0].split(':') : []
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : []
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0
+  const groups = [...head, ...Array(Math.max(fill, 0)).fill('0'), ...tail].map((g) => Number.parseInt(g, 16))
+  return groups.length === 8 && groups.every((g) => g >= 0 && g <= 0xffff) ? groups : null
+}
+
+/**
+ * The key a per-client limit uses for an address. IPv4 addresses are used as
+ * they are; IPv4-mapped IPv6 addresses become IPv4; other IPv6 addresses are
+ * keyed on their /64, since one client usually holds a whole /64.
+ */
+export function addressLimitKey(address: string): string {
+  const plain = address.split('%')[0]!
+  if (isIP(plain) !== 6) return address
+  const groups = ipv6Groups(plain)
+  if (!groups) return address
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    return [groups[6]! >> 8, groups[6]! & 255, groups[7]! >> 8, groups[7]! & 255].join('.')
+  }
+  return `${groups.slice(0, 4).map((g) => g.toString(16)).join(':')}::/64`
 }
 
 function forwardedEntries(headers: HeaderReader): string[] {

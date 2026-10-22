@@ -6,7 +6,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   exitOnStartupProblems,
+  logStartupNotices,
   productionDatabasePasswordProblem,
+  startupNotices,
   startupProblems,
 } from './startup-checks'
 
@@ -150,5 +152,44 @@ describe('server start (instrumentation register)', () => {
     assert.ok(check > 0, 'register must call exitOnStartupProblems')
     assert.ok(check < source.indexOf('destinationPolicyStartupNotice()'))
     assert.ok(check < source.indexOf('startHousekeeping()'))
+  })
+})
+
+describe('start-up notices about client addresses', () => {
+  it('logs the effective proxy count, never addresses', () => {
+    assert.deepEqual(startupNotices({}), {
+      info: ['[hitly startup] Client addresses: HITLY_TRUSTED_PROXY_COUNT is 1.'],
+      warn: [],
+    })
+    assert.deepEqual(startupNotices({ HITLY_TRUSTED_PROXY_COUNT: '2' }).info, [
+      '[hitly startup] Client addresses: HITLY_TRUSTED_PROXY_COUNT is 2.',
+    ])
+    const listed = startupNotices({ HITLY_TRUSTED_PROXIES: '192.0.2.10, 198.51.100.0/24' })
+    assert.deepEqual(listed, {
+      info: ['[hitly startup] Client addresses: 2 trusted proxy entries from HITLY_TRUSTED_PROXIES.'],
+      warn: [],
+    })
+    assert.ok(!JSON.stringify(listed).includes('192.0.2.10'))
+  })
+
+  it('warns when the count is 0 or above the cap', () => {
+    const zero = startupNotices({ HITLY_TRUSTED_PROXY_COUNT: '0' })
+    assert.deepEqual(zero.info, ['[hitly startup] Client addresses: HITLY_TRUSTED_PROXY_COUNT is 0.'])
+    assert.equal(zero.warn.length, 1)
+    assert.match(zero.warn[0]!, /HITLY_TRUSTED_PROXY_COUNT is 0.*shared ceiling/)
+    const high = startupNotices({ HITLY_TRUSTED_PROXY_COUNT: '9' })
+    assert.deepEqual(high.info, ['[hitly startup] Client addresses: HITLY_TRUSTED_PROXY_COUNT is 5.'])
+    assert.deepEqual(high.warn, ['[hitly startup] HITLY_TRUSTED_PROXY_COUNT is above 5; using 5.'])
+  })
+
+  it('logStartupNotices writes info and warning lines, and register() calls it', () => {
+    const info: string[] = []
+    const warn: string[] = []
+    logStartupNotices({ env: { HITLY_TRUSTED_PROXY_COUNT: '0' }, info: (l) => info.push(l), warn: (l) => warn.push(l) })
+    assert.equal(info.length, 1)
+    assert.equal(warn.length, 1)
+    const source = fs.readFileSync(path.join(appDir, 'instrumentation.ts'), 'utf-8')
+    const notices = source.indexOf('logStartupNotices()')
+    assert.ok(notices > source.indexOf('exitOnStartupProblems()'), 'notices are logged after the checks pass')
   })
 })
