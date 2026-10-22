@@ -14,6 +14,8 @@ const mastraBin = join(exampleDir, 'node_modules', '.bin', 'mastra')
 const READY = /ready in \d+/
 const FAILED = /ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED|SyntaxError|Dev server stopped/
 const TIMEOUT_MS = 120_000
+// CI forces colour output; drop ANSI escapes before matching.
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -40,16 +42,18 @@ test('mastra dev starts without module resolution errors', { timeout: TIMEOUT_MS
   const bin = await resolveMastraBin()
   const child = spawn(bin, ['dev'], {
     cwd: exampleDir,
-    env: { ...process.env, PORT: String(port), NODE_OPTIONS: '' },
+    env: { ...process.env, PORT: String(port), NODE_OPTIONS: '', NO_COLOR: '1' },
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
+  let raw = ''
   let output = ''
   const outcome = await new Promise((resolve) => {
     const timer = setTimeout(() => resolve('timeout'), TIMEOUT_MS)
     const onData = (chunk) => {
-      output += chunk.toString()
+      raw += chunk.toString()
+      output = raw.replace(ANSI, '')
       if (FAILED.test(output)) {
         clearTimeout(timer)
         resolve('failed')
