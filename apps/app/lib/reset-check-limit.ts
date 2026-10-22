@@ -8,7 +8,7 @@
  * The limit is per server process. It never stores or logs the token.
  */
 
-import { clientAddress } from './client-address'
+import { addressLimitKey, clientAddress } from './client-address'
 
 export type RateLimiter = ((key: string) => boolean) & {
   /** Number of client keys currently held (for tests and diagnostics). */
@@ -62,17 +62,41 @@ export function createRateLimiter({
 export const RESET_CHECK_LIMIT = 30
 export const RESET_CHECK_WINDOW_MS = 60_000
 
-export const resetCheckLimiter = createRateLimiter({ limit: RESET_CHECK_LIMIT, windowMs: RESET_CHECK_WINDOW_MS })
+/**
+ * Ceiling for requests with no usable client address (no trusted proxy, or a
+ * header that names none). They share one bucket, so the ceiling is much higher
+ * than the per-client limit: it stops a flood without throttling every user at
+ * the per-client rate.
+ */
+export const RESET_CHECK_SHARED_LIMIT = 600
+
+export function createResetCheckLimiter({
+  limit = RESET_CHECK_LIMIT,
+  sharedLimit = RESET_CHECK_SHARED_LIMIT,
+  windowMs = RESET_CHECK_WINDOW_MS,
+  now,
+}: { limit?: number; sharedLimit?: number; windowMs?: number; now?: () => number } = {}): (key: string) => boolean {
+  const perClient = createRateLimiter({ limit, windowMs, now })
+  const shared = createRateLimiter({ limit: sharedLimit, windowMs, maxKeys: 1, now })
+  return (key) => (key === UNKNOWN_CLIENT_KEY ? shared(key) : perClient(key))
+}
+
+export const resetCheckLimiter = createResetCheckLimiter()
 
 type HeaderReader = { get(name: string): string | null }
 
+/** The key used when there is no usable client address; it gets the shared ceiling. */
+export const UNKNOWN_CLIENT_KEY = 'unknown'
+
 /**
  * The client key for the limiter: the client address picked with the trusted
- * proxy count (see client-address.ts), or one shared bucket when there is none.
+ * proxy list or count (see client-address.ts), with IPv6 addresses keyed on
+ * their /64, or UNKNOWN_CLIENT_KEY when there is none.
  */
 export function resetCheckClientKey(
   headers: HeaderReader,
-  options?: { trustedProxies?: number; remoteAddress?: string | null },
+  options?: Parameters<typeof clientAddress>[1],
 ): string {
-  return clientAddress(headers, options) ?? 'unknown'
+  const address = clientAddress(headers, options)
+  return address ? addressLimitKey(address) : UNKNOWN_CLIENT_KEY
 }

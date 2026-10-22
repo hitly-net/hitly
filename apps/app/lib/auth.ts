@@ -11,6 +11,8 @@ import { emailAndPasswordOptions } from './auth-email-password'
 import { bootstrapUserWorkspaces } from './workspace'
 import { isSignupEnabled } from './signup'
 import { resolveAuthSecret } from './auth-secret'
+import { trustedProxyAuthOptions } from './trusted-proxies'
+import { authLogger, handleAuthApiError } from './auth-logging'
 
 export { resolveAuthSecret } from './auth-secret'
 
@@ -65,6 +67,12 @@ function createAuth(database: NonNullable<typeof db>) {
       }
       return staticTrustedOrigins
     },
+    // Never log tokens: redact Better Auth log lines, and turn unexpected
+    // errors into a plain 500 with one value-free log line (lib/auth-logging.ts).
+    logger: authLogger,
+    onAPIError: { onError: handleAuthApiError },
+    // advanced.ipAddress.trustedProxies from HITLY_TRUSTED_PROXIES; nothing when unset.
+    ...trustedProxyAuthOptions(),
     plugins: [bearer(), nextCookies()],
   })
 }
