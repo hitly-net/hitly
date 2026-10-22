@@ -1,10 +1,15 @@
-import { describe, it, mock, beforeEach } from 'node:test'
+import { describe, it, mock, beforeEach, afterEach } from 'node:test'
 import { strict as assert } from 'node:assert'
+import * as http2 from 'node:http2'
+import * as net from 'node:net'
+import { setDestinationCheckTestHooks } from '@hitly/core/destination-check'
 import {
   temporalPlugin,
   HITLY_TEMPORAL_SIGNAL,
+  __resetTemporalClientFactory,
   __setTemporalClientFactory,
   type TemporalClientFactory,
+  type TemporalConnectOptions,
   type TemporalConnection,
   type TemporalWorkflowHandle,
 } from './index'
@@ -55,7 +60,7 @@ describe('@hitly/plugin-temporal', () => {
     ;(mockFactory.createClient as any).mock.resetCalls()
   })
   describe('ingest', () => {
-    it('should ingest a Temporal approval with workflowId', () => {
+    it('should ingest a Temporal approval with workflowId', { timeout: 5_000 }, () => {
       const raw = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -81,7 +86,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.equal((result.origin.resumeHandle as any).signal, HITLY_TEMPORAL_SIGNAL)
     })
 
-    it('should throw when workflowId is missing', () => {
+    it('should throw when workflowId is missing', { timeout: 5_000 }, () => {
       const raw = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -94,7 +99,7 @@ describe('@hitly/plugin-temporal', () => {
       }, /Temporal ingest requires workflowId/)
     })
 
-    it('should throw when workflowId is empty string', () => {
+    it('should throw when workflowId is empty string', { timeout: 5_000 }, () => {
       const raw = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -108,7 +113,7 @@ describe('@hitly/plugin-temporal', () => {
       }, /Temporal ingest requires workflowId/)
     })
 
-    it('should ingest with evidence fields', () => {
+    it('should ingest with evidence fields', { timeout: 5_000 }, () => {
       const raw = {
         projectId: 'prj_123',
         workflowId: 'refund-wf-abc',
@@ -136,7 +141,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.equal(result.origin.systemId, 'refund-workflow-prod')
     })
 
-    it('should default namespace to "default"', () => {
+    it('should default namespace to "default"', { timeout: 5_000 }, () => {
       const raw = {
         projectId: 'prj_123',
         workflowId: 'wf-123',
@@ -151,7 +156,7 @@ describe('@hitly/plugin-temporal', () => {
   })
 
   describe('resume', () => {
-    it('should signal accept to Temporal workflow', async () => {
+    it('should signal accept to Temporal workflow', { timeout: 5_000 }, async () => {
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -184,7 +189,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.deepEqual(signalCall.arguments[1], { decision: 'accept' })
     })
 
-    it('should signal reject decision', async () => {
+    it('should signal reject decision', { timeout: 5_000 }, async () => {
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -208,7 +213,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.deepEqual(signalCall.arguments[1], { decision: 'reject' })
     })
 
-    it('should signal edit with args', async () => {
+    it('should signal edit with args', { timeout: 5_000 }, async () => {
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -236,7 +241,7 @@ describe('@hitly/plugin-temporal', () => {
       })
     })
 
-    it('should return error when address is missing', async () => {
+    it('should return error when address is missing', { timeout: 5_000 }, async () => {
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -258,7 +263,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.equal(result.error, 'Temporal resume requires address and workflowId')
     })
 
-    it('should return error when workflowId is missing', async () => {
+    it('should return error when workflowId is missing', { timeout: 5_000 }, async () => {
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -280,7 +285,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.equal(result.error, 'Temporal resume requires address and workflowId')
     })
 
-    it('should handle Temporal client errors', async () => {
+    it('should handle Temporal client errors', { timeout: 5_000 }, async () => {
       // Create a failing factory for this test
       const failingFactory: TemporalClientFactory = {
         connect: mock.fn(async () => {
@@ -313,7 +318,7 @@ describe('@hitly/plugin-temporal', () => {
       assert(result.error?.includes('Workflow not found'))
     })
 
-    it('should only call getHandle + signal, never start or signalWithStart', async () => {
+    it('should only call getHandle + signal, never start or signalWithStart', { timeout: 5_000 }, async () => {
       const origin: OriginRef = {
         plugin: 'temporal',
         projectId: 'prj_123',
@@ -353,7 +358,7 @@ describe('@hitly/plugin-temporal', () => {
   })
 
   describe('healthcheck', () => {
-    it('should return error when address is missing', async () => {
+    it('should return error when address is missing', { timeout: 5_000 }, async () => {
       const result = await temporalPlugin.healthcheck({
         plugin: 'temporal',
       })
@@ -361,7 +366,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.equal(result, 'error')
     })
 
-    it('should return ok when connection succeeds', async () => {
+    it('should return ok when connection succeeds', { timeout: 5_000 }, async () => {
       const result = await temporalPlugin.healthcheck({
         plugin: 'temporal',
         address: 'localhost:7233',
@@ -374,7 +379,7 @@ describe('@hitly/plugin-temporal', () => {
       assert.equal(closeCalls.length, 1)
     })
 
-    it('should return error when connection fails', async () => {
+    it('should return error when connection fails', { timeout: 5_000 }, async () => {
       // Create a failing factory for this test
       const failingFactory: TemporalClientFactory = {
         connect: mock.fn(async () => {
@@ -393,3 +398,189 @@ describe('@hitly/plugin-temporal', () => {
     })
   })
 })
+
+describe('pinned connections', () => {
+  const answers = (...addresses: string[]) => async () => addresses.map((address) => ({ address }))
+  const origin = (address: string): OriginRef => ({
+    plugin: 'temporal',
+    projectId: 'prj_1',
+    runId: 'wf-1',
+    resumeHandle: { address, namespace: 'default', workflowId: 'wf-1', signal: HITLY_TEMPORAL_SIGNAL },
+  })
+  const accept: DecisionPayload = { decision: 'accept' }
+
+  function recordingFactory(behavior: { failConnect?: (address: string) => boolean; failSignal?: boolean } = {}) {
+    const connects: TemporalConnectOptions[] = []
+    let signals = 0
+    const factory: TemporalClientFactory = {
+      async connect(options) {
+        connects.push(options)
+        if (behavior.failConnect?.(options.address)) throw new Error('connection failed')
+        return { close: async () => {} }
+      },
+      createClient() {
+        return {
+          getHandle: () => ({
+            signal: async () => {
+              signals += 1
+              if (behavior.failSignal) throw new Error('signal failed')
+            },
+          }),
+        }
+      },
+    }
+    return { factory, connects, signals: () => signals }
+  }
+
+  afterEach(() => {
+    setDestinationCheckTestHooks()
+    __setTemporalClientFactory(mockFactory)
+  })
+
+  it('dials the checked address and keeps the original host for :authority and TLS', { timeout: 5_000 }, async () => {
+    setDestinationCheckTestHooks({ resolve: answers('203.0.113.7') })
+    const { factory, connects } = recordingFactory()
+    __setTemporalClientFactory(factory)
+    assert.equal(await temporalPlugin.healthcheck({ plugin: 'temporal', address: 'Temporal.Example:7233', apiKey: 'k' }), 'ok')
+    assert.equal(connects.length, 1)
+    assert.equal(connects[0].address, '203.0.113.7:7233')
+    assert.equal(connects[0].tls, true)
+    assert.equal(connects[0].apiKey, 'k')
+    assert.deepEqual(connects[0].channelArgs, {
+      'grpc.default_authority': 'Temporal.Example:7233',
+      'grpc.ssl_target_name_override': 'temporal.example',
+      'grpc.enable_http_proxy': 0,
+    })
+    assert.ok(typeof connects[0].connectTimeout === 'number' && connects[0].connectTimeout > 0)
+  })
+
+  it('dials an IPv6 answer in brackets', { timeout: 5_000 }, async () => {
+    setDestinationCheckTestHooks({ resolve: answers('2001:db8::7') })
+    const { factory, connects } = recordingFactory()
+    __setTemporalClientFactory(factory)
+    const result = (await temporalPlugin.resume(origin('temporal.example:7233'), accept)) as ResumeResponse
+    assert.equal(result.status, 200)
+    assert.equal(connects[0].address, '[2001:db8::7]:7233')
+  })
+
+  it('tries the checked addresses in order and signals once', { timeout: 5_000 }, async () => {
+    setDestinationCheckTestHooks({ resolve: answers('203.0.113.1', '203.0.113.2', '203.0.113.3') })
+    const { factory, connects, signals } = recordingFactory({ failConnect: (a) => a.startsWith('203.0.113.1:') })
+    __setTemporalClientFactory(factory)
+    const result = (await temporalPlugin.resume(origin('temporal.example:7233'), accept)) as ResumeResponse
+    assert.equal(result.status, 200)
+    assert.deepEqual(
+      connects.map((c) => c.address),
+      ['203.0.113.1:7233', '203.0.113.2:7233'],
+    )
+    assert.equal(signals(), 1)
+  })
+
+  it('does not repeat a failed signal on another address', { timeout: 5_000 }, async () => {
+    setDestinationCheckTestHooks({ resolve: answers('203.0.113.1', '203.0.113.2') })
+    const { factory, connects, signals } = recordingFactory({ failSignal: true })
+    __setTemporalClientFactory(factory)
+    const result = (await temporalPlugin.resume(origin('temporal.example:7233'), accept)) as ResumeResponse
+    assert.equal(result.status, 500)
+    assert.equal(connects.length, 1)
+    assert.equal(signals(), 1)
+  })
+
+  it('does not connect when any answer is refused', { timeout: 5_000 }, async () => {
+    setDestinationCheckTestHooks({ resolve: answers('203.0.113.1', '224.0.0.1') })
+    const { factory, connects } = recordingFactory()
+    __setTemporalClientFactory(factory)
+    assert.equal(await temporalPlugin.healthcheck({ plugin: 'temporal', address: 'temporal.example:7233' }), 'error')
+    assert.equal(connects.length, 0)
+  })
+
+  it('the real client dials the checked address and sends the original :authority', { timeout: 15_000 }, async () => {
+    const seen: Array<{ authority?: string; path?: string }> = []
+    const server = http2.createServer()
+    server.on('stream', (stream: http2.ServerHttp2Stream, headers) => {
+      seen.push({ authority: headers[':authority'] as string, path: headers[':path'] as string })
+      stream.respond({ ':status': 200, 'content-type': 'application/grpc', 'grpc-status': '12' }, { endStream: true })
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as net.AddressInfo).port
+    setDestinationCheckTestHooks({ resolve: answers('127.0.0.1'), connectTimeoutMs: 3000, totalTimeoutMs: 5000 })
+    __resetTemporalClientFactory()
+    try {
+      await temporalPlugin.healthcheck({ plugin: 'temporal', address: `temporal.example:${port}` })
+    } finally {
+      server.close()
+    }
+    assert.ok(seen.length > 0, 'the checked address was dialled')
+    assert.equal(seen[0].authority, `temporal.example:${port}`)
+  })
+
+  it('the real client connects straight to the checked address whatever the environment says', { timeout: 15_000 }, async () => {
+    let served = 0
+    const server = http2.createServer()
+    server.on('stream', (stream: http2.ServerHttp2Stream) => {
+      served += 1
+      stream.respond({ ':status': 200, 'content-type': 'application/grpc', 'grpc-status': '12' }, { endStream: true })
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as net.AddressInfo).port
+    setDestinationCheckTestHooks({ resolve: answers('127.0.0.1'), connectTimeoutMs: 1000, totalTimeoutMs: 2000 })
+    __resetTemporalClientFactory()
+    try {
+      const dials = await countEnvListenerDials(async () => {
+        await temporalPlugin.healthcheck({ plugin: 'temporal', address: `temporal.example:${port}` })
+      })
+      assert.equal(dials, 0)
+    } finally {
+      server.close()
+    }
+    assert.ok(served > 0, 'the checked address was dialled')
+  })
+
+  it('the real client sends the original host as the TLS server name', { timeout: 15_000 }, async () => {
+    let hello = Buffer.alloc(0)
+    const raw = net.createServer((socket) => {
+      socket.on('error', () => {})
+      socket.on('data', (chunk) => {
+        hello = Buffer.concat([hello, chunk as Buffer])
+        socket.destroy()
+      })
+    })
+    await new Promise<void>((r) => raw.listen(0, '127.0.0.1', () => r()))
+    const port = (raw.address() as net.AddressInfo).port
+    setDestinationCheckTestHooks({ resolve: answers('127.0.0.1'), connectTimeoutMs: 500, totalTimeoutMs: 1000 })
+    __resetTemporalClientFactory()
+    try {
+      const result = await temporalPlugin.healthcheck({ plugin: 'temporal', address: `tls-name.example:${port}`, apiKey: 'k' })
+      assert.equal(result, 'error')
+    } finally {
+      raw.close()
+    }
+    assert.ok(hello.includes(Buffer.from('tls-name.example')), 'ClientHello carries the original host name')
+  })
+})
+
+/** Runs `run` with the client environment pointing at a local listener; returns how many connections it saw. */
+async function countEnvListenerDials(run: () => Promise<void>): Promise<number> {
+  let dials = 0
+  const listener = net.createServer((socket) => {
+    dials += 1
+    socket.on('error', () => {})
+    socket.destroy()
+  })
+  await new Promise<void>((r) => listener.listen(0, '127.0.0.1', () => r()))
+  const url = `http://127.0.0.1:${(listener.address() as net.AddressInfo).port}`
+  const names = ['grpc_proxy', 'https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY', 'no_grpc_proxy', 'no_proxy', 'NO_PROXY']
+  const saved = names.map((name) => [name, process.env[name]] as const)
+  for (const name of names) delete process.env[name]
+  for (const name of ['grpc_proxy', 'https_proxy', 'HTTPS_PROXY', 'http_proxy']) process.env[name] = url
+  try {
+    await run()
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    await new Promise<void>((r) => listener.close(() => r()))
+  }
+  return dials
+}
