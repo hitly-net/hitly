@@ -130,35 +130,8 @@ describe('auth secret check at server start', () => {
     }
   })
 
-  it('instrumentation register() refuses to start without a usable secret in production', async () => {
-    const env = process.env as Record<string, string | undefined>
-    const saved = {
-      NODE_ENV: env.NODE_ENV,
-      NEXT_RUNTIME: env.NEXT_RUNTIME,
-      NEXT_PHASE: env.NEXT_PHASE,
-      BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
-    }
-    env.NODE_ENV = 'production'
-    env.NEXT_RUNTIME = 'nodejs'
-    env.NEXT_PHASE = 'phase-production-build'
-    delete env.BETTER_AUTH_SECRET
-    try {
-      const { register } = await import('../instrumentation')
-      await assert.rejects(() => register(), /BETTER_AUTH_SECRET/)
-    } finally {
-      for (const [key, value] of Object.entries(saved)) {
-        if (value === undefined) delete env[key]
-        else env[key] = value
-      }
-    }
-  })
-
-  it('register() runs the check before anything else starts', () => {
-    const source = fs.readFileSync(path.join(__dirname, '../instrumentation.ts'), 'utf-8')
-    const check = source.indexOf('assertProductionAuthSecret()')
-    assert.ok(check > 0, 'register must call assertProductionAuthSecret')
-    assert.ok(check < source.indexOf('startHousekeeping()'), 'the check must run before housekeeping starts')
-  })
+  // The server start itself (instrumentation register exits on a bad secret)
+  // is covered in startup-checks.test.ts.
 })
 
 describe('auth secret check: case and padding', () => {

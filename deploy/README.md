@@ -52,9 +52,20 @@ BETTER_AUTH_URL=http://<your-host>:3001
 BETTER_AUTH_SECRET=<openssl rand -hex 32>
 DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/hitly
 NEXT_PUBLIC_WEB_URL=http://<your-host>:3000
+HITLY_TRUSTED_PROXY_COUNT=0
 ```
 
 If evidence sinks, OTEL collectors or agents run on this host or the private network, also set `HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS=true` in `apps/app/.env.production`. Without it, production refuses private and loopback destinations (see the self-host guide, "Outbound destinations").
+
+Production refuses to start (the process exits with a message naming the variable) when `BETTER_AUTH_SECRET` is missing, shorter than 32 characters or a placeholder, or when `DATABASE_URL` uses a development or placeholder password such as the `hitly` password from the local `docker-compose.yml`. Give the production database its own password.
+
+**Client addresses.** Per-client limits (Better Auth's request limiter and the reset page's link check) need to know which `X-Forwarded-For` entry is the client. Set one of these in `apps/app/.env.production`:
+
+- `HITLY_TRUSTED_PROXIES`: comma-separated IP addresses or CIDR ranges of the reverse proxies in front of the app. The client is the right-most entry that is not one of them. A malformed entry stops the server at start.
+- `HITLY_TRUSTED_PROXY_COUNT`: used when the list is unset. The number of proxies in front of the app that append to `X-Forwarded-For` (default `1`, at most `5`).
+- **No reverse proxy** (the setup on this page, with the app port open directly): set `HITLY_TRUSTED_PROXY_COUNT=0`. Clients could otherwise choose the address they are counted under. With `0` there is no per-client address, so the reset page's link check uses one shared ceiling instead of a per-client limit. The server logs a warning about this at start. Putting a reverse proxy in front and setting the count or list restores per-client limits.
+
+At start the server logs the effective setting: the proxy count, or how many trusted proxy entries are configured (never the addresses).
 
 Generate the secret with `openssl rand -hex 32`. `NEXT_PUBLIC_*` is inlined at `yarn build`; changing those URLs later requires a rebuild.
 
