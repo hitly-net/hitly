@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "license": "Apache-2.0",
-  "homepage": "https://hitly.net/integrations/openshell",
+  "homepage": "https://github.com/hitly-net/hitly/tree/main/packages/plugin-openshell",
   "bugs": {
     "url": "https://github.com/hitly-net/hitly/issues"
   },

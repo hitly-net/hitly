@@ -1,9 +1,11 @@
 # HITLy Gateway Interceptor Design
 
-**Status:** Draft design for PM/Derek review and Test  
-**Audience:** Advanced users and Ops teams  
+> **Experimental and unsupported.** OpenShell is no longer listed as an integration in HITLy or on hitly.net. This code stays in the repository for reference and for projects that already use it, but it is not maintained as a supported integration and may change or stop working without notice.
+
+**Status:** Experimental design notes, not a supported feature  
+**Audience:** Advanced users and operators  
 **Positioning:** **Optional advanced feature** — NOT required for primary OpenShell→HITLy demo path  
-**Target:** OpenShell 0.1.2 production VM (`openshell` / Tailscale `<your-gateway-host>`)  
+**Target:** OpenShell 0.1.2 gateway (`<your-gateway-host>`)  
 **Scope:** Demo-friendly interceptor; no Cloud/GA changes, no plugin HMAC changes
 
 ---
@@ -15,13 +17,13 @@ The HITLy gateway interceptor is an **optional advanced security feature** that 
 1. **mTLS** proves the caller is the authorized HITLy plugin client
 2. **HITLy decision state** proves a human reviewer explicitly accepted or rejected the chunk in the HITLy inbox
 
-**Default behavior (without interceptor):** OpenShell→HITLy works via **mTLS + review_token** only. The plugin authenticates with client certificates, and OpenShell's `review_token` ensures the chunk hasn't been modified since review. This is the **primary demo path** and is sufficient for most deployments.
+**Default behavior (without interceptor):** OpenShell→HITLy works via **mTLS + review_token** only. The plugin authenticates with client certificates, and OpenShell's `review_token` ensures the chunk hasn't been modified since review. This is the **default setup** and is sufficient for most deployments.
 
 **With interceptor (advanced):** Adds an additional verification layer that queries HITLy's decision database before allowing policy commits. This is useful for organizations with strict compliance requirements or defense-in-depth security policies.
 
 Without this interceptor, a compromised mTLS client certificate could approve chunks directly without human review. With the interceptor, the attacker would also need to compromise HITLy's decision database or API key.
 
-**Note:** The interceptor is **disabled by default** and requires explicit configuration. It is **not** part of the main OpenShell→HITLy demo recording or primary documentation.
+**Note:** The interceptor is **disabled by default** and requires explicit configuration. It is **not** part of the default OpenShell→HITLy setup or primary documentation.
 
 ---
 
@@ -49,7 +51,7 @@ Without this interceptor, a compromised mTLS client certificate could approve ch
     - `RejectDraftChunk` → HITLy decision must be `reject` or `cancel`
 - **Defense-in-depth:** An attacker now needs to compromise **both** the mTLS cert **and** the HITLy API key (or the HITLy decision database) to bypass human review
 
-### Residual risks (out of scope for this PR)
+### Residual risks (out of scope for this design)
 
 - **Replay attacks:** The interceptor does not enforce `request_id` uniqueness or prevent re-approving the same chunk after rejection (OpenShell's own idempotency handles this at the gateway level)
 - **Time-of-check-to-time-of-use (TOCTOU):** A decision could change between the interceptor check and the gRPC handler execution (acceptable: the handler's own `review_token` check provides TOCTOU protection)
@@ -91,7 +93,7 @@ rpc RejectDraftChunk(RejectDraftChunkRequest) returns (RejectDraftChunkResponse)
 - `GetDraftPolicy` — read-only, no decision commit
 - `ApproveAllDraftChunks` — bulk approval (future: may add interceptor support, but requires batch verification design)
 - `EditDraftChunk` — in-place edit (no decision commit; the subsequent `ApproveDraftChunk` is intercepted)
-- `UndoApproval` — reversal (out of scope for this PR; may add later)
+- `UndoApproval` — reversal (out of scope; may be added later)
 
 ---
 
@@ -219,11 +221,11 @@ The interceptor does not know the `approvalId` (see section 3). This API require
 
 ### Fallback: Scan all approvals in memory (DEMO ONLY)
 
-If the new API endpoint is not implemented in this PR, the interceptor can:
+Without a query-by-`runId` API endpoint, the interceptor could:
 1. Query `GET /api/v1/inbox` (requires session auth, not API key — not viable for interceptor)
 2. **OR** maintain a lightweight in-memory cache of `runId → approvalId` mappings by polling HITLy periodically (cache invalidation risk, not production-ready)
 
-**Decision:** Implement the new `GET /api/v1/approvals?runId=...` endpoint in this PR. It is a small, self-contained change that unblocks the interceptor.
+**Decision:** Provide a `GET /api/v1/approvals?runId=...` endpoint. It is a small, self-contained change that unblocks the interceptor.
 
 ---
 
@@ -280,7 +282,7 @@ Examples:
 
 The interceptor is an **optional advanced feature** that is **disabled by default**. It requires explicit configuration to enable. This ensures:
 
-1. **Primary demo path works without it:** OpenShell→HITLy demo uses mTLS + `review_token` only
+1. **Default setup works without it:** OpenShell→HITLy uses mTLS + `review_token` only
 2. **No breaking changes:** Existing setups and CI/test environments work unchanged
 3. **Opt-in for advanced users:** Organizations with strict security requirements can enable it
 
@@ -340,7 +342,7 @@ if os.Getenv("OPENSHELL_HITLY_INTERCEPTOR_ENABLED") == "true" {
 }
 ```
 
-**Note:** The actual interceptor **implementation** is out of scope for `hitly-net/hitly`. This PR delivers:
+**Note:** The actual interceptor **implementation** is out of scope for `hitly-net/hitly`. This repository provides:
 1. **Design document** (this file)
 2. **HITLy API endpoint** (`GET /api/v1/approvals?runId=...`)
 3. **Reference interceptor stub** (TypeScript demo code in `examples/openshell/interceptor/`, NOT for production use in the OpenShell gateway)
@@ -349,9 +351,9 @@ The production interceptor will be implemented by the OpenShell team (likely in 
 
 ---
 
-## 7. Out of Scope (This PR)
+## 7. Out of Scope
 
-The following are explicitly **out of scope** for this draft PR:
+The following are explicitly **out of scope** for this design:
 
 ### 7.1. Plugin HMAC / Resume Secret
 
@@ -361,15 +363,13 @@ The current design does NOT add HMAC-based resume secrets to `@hitly/plugin-open
 - **Bearer token** for OpenShell API auth (`config:write` scope)
 - **`review_token`** (provided by OpenShell in `GetDraftPolicy` response) for approval idempotency
 
-**Why no HMAC?** The PM decision explicitly states:
-
-> **no** HITLY_RESUME_SECRET / sign-only HMAC in plugin-openshell.
+**Why no HMAC?** This design does **not** add HITLY_RESUME_SECRET or sign-only HMAC to plugin-openshell.
 
 The interceptor is the defense-in-depth layer; the plugin does not change.
 
 ### 7.2. Cloud/GA Deployment
 
-This PR is **OSS-only** (`hitly-net/hitly`). No changes to:
+This design is **OSS-only** (`hitly-net/hitly`). It does not change:
 
 - Cloud invite-only configuration (`@hitly/cloud` package)
 - Hosted HITLy deployment pipelines
@@ -378,7 +378,7 @@ This PR is **OSS-only** (`hitly-net/hitly`). No changes to:
 
 ### 7.3. Production Gateway Integration
 
-The production OpenShell gateway (Go, running on VM `openshell`) is out of scope. This PR delivers:
+The OpenShell gateway itself (Go) is out of scope. This repository provides:
 
 - **Design** (this document)
 - **HITLy API** (query by `runId`)
@@ -392,7 +392,7 @@ Sandbox provisioning, secret injection, and CI/test environment configuration ar
 
 ### 7.5. Bulk Approval Interception
 
-`ApproveAllDraftChunks` is not intercepted in this PR. Future work may add batch verification (query HITLy for all chunks, verify all are decided).
+`ApproveAllDraftChunks` is not intercepted in this design. Future work may add batch verification (query HITLy for all chunks, verify all are decided).
 
 ### 7.6. Retry/Resume Flows
 
@@ -402,18 +402,17 @@ If a user clicks "Retry Resume" in HITLy (for `failed_resume` approvals), the in
 
 ## 8. Implementation Plan
 
-### Phase 1: Design (This PR)
+### Phase 1: Design
 
 1. ✅ Write this design document (`examples/openshell/docs/interceptor-design.md`)
-2. ✅ Update PR description with summary and Ops deploy note
 
-### Phase 2: HITLy API Endpoint (This PR, if time permits)
+### Phase 2: HITLy API Endpoint
 
 1. Add `GET /api/v1/approvals/by-run-id/route.ts` (or extend existing `/api/v1/approvals/route.ts` with `?runId=` query param)
 2. Implement Postgres JSONB query: `WHERE origin->>'runId' = $1 AND plugin = $2 ORDER BY updatedAt DESC LIMIT 1`
 3. Add tests for `by-run-id` endpoint (happy path, not found, auth)
 
-### Phase 3: Reference Interceptor Stub (This PR, if time permits)
+### Phase 3: Reference Interceptor Stub
 
 1. Create `examples/openshell/interceptor/` directory
 2. Add TypeScript reference implementation:
@@ -422,10 +421,10 @@ If a user clicks "Retry Resume" in HITLy (for `failed_resume` approvals), the in
    - `examples/openshell/interceptor/README.md` (usage guide for OpenShell team)
 3. Add tests for interceptor logic (mocked HITLy API responses)
 
-### Phase 4: Production Integration (Out of Scope, Ops)
+### Phase 4: Gateway Integration (Out of Scope)
 
 1. OpenShell team implements Go-based interceptor in OpenShell gateway
-2. Ops configures environment variables on production VM (`openshell`)
+2. Configure environment variables on the gateway host
 3. Deploy and verify with integration test (poller → HITLy → interceptor → OpenShell)
 
 ---
@@ -477,12 +476,12 @@ Test cases:
 
 ## 10. Operational Notes for Deployment
 
-**IMPORTANT:** The interceptor is an **optional advanced feature**. The primary Ops demo path uses **mTLS + review_token only** (interceptor disabled). Deploy the interceptor only if defense-in-depth verification is required for your organization's security policy.
+**IMPORTANT:** The interceptor is an **optional advanced feature**. The default setup uses **mTLS + review_token only** (interceptor disabled). Deploy the interceptor only if defense-in-depth verification is required for your organization's security policy.
 
-### 10.1. Production VM Configuration (Advanced/Optional)
+### 10.1. Gateway Configuration (Advanced/Optional)
 
-**VM:** `openshell` (Tailscale `<your-gateway-host>`)  
-**Gateway:** OpenShell 0.1.2, `https://127.0.0.1:17670` (loopback-only, mTLS)
+**Host:** your OpenShell gateway host (`<your-gateway-host>`)  
+**Gateway:** OpenShell 0.1.2, `https://<gateway-host>:<port>` (mTLS)
 
 **Required environment variables (only if enabling interceptor):**
 ```bash
@@ -501,13 +500,13 @@ export OPENSHELL_HITLY_INTERCEPTOR_FAIL_OPEN=false  # Fail-closed in production
 
 ### 10.2. Rollout Plan (Advanced/Optional)
 
-**Note:** This rollout plan is for organizations that choose to enable the interceptor. The default Ops demo path does **not** require these steps.
+**Note:** This rollout plan is for organizations that choose to enable the interceptor. The default setup does **not** require these steps.
 
-1. **Deploy HITLy API endpoint** (`GET /api/v1/approvals?runId=...`) to production VM (this PR)
+1. **Deploy HITLy API endpoint** (`GET /api/v1/approvals?runId=...`) to your HITLy deployment
 2. **Test endpoint** manually with `curl` (verify query by `runId` works)
 3. **Deploy OpenShell gateway with interceptor** (Go implementation by OpenShell team, not in this repo)
-4. **Keep interceptor disabled** (`ENABLED=false` or omit env vars) for primary demo
-5. **If enabling interceptor:** Configure environment variables on production VM (set `ENABLED=true`)
+4. **Keep interceptor disabled** (`ENABLED=false` or omit env vars) until you are ready
+5. **If enabling interceptor:** Configure environment variables on the gateway host (set `ENABLED=true`)
 6. **Restart gateway** and verify interceptor is active (check logs: "HITLy interceptor enabled")
 7. **Integration test:** Trigger pending chunk → deny without decision → approve in HITLy → allow
 8. **Monitor:** Watch for `PERMISSION_DENIED` errors in gateway logs (indicates interceptor is blocking requests as expected)
@@ -522,12 +521,12 @@ If the interceptor causes issues:
 
 ---
 
-## 11. Open Questions (For PM/Derek)
+## 11. Open Questions
 
 1. **Multiple approvals for same chunk:** If a chunk is rejected, then re-submitted and approved, should the interceptor allow the second `ApproveDraftChunk`? (Current design: yes, it queries the **latest** approval by `updatedAt`)
 2. **Interceptor ownership:** Should the reference stub be TypeScript (in this repo) or Go (in OpenShell repo)? (Current design: TypeScript stub in this repo for demo; Go implementation by OpenShell team)
 3. **Fail-open for demo:** Should `FAIL_OPEN=true` be allowed, or should the interceptor always fail-closed? (Current design: allow `FAIL_OPEN=true` for demo/testing, but log a warning)
-4. **API key rotation:** How should the interceptor's API key be rotated? (Out of scope for this PR; Ops will handle key rotation)
+4. **API key rotation:** How should the interceptor's API key be rotated? (Out of scope for this design; rotate it as you would any other project API key)
 
 ---
 
@@ -537,7 +536,6 @@ If the interceptor causes issues:
 - **HITLy plugin:** `packages/plugin-openshell/src/index.ts`
 - **HITLy approvals API:** `apps/app/app/api/v1/approvals/route.ts`
 - **HITLy poller:** `examples/openshell/src/poller.ts`
-- **PM decision:** GitHub issue or Slack thread (link TBD)
 
 ---
 

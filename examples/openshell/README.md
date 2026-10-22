@@ -1,5 +1,7 @@
 # OpenShell Origin Adapter for HITLy
 
+> **Experimental and unsupported.** OpenShell is no longer listed as an integration in HITLy or on hitly.net. This code stays in the repository for reference and for projects that already use it, but it is not maintained as a supported integration and may change or stop working without notice.
+
 **Parked / experimental** OpenShell → HITLy integration for **human-in-the-loop approval of pending draft policy chunks**.
 
 ## Architecture (do not blur)
