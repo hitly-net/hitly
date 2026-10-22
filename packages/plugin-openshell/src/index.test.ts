@@ -60,7 +60,7 @@ function createMockClient(behavior: {
   }
 }
 
-test('openshellPlugin.ingest parses chunk data', () => {
+test('openshellPlugin.ingest parses chunk data', { timeout: 5_000 }, () => {
   const raw = {
     workspace: 'test-workspace',
     sandbox: 'test-sandbox',
@@ -85,13 +85,13 @@ test('openshellPlugin.ingest parses chunk data', () => {
   assert.strictEqual(result.contextMarkdown, '# Test Chunk')
 })
 
-test('openshellPlugin.ingest throws on missing required fields', () => {
+test('openshellPlugin.ingest throws on missing required fields', { timeout: 5_000 }, () => {
   assert.throws(() => {
     openshellPlugin.ingest({ workspace: 'test' })
   }, /requires workspace, sandbox, chunkId, and reviewToken/)
 })
 
-test('openshellPlugin.resume calls ApproveDraftChunk on accept', async () => {
+test('openshellPlugin.resume calls ApproveDraftChunk on accept', { timeout: 5_000 }, async () => {
   __setOpenShellClientFactory(createMockClient({ approveSuccess: true, policyVersion: 42, policyHash: 'abc' }))
 
   const origin: OriginRef = {
@@ -119,7 +119,7 @@ test('openshellPlugin.resume calls ApproveDraftChunk on accept', async () => {
   assert.strictEqual(result.error, undefined)
 })
 
-test('openshellPlugin.resume calls RejectDraftChunk on reject', async () => {
+test('openshellPlugin.resume calls RejectDraftChunk on reject', { timeout: 5_000 }, async () => {
   __setOpenShellClientFactory(createMockClient({ rejectSuccess: true }))
 
   const origin: OriginRef = {
@@ -147,7 +147,7 @@ test('openshellPlugin.resume calls RejectDraftChunk on reject', async () => {
   assert.strictEqual(result.error, undefined)
 })
 
-test('openshellPlugin.resume handles ApproveDraftChunk failure', async () => {
+test('openshellPlugin.resume handles ApproveDraftChunk failure', { timeout: 5_000 }, async () => {
   __setOpenShellClientFactory(createMockClient({ approveSuccess: false, approveError: 'Stale review token' }))
 
   const origin: OriginRef = {
@@ -173,7 +173,7 @@ test('openshellPlugin.resume handles ApproveDraftChunk failure', async () => {
   assert.ok(result.error?.includes('Stale review token'))
 })
 
-test('openshellPlugin.resume handles RejectDraftChunk failure', async () => {
+test('openshellPlugin.resume handles RejectDraftChunk failure', { timeout: 5_000 }, async () => {
   __setOpenShellClientFactory(createMockClient({ rejectSuccess: false, rejectError: 'Internal error' }))
 
   const origin: OriginRef = {
@@ -199,7 +199,7 @@ test('openshellPlugin.resume handles RejectDraftChunk failure', async () => {
   assert.ok(result.error?.includes('Internal error'))
 })
 
-test('openshellPlugin.resume rejects unsupported decisions', async () => {
+test('openshellPlugin.resume rejects unsupported decisions', { timeout: 5_000 }, async () => {
   const origin: OriginRef = {
     plugin: 'openshell',
     projectId: 'prj_test',
@@ -223,7 +223,7 @@ test('openshellPlugin.resume rejects unsupported decisions', async () => {
   assert.ok(result.error?.includes('Unsupported decision'))
 })
 
-test('openshellPlugin.healthcheck returns ok on success', async () => {
+test('openshellPlugin.healthcheck returns ok on success', { timeout: 5_000 }, async () => {
   __setOpenShellClientFactory(createMockClient({}))
 
   const result = await openshellPlugin.healthcheck({
@@ -236,7 +236,7 @@ test('openshellPlugin.healthcheck returns ok on success', async () => {
   assert.strictEqual(result, 'ok')
 })
 
-test('openshellPlugin.healthcheck returns error on missing address', async () => {
+test('openshellPlugin.healthcheck returns error on missing address', { timeout: 5_000 }, async () => {
   const result = await openshellPlugin.healthcheck({
     plugin: 'openshell',
   })
@@ -244,7 +244,7 @@ test('openshellPlugin.healthcheck returns error on missing address', async () =>
   assert.strictEqual(result, 'error')
 })
 
-test('openshellPlugin.resume accepts TLS configuration from credentials', async () => {
+test('openshellPlugin.resume accepts TLS configuration from credentials', { timeout: 5_000 }, async () => {
   let capturedTlsConfig: any = undefined
   let capturedInsecure: any = undefined
 
@@ -294,7 +294,7 @@ test('openshellPlugin.resume accepts TLS configuration from credentials', async 
   assert.strictEqual(capturedInsecure, undefined)
 })
 
-test('openshellPlugin.resume respects insecure flag', async () => {
+test('openshellPlugin.resume respects insecure flag', { timeout: 5_000 }, async () => {
   let capturedInsecure: any = undefined
 
   const mockFactory: OpenShellClientFactory = {
@@ -333,7 +333,7 @@ test('openshellPlugin.resume respects insecure flag', async () => {
   assert.strictEqual(capturedInsecure, true, 'insecure flag should be true')
 })
 
-test('openshellPlugin.resume fails closed without TLS or insecure flag', async () => {
+test('openshellPlugin.resume fails closed without TLS or insecure flag', { timeout: 5_000 }, async () => {
   // Reset to production factory to test actual credentials validation
   // The production factory will throw when createGrpcCredentials is called without TLS or insecure flag
   const productionFactory = {
@@ -375,7 +375,7 @@ test('openshellPlugin.resume fails closed without TLS or insecure flag', async (
   assert.ok(result.error?.includes('requires TLS configuration'))
 })
 
-test('openshellPlugin.resume sets request_id to chunkId only (not sandbox-prefixed)', async () => {
+test('openshellPlugin.resume sets request_id to chunkId only (not sandbox-prefixed)', { timeout: 5_000 }, async () => {
   let capturedRequestId: string | undefined
 
   const mockFactory: OpenShellClientFactory = {
@@ -478,7 +478,7 @@ async function withHooks(hooks: Parameters<typeof setDestinationCheckTestHooks>[
   }
 }
 
-test('openshell: dials the checked address and keeps the original host for :authority and TLS', async () => {
+test('openshell: dials the checked address and keeps the original host for :authority and TLS', { timeout: 5_000 }, async () => {
   await withHooks({ resolve: answers('203.0.113.9') }, async () => {
     const { factory, dials } = recordingFactory()
     __setOpenShellClientFactory(factory)
@@ -490,12 +490,13 @@ test('openshell: dials the checked address and keeps the original host for :auth
     assert.deepStrictEqual(dials[0].dial?.channelOptions, {
       'grpc.default_authority': 'OpenShell.Example:50051',
       'grpc.ssl_target_name_override': 'openshell.example',
+      'grpc.enable_http_proxy': 0,
     })
     assert.ok((dials[0].dial?.timeoutMs ?? 0) > 0)
   })
 })
 
-test('openshell: dials an IPv6 answer with the ipv6: target form', async () => {
+test('openshell: dials an IPv6 answer with the ipv6: target form', { timeout: 5_000 }, async () => {
   await withHooks({ resolve: answers('2001:db8::9') }, async () => {
     const { factory, dials } = recordingFactory()
     __setOpenShellClientFactory(factory)
@@ -504,7 +505,7 @@ test('openshell: dials an IPv6 answer with the ipv6: target form', async () => {
   })
 })
 
-test('openshell: tries the checked addresses in order and calls once', async () => {
+test('openshell: tries the checked addresses in order and calls once', { timeout: 5_000 }, async () => {
   await withHooks({ resolve: answers('203.0.113.1', '203.0.113.2', '203.0.113.3') }, async () => {
     const { factory, dials, calls } = recordingFactory({ failConnect: (t) => t === 'ipv4:203.0.113.1:50051' })
     __setOpenShellClientFactory(factory)
@@ -518,7 +519,7 @@ test('openshell: tries the checked addresses in order and calls once', async () 
   })
 })
 
-test('openshell: does not repeat a failed call on another address', async () => {
+test('openshell: does not repeat a failed call on another address', { timeout: 5_000 }, async () => {
   await withHooks({ resolve: answers('203.0.113.1', '203.0.113.2') }, async () => {
     const { factory, dials, calls } = recordingFactory({ approveError: 'unavailable' })
     __setOpenShellClientFactory(factory)
@@ -529,7 +530,7 @@ test('openshell: does not repeat a failed call on another address', async () => 
   })
 })
 
-test('openshell: does not connect when any answer is refused', async () => {
+test('openshell: does not connect when any answer is refused', { timeout: 5_000 }, async () => {
   await withHooks({ resolve: answers('203.0.113.1', '224.0.0.1') }, async () => {
     const { factory, dials } = recordingFactory()
     __setOpenShellClientFactory(factory)
@@ -571,6 +572,45 @@ test('openshell: the real client dials the checked address and sends the origina
     server.forceShutdown()
   }
   assert.deepStrictEqual(hosts, [`openshell.example:${port}`])
+})
+
+test('openshell: the real client connects straight to the checked address whatever the environment says', { timeout: 15_000 }, async () => {
+  const protoDir = join(dirname(fileURLToPath(import.meta.url)), '../proto')
+  const definition = protoLoader.loadSync(join(protoDir, 'openshell.proto'), {
+    keepCase: true,
+    longs: String,
+    enums: String,
+    defaults: true,
+    oneofs: true,
+    includeDirs: [protoDir],
+  })
+  const service = (grpcjs.loadPackageDefinition(definition) as any).openshell.v1.OpenShell.service
+  let served = 0
+  const server = new grpcjs.Server()
+  server.addService(service, {
+    ApproveDraftChunk(_call: any, callback: (error: any, response?: any) => void) {
+      served += 1
+      callback(null, { policy_version: 7, policy_hash: 'pinned' })
+    },
+  })
+  const port = await new Promise<number>((resolve, reject) =>
+    server.bindAsync('127.0.0.1:0', grpcjs.ServerCredentials.createInsecure(), (error, bound) => (error ? reject(error) : resolve(bound)))
+  )
+  __resetOpenShellClientFactory()
+  let status = 0
+  try {
+    const dials = await countEnvListenerDials(async () => {
+      await withHooks({ resolve: answers('127.0.0.1'), connectTimeoutMs: 1000, totalTimeoutMs: 2000 }, async () => {
+        const result = (await openshellPlugin.resume(pinnedOrigin(`openshell.example:${port}`), { decision: 'accept' }, { plugin: 'openshell', insecure: true })) as ResumeResponse
+        status = result.status
+      })
+    })
+    assert.strictEqual(dials, 0)
+  } finally {
+    server.forceShutdown()
+  }
+  assert.strictEqual(status, 200)
+  assert.strictEqual(served, 1)
 })
 
 async function captureClientHello(run: (port: number) => Promise<void>): Promise<Buffer> {
@@ -618,3 +658,29 @@ test('openshell: a configured TLS name override still wins', { timeout: 15_000 }
   assert.ok(hello.includes(Buffer.from('override.example')))
   assert.ok(!hello.includes(Buffer.from('tls-name.example')))
 })
+
+/** Runs `run` with the client environment pointing at a local listener; returns how many connections it saw. */
+async function countEnvListenerDials(run: () => Promise<void>): Promise<number> {
+  let dials = 0
+  const listener = net.createServer((socket) => {
+    dials += 1
+    socket.on('error', () => {})
+    socket.destroy()
+  })
+  await new Promise<void>((r) => listener.listen(0, '127.0.0.1', () => r()))
+  const url = `http://127.0.0.1:${(listener.address() as net.AddressInfo).port}`
+  const names = ['grpc_proxy', 'https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY', 'no_grpc_proxy', 'no_proxy', 'NO_PROXY']
+  const saved = names.map((name) => [name, process.env[name]] as const)
+  for (const name of names) delete process.env[name]
+  for (const name of ['grpc_proxy', 'https_proxy', 'HTTPS_PROXY', 'http_proxy']) process.env[name] = url
+  try {
+    await run()
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    await new Promise<void>((r) => listener.close(() => r()))
+  }
+  return dials
+}

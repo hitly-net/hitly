@@ -81,7 +81,7 @@ export interface OpenShellDial {
   /** grpc-js target for a checked IP address (ipv4:… or ipv6:…). */
   target: string
   /** :authority and TLS server name options for the original host. */
-  channelOptions: Record<string, string>
+  channelOptions: Record<string, string | number>
   /** Milliseconds allowed for the channel to become ready. */
   timeoutMs: number
 }

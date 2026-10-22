@@ -809,6 +809,7 @@ describe('pinned gRPC targets', () => {
     assert.deepEqual(grpcPinnedChannelOptions(checked), {
       'grpc.default_authority': 'Temporal.Example.com:7233',
       'grpc.ssl_target_name_override': 'temporal.example.com',
+      'grpc.enable_http_proxy': 0,
     })
   })
 

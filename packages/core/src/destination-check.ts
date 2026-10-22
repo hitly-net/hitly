@@ -337,16 +337,19 @@ export function pinnedHostPort(address: string, port: number): string {
 }
 
 /**
- * Channel options for a pinned connection: the :authority header and the TLS
- * server name (and certificate check) keep the original host.
+ * Channel options for a pinned connection: the channel connects straight to
+ * the checked address, and the :authority header and the TLS server name
+ * (and certificate check) keep the original host.
  */
 export function grpcPinnedChannelOptions(checked: CheckedHostPort): {
   'grpc.default_authority': string
   'grpc.ssl_target_name_override': string
+  'grpc.enable_http_proxy': 0
 } {
   return {
     'grpc.default_authority': `${checked.host}:${checked.port}`,
     'grpc.ssl_target_name_override': checked.serverName,
+    'grpc.enable_http_proxy': 0,
   }
 }
 
