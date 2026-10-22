@@ -16,7 +16,7 @@ import {
   resolveDestinationPolicy,
   setDestinationCheckTestHooks,
   type DestinationPolicy,
-} from './destination-check'
+} from './destination-check.ts'
 
 const PROD: DestinationPolicy = { allowPrivate: false, production: true }
 const DEV: DestinationPolicy = { allowPrivate: true, production: false }

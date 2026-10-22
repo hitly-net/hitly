@@ -23,7 +23,7 @@ import { promises as dns } from 'node:dns'
 import * as http from 'node:http'
 import * as https from 'node:https'
 import * as net from 'node:net'
-import { type AddressClass, classifyAddress, parseIPv6 } from './address-classify'
+import { type AddressClass, classifyAddress, parseIPv6 } from './address-classify.ts'
 
 export const DESTINATION_ALLOW_PRIVATE_FLAG = 'HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS'
 

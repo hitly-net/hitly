@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "dev": "mastra dev",
+    "test": "node --test test/dev-smoke.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
