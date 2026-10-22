@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canonicalJson, hashActionArgs, hashEvidenceContent, sha256Hex, type EvidenceEvent } from './evidence'
+import { canonicalJson, hashActionArgs, hashEvidenceContent, sha256Hex, type EvidenceEvent } from './evidence.ts'
 
 test('canonicalJson sorts object keys', () => {
   const obj = { z: 1, a: 2, m: 3 }
