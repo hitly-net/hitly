@@ -6,9 +6,11 @@ import {
   FORGOT_PASSWORD_PAGE,
   MIN_PASSWORD_LENGTH,
   PASSWORD_MISMATCH_MESSAGE,
+  RESET_LINK_CHECK_UNAVAILABLE_MESSAGE,
   RESET_LINK_INVALID_MESSAGE,
   submitNewPassword,
 } from '@/lib/password-reset'
+import type { ResetPageState } from '@/lib/reset-token-check'
 
 function RequestNewLink() {
   return (
@@ -18,13 +20,42 @@ function RequestNewLink() {
   )
 }
 
-export function ResetPasswordForm({ token }: { token: string | null }) {
+function reloadPage() {
+  window.location.reload()
+}
+
+export function ResetPasswordForm({
+  state,
+  onRetry = reloadPage,
+}: {
+  state: ResetPageState
+  /** Reloads the same link; replaceable in tests. */
+  onRetry?: () => void
+}) {
   const [error, setError] = useState<string | null>(null)
   const [offerNewLink, setOfferNewLink] = useState(false)
   const [pending, setPending] = useState(false)
   const [done, setDone] = useState(false)
 
-  if (!token) {
+  if (state.kind === 'unavailable') {
+    return (
+      <div className="flex flex-col gap-3">
+        <p role="alert" className="text-sm text-red-600">
+          {RESET_LINK_CHECK_UNAVAILABLE_MESSAGE}
+        </p>
+        <button
+          type="button"
+          onClick={() => onRetry()}
+          className="h-10 rounded-md bg-zinc-900 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          Try again
+        </button>
+        <RequestNewLink />
+      </div>
+    )
+  }
+
+  if (state.kind !== 'form') {
     return (
       <div className="flex flex-col gap-3">
         <p role="alert" className="text-sm text-red-600">
@@ -48,6 +79,8 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
     )
   }
 
+  const token = state.token
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const formElement = event.currentTarget
@@ -62,7 +95,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
     setPending(true)
     setError(null)
     setOfferNewLink(false)
-    const outcome = await submitNewPassword(token as string, newPassword)
+    const outcome = await submitNewPassword(token, newPassword)
     if (outcome.ok) {
       setDone(true)
     } else {

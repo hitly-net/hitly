@@ -18,6 +18,8 @@ export const INVALID_EMAIL_MESSAGE = 'Enter a valid email address.'
 export const RESET_REQUEST_NETWORK_MESSAGE = 'Could not reach HITLy. Check your connection and try again.'
 export const RESET_LINK_INVALID_MESSAGE = 'This reset link is invalid or has expired. Request a new one.'
 export const RESET_PASSWORD_FAILED_MESSAGE = 'Could not update the password. Request a new reset link and try again.'
+export const RESET_PASSWORD_RETRY_MESSAGE = 'Could not update the password right now. Try again in a moment.'
+export const RESET_LINK_CHECK_UNAVAILABLE_MESSAGE = "We couldn't check this link right now."
 export const PASSWORD_MISMATCH_MESSAGE = 'The passwords do not match.'
 export const MIN_PASSWORD_LENGTH = 8
 
@@ -99,8 +101,9 @@ export async function requestPasswordReset(
 
 /**
  * `requestNewLink` is true when the token was rejected (used, expired, or
- * unknown) or the server failed in a way a fresh link may fix, so the form
- * can offer "Request a new link".
+ * unknown) or the server refused the request for another reason a fresh link
+ * may fix, so the form can offer "Request a new link". A server error (5xx)
+ * asks the user to try again instead, since the link may still be fine.
  */
 export type ResetPasswordOutcome = { ok: true } | { ok: false; message: string; requestNewLink: boolean }
 
@@ -117,6 +120,7 @@ export async function submitNewPassword(
       credentials: 'include',
     })
     if (response.ok) return { ok: true }
+    if (response.status >= 500) return { ok: false, message: RESET_PASSWORD_RETRY_MESSAGE, requestNewLink: false }
     const data = (await response.json().catch(() => ({}))) as { code?: string }
     if (data.code === 'INVALID_TOKEN') return { ok: false, message: RESET_LINK_INVALID_MESSAGE, requestNewLink: true }
     if (data.code === 'PASSWORD_TOO_SHORT') {

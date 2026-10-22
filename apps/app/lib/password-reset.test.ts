@@ -218,11 +218,13 @@ describe('setting a new password', () => {
 
   it('the reset page reads the token from the link', () => {
     const page = fs.readFileSync(path.join(__dirname, '../app/reset-password/page.tsx'), 'utf-8')
-    assert.ok(page.includes('resolveResetPageToken(params'))
+    assert.ok(page.includes('loadResetPageState(params, { auth,'))
+    assert.ok(page.includes('<ResetPasswordForm state={state} />'))
     const check = fs.readFileSync(path.join(__dirname, './reset-token-check.ts'), 'utf-8')
     assert.ok(check.includes('params.token'))
     const form = fs.readFileSync(path.join(__dirname, '../components/reset-password-form.tsx'), 'utf-8')
     assert.ok(form.includes('submitNewPassword'))
     assert.ok(form.includes('name="newPassword"'))
+    assert.ok(form.includes('state.kind'))
   })
 })
