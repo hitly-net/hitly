@@ -1,4 +1,4 @@
-import type { Decision } from './index'
+import type { Decision } from './index.ts'
 
 export const EVIDENCE_SPEC_VERSION = 'hitly.evidence.v1'
 

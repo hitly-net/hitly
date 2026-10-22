@@ -246,7 +246,7 @@ export {
   entitlementsForPlan,
   hasFeature,
   requireFeature,
-} from './edition'
+} from './edition.ts'
 export type {
   CloudPlan,
   EditionId,
@@ -258,14 +258,14 @@ export type {
   ResolvedProjectApiKey,
   TenantDocument,
   WorkspacePlan,
-} from './edition'
+} from './edition.ts'
 export {
   EVIDENCE_SPEC_VERSION,
   canonicalJson,
   hashActionArgs,
   hashEvidenceContent,
   sha256Hex,
-} from './evidence'
+} from './evidence.ts'
 export type {
   AppendReceipt,
   EvidenceActionFinal,
@@ -280,6 +280,6 @@ export type {
   EvidenceRetention,
   EvidenceSink,
   EvidenceSystemContext,
-} from './evidence'
+} from './evidence.ts'
 
-export * from "./address-classify"
+export * from "./address-classify.ts"
