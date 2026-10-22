@@ -13,6 +13,7 @@ import { PluginBadge } from '@hitly/ui'
  * Run with: yarn workspace @hitly/app test
  */
 
+import { CreateProjectModal } from './create-project-modal'
 import { PluginSelect } from './plugin-select'
 import { ProjectList } from './project-list'
 import { getPlugin } from '@/lib/plugins'
@@ -49,6 +50,32 @@ describe('plugin picker', () => {
     assert.equal(isPluginId('openshell'), true)
     for (const id of LISTED_PLUGIN_IDS) assert.equal(isListedPluginId(id), true, id)
     assert.equal(isListedPluginId('nope'), false)
+  })
+})
+
+describe('create project dialog', () => {
+  it('uses the plugin picker, so OpenShell is not offered', () => {
+    const { container } = render(<CreateProjectModal />)
+    const form = container.querySelector('form')
+    assert.ok(form, 'the dialog has a form')
+    const selects = form.querySelectorAll('select')
+    assert.equal(selects.length, 1, 'the form has one plugin field')
+    const select = selects[0]
+    assert.equal(select.name, 'plugin')
+    const values = Array.from(select.options).map((option) => option.value)
+    assert.deepEqual(values, [...LISTED_PLUGIN_IDS])
+    assert.equal(
+      Array.from(select.options).some((option) => /openshell/i.test(`${option.value} ${option.textContent ?? ''}`)),
+      false,
+    )
+    assert.equal(select.value, 'mastra')
+  })
+
+  it('renders the same field as PluginSelect', () => {
+    const dialog = render(<CreateProjectModal />).container.querySelector('form select')
+    const picker = render(<PluginSelect />).container.querySelector('select')
+    assert.ok(dialog && picker)
+    assert.equal(dialog.closest('label')?.outerHTML, picker.closest('label')?.outerHTML)
   })
 })
 

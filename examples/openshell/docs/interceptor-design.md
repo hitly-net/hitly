@@ -1,9 +1,11 @@
 # HITLy Gateway Interceptor Design
 
-**Status:** Draft design for PM/Derek review and Test  
+> **Experimental and unsupported.** OpenShell is no longer listed as an integration in HITLy or on hitly.net. This code stays in the repository for reference and for projects that already use it, but it is not maintained as a supported integration and may change or stop working without notice.
+
+**Status:** Experimental design notes, not a supported feature  
 **Audience:** Advanced users and Ops teams  
 **Positioning:** **Optional advanced feature** — NOT required for primary OpenShell→HITLy demo path  
-**Target:** OpenShell 0.1.2 production VM (`openshell` / Tailscale `<your-gateway-host>`)  
+**Target:** OpenShell 0.1.2 gateway (`<your-gateway-host>`)  
 **Scope:** Demo-friendly interceptor; no Cloud/GA changes, no plugin HMAC changes
 
 ---
@@ -361,9 +363,7 @@ The current design does NOT add HMAC-based resume secrets to `@hitly/plugin-open
 - **Bearer token** for OpenShell API auth (`config:write` scope)
 - **`review_token`** (provided by OpenShell in `GetDraftPolicy` response) for approval idempotency
 
-**Why no HMAC?** The PM decision explicitly states:
-
-> **no** HITLY_RESUME_SECRET / sign-only HMAC in plugin-openshell.
+**Why no HMAC?** This design does **not** add HITLY_RESUME_SECRET or sign-only HMAC to plugin-openshell.
 
 The interceptor is the defense-in-depth layer; the plugin does not change.
 
@@ -425,7 +425,7 @@ If a user clicks "Retry Resume" in HITLy (for `failed_resume` approvals), the in
 ### Phase 4: Production Integration (Out of Scope, Ops)
 
 1. OpenShell team implements Go-based interceptor in OpenShell gateway
-2. Ops configures environment variables on production VM (`openshell`)
+2. Configure environment variables on the gateway host
 3. Deploy and verify with integration test (poller → HITLy → interceptor → OpenShell)
 
 ---
@@ -481,7 +481,7 @@ Test cases:
 
 ### 10.1. Production VM Configuration (Advanced/Optional)
 
-**VM:** `openshell` (Tailscale `<your-gateway-host>`)  
+**Host:** your OpenShell gateway host (`<your-gateway-host>`)  
 **Gateway:** OpenShell 0.1.2, `https://127.0.0.1:17670` (loopback-only, mTLS)
 
 **Required environment variables (only if enabling interceptor):**
@@ -522,7 +522,7 @@ If the interceptor causes issues:
 
 ---
 
-## 11. Open Questions (For PM/Derek)
+## 11. Open Questions
 
 1. **Multiple approvals for same chunk:** If a chunk is rejected, then re-submitted and approved, should the interceptor allow the second `ApproveDraftChunk`? (Current design: yes, it queries the **latest** approval by `updatedAt`)
 2. **Interceptor ownership:** Should the reference stub be TypeScript (in this repo) or Go (in OpenShell repo)? (Current design: TypeScript stub in this repo for demo; Go implementation by OpenShell team)
@@ -537,7 +537,6 @@ If the interceptor causes issues:
 - **HITLy plugin:** `packages/plugin-openshell/src/index.ts`
 - **HITLy approvals API:** `apps/app/app/api/v1/approvals/route.ts`
 - **HITLy poller:** `examples/openshell/src/poller.ts`
-- **PM decision:** GitHub issue or Slack thread (link TBD)
 
 ---
 

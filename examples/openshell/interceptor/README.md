@@ -1,12 +1,14 @@
 # HITLy Gateway Interceptor (Reference Implementation)
 
-**STATUS:** **Optional Advanced Feature** (NOT part of primary demo path)
+> **Experimental and unsupported.** OpenShell is no longer listed as an integration in HITLy or on hitly.net. This code stays in the repository for reference and for projects that already use it, but it is not maintained as a supported integration and may change or stop working without notice.
+
+**STATUS:** **Experimental, optional advanced feature** (NOT part of the default setup)
 
 **IMPORTANT:** 
 - This is a **TypeScript reference stub for demo purposes only**
 - The production interceptor will be implemented in **Go** by the OpenShell team
 - The interceptor is **disabled by default** and is **NOT required** for OpenShell→HITLy integration
-- Primary Ops demo uses **mTLS + review_token only** (no interceptor)
+- The default setup uses **mTLS + review_token only** (no interceptor)
 - Enable the interceptor only if defense-in-depth verification is required
 
 ---
@@ -333,4 +335,4 @@ func (c *HitlyClient) QueryApproval(ctx context.Context, runId string) (*Approva
 
 ---
 
-**For questions, contact Derek/PM or the HITLy team.**
+**For questions, open an issue in the HITLy repository.**

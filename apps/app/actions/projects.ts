@@ -3,23 +3,22 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { and, eq } from 'drizzle-orm'
-import { isListedPluginId, isOpenApprovalStatus, isProjectRole } from '@hitly/core'
+import { isOpenApprovalStatus, isProjectRole } from '@hitly/core'
 import {
   approvals,
   projectApiKeys,
   projectChannels,
   projectMemberships,
   projectRules,
-  projects,
   users,
 } from '@hitly/db/schema'
 import { getAppContext, withAppTenant } from '@/lib/context'
-import { generateApiKey, generateResumeSecret } from '@/lib/keys'
+import { generateApiKey } from '@/lib/keys'
 import { newId } from '@/lib/ids'
+import { insertNewProject } from '@/lib/project-create'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
 import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from '@/lib/rbac'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
-import { encodeTenantJson } from '@/lib/tenant-crypto'
 
 function revalidateWorkItem(approvalId: string, projectId: string) {
   revalidatePath('/inbox')
@@ -56,45 +55,18 @@ async function requireProjectAdmin(projectId: string) {
 }
 
 export async function createProject(formData: FormData) {
-  return withAppTenant(async ({ user, workspace, role }) => {
-  if (!canManageWorkspace(role)) {
-    throw new Error('Only workspace admins can create projects')
-  }
-  const name = String(formData.get('name') ?? '').trim()
-  const description = String(formData.get('description') ?? '').trim()
-  const plugin = String(formData.get('plugin') ?? '')
-  if (!name) throw new Error('Name is required')
-  if (!isListedPluginId(plugin)) throw new Error('Choose a plugin')
-
-  const database = requireDb()
-  const projectId = newId('prj').slice(0, 36)
-  await database.insert(projects).values({
-    id: projectId,
-    workspaceId: workspace.id,
-    name,
-    description: description || null,
-    plugin,
-    credentials: await encodeTenantJson(workspace.id, { plugin, resumeSecret: generateResumeSecret() }),
-    defaultAssigneeUserId: user.id,
-    defaultSlaMinutes: '60',
-  })
-  await database.insert(projectMemberships).values({
-    id: newId('pm').slice(0, 36),
-    workspaceId: workspace.id,
-    projectId,
-    userId: user.id,
-    role: 'admin',
-  })
-  await database.insert(projectChannels).values({
-    id: newId('ch').slice(0, 36),
-    workspaceId: workspace.id,
-    projectId,
-    type: 'email',
-    config: {},
-    enabled: true,
-  })
-  revalidatePath('/projects')
-  redirect(`/projects/${projectId}/config`)
+  return withAppTenant(async ({ user, role }) => {
+    if (!canManageWorkspace(role)) {
+      throw new Error('Only workspace admins can create projects')
+    }
+    const projectId = await insertNewProject({
+      userId: user.id,
+      name: formData.get('name'),
+      description: formData.get('description'),
+      plugin: formData.get('plugin'),
+    })
+    revalidatePath('/projects')
+    redirect(`/projects/${projectId}/config`)
   })
 }
 
