@@ -11,6 +11,7 @@ import { emailAndPasswordOptions } from './auth-email-password'
 import { bootstrapUserWorkspaces } from './workspace'
 import { isSignupEnabled } from './signup'
 import { resolveAuthSecret } from './auth-secret'
+import { trustedProxyAuthOptions } from './trusted-proxies'
 
 export { resolveAuthSecret } from './auth-secret'
 
@@ -65,6 +66,8 @@ function createAuth(database: NonNullable<typeof db>) {
       }
       return staticTrustedOrigins
     },
+    // advanced.ipAddress.trustedProxies from HITLY_TRUSTED_PROXIES; nothing when unset.
+    ...trustedProxyAuthOptions(),
     plugins: [bearer(), nextCookies()],
   })
 }

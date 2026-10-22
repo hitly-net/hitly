@@ -68,11 +68,11 @@ type HeaderReader = { get(name: string): string | null }
 
 /**
  * The client key for the limiter: the client address picked with the trusted
- * proxy count (see client-address.ts), or one shared bucket when there is none.
+ * proxy list or count (see client-address.ts), or one shared bucket when there is none.
  */
 export function resetCheckClientKey(
   headers: HeaderReader,
-  options?: { trustedProxies?: number; remoteAddress?: string | null },
+  options?: Parameters<typeof clientAddress>[1],
 ): string {
   return clientAddress(headers, options) ?? 'unknown'
 }
