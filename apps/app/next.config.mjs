@@ -15,6 +15,15 @@ const config = {
     '@hitly/plugin-temporal',
   ],
   agentRules: false,
+  async headers() {
+    return [
+      {
+        // The reset link carries its token in the URL; keep it out of Referer headers.
+        source: '/reset-password',
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      },
+    ]
+  },
 }
 
 export default config
