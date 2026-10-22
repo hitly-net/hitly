@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { classifyAddress } from './address-classify'
+import { classifyAddress } from './address-classify.ts'
 
 describe('shared address classifier', () => {
   const cases: Array<[string, string, ReturnType<typeof classifyAddress>]> = [

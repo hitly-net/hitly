@@ -3,24 +3,65 @@
 import Link from 'next/link'
 import { useState, type FormEvent } from 'react'
 import {
+  FORGOT_PASSWORD_PAGE,
   MIN_PASSWORD_LENGTH,
   PASSWORD_MISMATCH_MESSAGE,
+  RESET_LINK_CHECK_UNAVAILABLE_MESSAGE,
   RESET_LINK_INVALID_MESSAGE,
   submitNewPassword,
 } from '@/lib/password-reset'
+import type { ResetPageState } from '@/lib/reset-token-check'
 
-export function ResetPasswordForm({ token }: { token: string | null }) {
+function RequestNewLink() {
+  return (
+    <Link href={FORGOT_PASSWORD_PAGE} className="text-sm text-zinc-500 underline">
+      Request a new link
+    </Link>
+  )
+}
+
+function reloadPage() {
+  window.location.reload()
+}
+
+export function ResetPasswordForm({
+  state,
+  onRetry = reloadPage,
+}: {
+  state: ResetPageState
+  /** Reloads the same link; replaceable in tests. */
+  onRetry?: () => void
+}) {
   const [error, setError] = useState<string | null>(null)
+  const [offerNewLink, setOfferNewLink] = useState(false)
   const [pending, setPending] = useState(false)
   const [done, setDone] = useState(false)
 
-  if (!token) {
+  if (state.kind === 'unavailable') {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-red-600">{RESET_LINK_INVALID_MESSAGE}</p>
-        <Link href="/forgot-password" className="text-sm text-zinc-500 underline">
-          Request a new link
-        </Link>
+        <p role="alert" className="text-sm text-red-600">
+          {RESET_LINK_CHECK_UNAVAILABLE_MESSAGE}
+        </p>
+        <button
+          type="button"
+          onClick={() => onRetry()}
+          className="h-10 rounded-md bg-zinc-900 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          Try again
+        </button>
+        <RequestNewLink />
+      </div>
+    )
+  }
+
+  if (state.kind !== 'form') {
+    return (
+      <div className="flex flex-col gap-3">
+        <p role="alert" className="text-sm text-red-600">
+          {RESET_LINK_INVALID_MESSAGE}
+        </p>
+        <RequestNewLink />
       </div>
     )
   }
@@ -38,20 +79,30 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
     )
   }
 
+  const token = state.token
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const form = new FormData(event.currentTarget)
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
     const newPassword = String(form.get('newPassword') ?? '')
     const confirm = String(form.get('confirmPassword') ?? '')
     if (newPassword !== confirm) {
       setError(PASSWORD_MISMATCH_MESSAGE)
+      setOfferNewLink(false)
       return
     }
     setPending(true)
     setError(null)
-    const outcome = await submitNewPassword(token as string, newPassword)
-    if (outcome.ok) setDone(true)
-    else setError(outcome.message)
+    setOfferNewLink(false)
+    const outcome = await submitNewPassword(token, newPassword)
+    if (outcome.ok) {
+      setDone(true)
+    } else {
+      formElement.reset()
+      setError(outcome.message)
+      setOfferNewLink(outcome.requestNewLink)
+    }
     setPending(false)
   }
 
@@ -75,7 +126,12 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         autoComplete="new-password"
         className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
       />
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-sm text-red-600">
+          {error}
+        </p>
+      ) : null}
+      {offerNewLink ? <RequestNewLink /> : null}
       <button
         type="submit"
         disabled={pending}

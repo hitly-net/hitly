@@ -26,7 +26,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/evidence.test.ts src/address-classify.test.ts src/destination-check.test.ts"
+    "test": "tsx --test src/evidence.test.ts src/address-classify.test.ts src/destination-check.test.ts src/module-loading.test.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.12",

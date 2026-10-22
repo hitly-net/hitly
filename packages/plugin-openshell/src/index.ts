@@ -12,7 +12,12 @@ import * as protoLoader from '@grpc/proto-loader'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { readFileSync } from 'node:fs'
-import { assertHostPortAllowed } from '@hitly/core/destination-check'
+import {
+  connectInOrder,
+  grpcPinnedChannelOptions,
+  grpcPinnedTarget,
+  resolveHostPortAllowed,
+} from '@hitly/core/destination-check'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -71,13 +76,51 @@ export interface OpenShellConnection {
   close(): void
 }
 
+/** Where to connect: one checked address, with the original host kept. */
+export interface OpenShellDial {
+  /** grpc-js target for a checked IP address (ipv4:… or ipv6:…). */
+  target: string
+  /** :authority and TLS server name options for the original host. */
+  channelOptions: Record<string, string | number>
+  /** Milliseconds allowed for the channel to become ready. */
+  timeoutMs: number
+}
+
 export interface OpenShellClientFactory {
   connect(
     gatewayAddr: string,
     bearerToken?: string,
     tlsConfig?: TlsConfig,
-    insecure?: boolean
+    insecure?: boolean,
+    dial?: OpenShellDial
   ): Promise<{ client: OpenShellClient; connection: OpenShellConnection }>
+}
+
+/**
+ * Checks the gateway address, then connects to the checked addresses in
+ * order until one is ready. The call is sent once, on the returned client.
+ */
+async function openGateway(
+  gatewayAddr: string,
+  bearerToken: string | undefined,
+  tlsConfig: TlsConfig | undefined,
+  insecure: boolean | undefined
+): Promise<{ client: OpenShellClient; connection: OpenShellConnection }> {
+  const checked = await resolveHostPortAllowed(gatewayAddr)
+  const channelOptions = grpcPinnedChannelOptions(checked)
+  return connectInOrder(
+    checked.addresses,
+    (address, timeoutMs) =>
+      clientFactory.connect(gatewayAddr, bearerToken, tlsConfig, insecure, {
+        target: grpcPinnedTarget(address, checked.port),
+        channelOptions,
+        timeoutMs,
+      }),
+    {
+      host: checked.serverName,
+      discard: (opened) => (opened as { connection: OpenShellConnection }).connection.close(),
+    }
+  )
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -140,7 +183,7 @@ function createGrpcCredentials(tlsConfig?: TlsConfig, insecure?: boolean): grpc.
 
 // Production gRPC client factory
 const productionClientFactory: OpenShellClientFactory = {
-  async connect(gatewayAddr: string, bearerToken?: string, tlsConfig?: TlsConfig, insecure?: boolean) {
+  async connect(gatewayAddr: string, bearerToken?: string, tlsConfig?: TlsConfig, insecure?: boolean, dial?: OpenShellDial) {
     const protoPath = join(__dirname, '../proto/openshell.proto')
     const packageDefinition = protoLoader.loadSync(protoPath, {
       keepCase: true,
@@ -158,7 +201,7 @@ const productionClientFactory: OpenShellClientFactory = {
     const credentials = createGrpcCredentials(tlsConfig, insecure)
 
     // Build channel args for SSL target name override if needed
-    const channelArgs: Record<string, any> = {}
+    const channelArgs: Record<string, any> = { ...dial?.channelOptions }
     if (tlsConfig?.sslTargetNameOverride) {
       channelArgs['grpc.ssl_target_name_override'] = tlsConfig.sslTargetNameOverride
     }
@@ -167,14 +210,24 @@ const productionClientFactory: OpenShellClientFactory = {
       channelArgs['grpc.ssl_target_name_override'] = tlsConfig.sslTargetNameOverride || 'localhost'
     }
 
-    const client = new OpenShellService(gatewayAddr, credentials, channelArgs) as OpenShellClient
+    const client = new OpenShellService(dial?.target ?? gatewayAddr, credentials, channelArgs) as OpenShellClient & grpc.Client
+
+    if (dial) {
+      // Open the connection before any call is made, so a call is sent at most once.
+      await new Promise<void>((resolve, reject) => {
+        client.waitForReady(Date.now() + dial.timeoutMs, (error) => {
+          if (error) {
+            client.close()
+            reject(error)
+          } else resolve()
+        })
+      })
+    }
 
     return {
       client,
       connection: {
-        close: () => {
-          // gRPC JS doesn't expose client.close() cleanly; channel closes on GC
-        },
+        close: () => client.close(),
       },
     }
   },
@@ -188,6 +241,11 @@ let clientFactory: OpenShellClientFactory = productionClientFactory
  */
 export function __setOpenShellClientFactory(factory: OpenShellClientFactory): void {
   clientFactory = factory
+}
+
+/** Restore the real gRPC client factory (test-only). */
+export function __resetOpenShellClientFactory(): void {
+  clientFactory = productionClientFactory
 }
 
 /**
@@ -311,8 +369,7 @@ export const openshellPlugin: HitlyPlugin = {
     const insecure = (credentials?.tlsInsecure === true || credentials?.insecure === true) ? true : undefined
 
     try {
-      await assertHostPortAllowed(gatewayAddr)
-      const { client, connection } = await clientFactory.connect(gatewayAddr, bearerToken, tlsConfig, insecure)
+      const { client, connection } = await openGateway(gatewayAddr, bearerToken, tlsConfig, insecure)
 
       const metadata = new grpc.Metadata()
       if (bearerToken) {
@@ -431,8 +488,7 @@ export const openshellPlugin: HitlyPlugin = {
     const insecure = (credentials.tlsInsecure === true || credentials.insecure === true) ? true : undefined
 
     try {
-      await assertHostPortAllowed(gatewayAddr)
-      const { connection } = await clientFactory.connect(gatewayAddr, bearerToken, tlsConfig, insecure)
+      const { connection } = await openGateway(gatewayAddr, bearerToken, tlsConfig, insecure)
       connection.close()
       return 'ok'
     } catch {
