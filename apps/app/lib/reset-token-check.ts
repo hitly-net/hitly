@@ -1,5 +1,5 @@
 import { RESET_PASSWORD_PAGE } from './password-reset'
-import { resetCheckLimiter, type RateLimiter } from './reset-check-limit'
+import { resetCheckLimiter } from './reset-check-limit'
 
 /**
  * Checks a reset link's token on the server before the reset page shows the
@@ -106,7 +106,7 @@ export async function loadResetPageState(
     auth,
     clientKey,
     allow = resetCheckLimiter,
-  }: { auth: ResetCallbackApi | null; clientKey: string; allow?: RateLimiter },
+  }: { auth: ResetCallbackApi | null; clientKey: string; allow?: (key: string) => boolean },
 ): Promise<ResetPageState> {
   const check = auth
     ? async (token: string): Promise<ResetTokenState> => (allow(clientKey) ? checkResetToken(auth, token) : 'unknown')

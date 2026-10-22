@@ -8,7 +8,12 @@
  * The limit is per server process. It never stores or logs the token.
  */
 
-export type RateLimiter = (key: string) => boolean
+import { clientAddress } from './client-address'
+
+export type RateLimiter = ((key: string) => boolean) & {
+  /** Number of client keys currently held (for tests and diagnostics). */
+  size: () => number
+}
 
 export function createRateLimiter({
   limit,
@@ -21,21 +26,37 @@ export function createRateLimiter({
   maxKeys?: number
   now?: () => number
 }): RateLimiter {
+  // Every window has the same length and a key is moved to the end whenever
+  // its window starts, so the map stays ordered by expiry: oldest first.
   const windows = new Map<string, { count: number; resetAt: number }>()
-  return (key) => {
+
+  const makeRoom = (time: number) => {
+    // Drop expired windows first, then the oldest live ones. Other clients'
+    // counters are kept, so a flood of new keys can't reset everyone.
+    for (const [key, entry] of windows) {
+      if (windows.size < maxKeys) return
+      if (entry.resetAt > time) break
+      windows.delete(key)
+    }
+    for (const key of windows.keys()) {
+      if (windows.size < maxKeys) return
+      windows.delete(key)
+    }
+  }
+
+  const allow = (key: string) => {
     const time = now()
     let entry = windows.get(key)
     if (!entry || entry.resetAt <= time) {
-      if (!entry && windows.size >= maxKeys) {
-        for (const [k, v] of windows) if (v.resetAt <= time) windows.delete(k)
-        if (windows.size >= maxKeys) windows.clear()
-      }
+      windows.delete(key)
+      makeRoom(time)
       entry = { count: 0, resetAt: time + windowMs }
       windows.set(key, entry)
     }
     entry.count += 1
     return entry.count <= limit
   }
+  return Object.assign(allow, { size: () => windows.size })
 }
 
 export const RESET_CHECK_LIMIT = 30
@@ -45,9 +66,13 @@ export const resetCheckLimiter = createRateLimiter({ limit: RESET_CHECK_LIMIT, w
 
 type HeaderReader = { get(name: string): string | null }
 
-/** The client key for the limiter: the first forwarded address, or a shared bucket. */
-export function resetCheckClientKey(headers: HeaderReader): string {
-  const forwarded = headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-  if (forwarded) return forwarded
-  return headers.get('x-real-ip')?.trim() || 'unknown'
+/**
+ * The client key for the limiter: the client address picked with the trusted
+ * proxy count (see client-address.ts), or one shared bucket when there is none.
+ */
+export function resetCheckClientKey(
+  headers: HeaderReader,
+  options?: { trustedProxies?: number; remoteAddress?: string | null },
+): string {
+  return clientAddress(headers, options) ?? 'unknown'
 }

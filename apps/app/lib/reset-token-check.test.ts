@@ -1,9 +1,13 @@
 import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { betterAuth } from 'better-auth'
 import { memoryAdapter } from 'better-auth/adapters/memory'
 import { emailAndPasswordOptions } from './auth-email-password'
 import { RESET_LINK_INVALID_MESSAGE, requestPasswordReset, submitNewPassword } from './password-reset'
+import { clientAddress, trustedProxyCount } from './client-address'
 import { createRateLimiter, resetCheckClientKey } from './reset-check-limit'
 import {
   checkResetToken,
@@ -406,18 +410,92 @@ describe('the reset check limiter', () => {
     assert.equal(allow('a'), true)
   })
 
-  it('keeps its key table bounded', () => {
-    let time = 0
-    const allow = createRateLimiter({ limit: 1, windowMs: 1000, maxKeys: 3, now: () => time })
-    for (const key of ['a', 'b', 'c', 'd', 'e']) assert.equal(allow(key), true)
-    time = 5000
-    assert.equal(allow('a'), true)
+  it('keeps its key table at the cap', () => {
+    const allow = createRateLimiter({ limit: 1, windowMs: 60_000, maxKeys: 3, now: () => 0 })
+    for (let i = 0; i < 50; i += 1) allow(`k${i}`)
+    assert.equal(allow.size(), 3)
   })
 
-  it('keys clients by the first forwarded address, then the real-ip header', () => {
-    assert.equal(resetCheckClientKey(new Headers({ 'x-forwarded-for': '203.0.113.5, 198.51.100.1' })), '203.0.113.5')
-    assert.equal(resetCheckClientKey(new Headers({ 'x-real-ip': '203.0.113.7' })), '203.0.113.7')
-    assert.equal(resetCheckClientKey(new Headers()), 'unknown')
+  it('evicts expired windows before live ones when the table is full', () => {
+    let time = 0
+    const allow = createRateLimiter({ limit: 1, windowMs: 1000, maxKeys: 3, now: () => time })
+    allow('old')
+    time = 600
+    allow('a')
+    allow('b')
+    time = 1100 // 'old' has expired; 'a' and 'b' are still limited
+    assert.equal(allow('c'), true)
+    assert.equal(allow.size(), 3)
+    assert.equal(allow('a'), false)
+    assert.equal(allow('b'), false)
+  })
+
+  it('evicts only the oldest live window when nothing has expired', () => {
+    const allow = createRateLimiter({ limit: 1, windowMs: 60_000, maxKeys: 3, now: () => 0 })
+    for (const key of ['a', 'b', 'c']) assert.equal(allow(key), true)
+    assert.equal(allow('d'), true) // evicts 'a' only
+    assert.equal(allow.size(), 3)
+    assert.equal(allow('b'), false)
+    assert.equal(allow('c'), false)
+    assert.equal(allow('d'), false)
+  })
+
+  it('a flood of new keys does not reset other clients', () => {
+    const allow = createRateLimiter({ limit: 1, windowMs: 60_000, maxKeys: 100, now: () => 0 })
+    for (let i = 0; i < 50; i += 1) allow(`limited-${i}`)
+    for (let i = 0; i < 50; i += 1) allow(`flood-${i}`) // fills the table exactly
+    allow('one-more') // table full: only limited-0 makes room
+    for (let i = 1; i < 50; i += 1) assert.equal(allow(`limited-${i}`), false, `limited-${i}`)
+  })
+})
+
+describe('the reset check client key', () => {
+  const xff = (value?: string) => new Headers(value === undefined ? {} : { 'x-forwarded-for': value })
+
+  it('ignores a client-supplied leading entry (one trusted proxy)', () => {
+    assert.equal(resetCheckClientKey(xff('203.0.113.5, 198.51.100.1'), { trustedProxies: 1 }), '198.51.100.1')
+  })
+
+  it('uses the right-most entry with one trusted proxy', () => {
+    assert.equal(clientAddress(xff('198.51.100.1'), { trustedProxies: 1 }), '198.51.100.1')
+    assert.equal(clientAddress(xff('203.0.113.9, 203.0.113.5,198.51.100.1'), { trustedProxies: 1 }), '198.51.100.1')
+  })
+
+  it('uses the second entry from the right with two trusted proxies', () => {
+    assert.equal(clientAddress(xff('203.0.113.9, 198.51.100.1, 192.0.2.10'), { trustedProxies: 2 }), '198.51.100.1')
+    assert.equal(clientAddress(xff('198.51.100.1'), { trustedProxies: 2 }), '198.51.100.1')
+  })
+
+  it('uses the socket address with no header or no trusted proxies', () => {
+    assert.equal(clientAddress(xff(), { trustedProxies: 1, remoteAddress: '198.51.100.7' }), '198.51.100.7')
+    assert.equal(clientAddress(xff(' , '), { trustedProxies: 1, remoteAddress: '198.51.100.7' }), '198.51.100.7')
+    assert.equal(clientAddress(xff('203.0.113.5'), { trustedProxies: 0, remoteAddress: '198.51.100.7' }), '198.51.100.7')
+    assert.equal(resetCheckClientKey(xff(), { trustedProxies: 1 }), 'unknown')
+    assert.equal(resetCheckClientKey(xff('203.0.113.5'), { trustedProxies: 0 }), 'unknown')
+  })
+
+  it('does not use X-Real-IP, which the client can set', () => {
+    assert.equal(resetCheckClientKey(new Headers({ 'x-real-ip': '203.0.113.7' }), { trustedProxies: 1 }), 'unknown')
+  })
+
+  it('reads the trusted proxy count from the environment', () => {
+    assert.equal(trustedProxyCount({}), 1)
+    assert.equal(trustedProxyCount({ HITLY_TRUSTED_PROXY_COUNT: '0' }), 0)
+    assert.equal(trustedProxyCount({ HITLY_TRUSTED_PROXY_COUNT: ' 2 ' }), 2)
+    for (const bad of ['', '-1', '1.5', 'two', '1e3']) {
+      assert.equal(trustedProxyCount({ HITLY_TRUSTED_PROXY_COUNT: bad }), 1, bad)
+    }
+  })
+
+  it('limits a client that changes its spoofed first entry on every request', () => {
+    const limit = 5
+    const allow = createRateLimiter({ limit, windowMs: 60_000 })
+    const results: boolean[] = []
+    for (let i = 0; i <= limit; i += 1) {
+      const headers = xff(`203.0.113.${i + 1}, 198.51.100.1`)
+      results.push(allow(resetCheckClientKey(headers, { trustedProxies: 1 })))
+    }
+    assert.deepEqual(results, [...Array(limit).fill(true), false])
   })
 })
 
@@ -431,5 +509,12 @@ describe('reset page response headers', () => {
     const rule = rules.find((r) => r.source === '/reset-password')
     assert.ok(rule, 'a header rule exists for the reset page')
     assert.deepEqual(rule.headers, [{ key: 'Referrer-Policy', value: 'no-referrer' }])
+  })
+
+  it('sets the no-referrer meta tag on the reset page', () => {
+    const page = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../app/reset-password/page.tsx'), 'utf-8')
+    const metadata = page.match(/export const metadata = \{([^}]*)\}/)
+    assert.ok(metadata, 'the page exports metadata')
+    assert.match(metadata[1], /\breferrer:\s*'no-referrer'/)
   })
 })
