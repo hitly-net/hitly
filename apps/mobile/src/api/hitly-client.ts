@@ -96,7 +96,7 @@ export function createHitlyClient(options: ClientOptions) {
     approval(id: string) {
       return request<ApprovalDetail>(`/api/v1/approvals/${id}`)
     },
-    decide(id: string, body: { decision: Decision; editedArgs?: Record<string, unknown>; response?: string }) {
+    decide(id: string, body: { decision: Decision; editedArgs?: Record<string, unknown>; response?: string; reason?: string }) {
       return request(`/api/v1/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify(body) })
     },
     retryResume(id: string) {

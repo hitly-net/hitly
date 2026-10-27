@@ -1,5 +1,6 @@
 import {
   allowedActionsFor,
+  type ApprovalAttachment,
   type ApprovalEnvelope,
   type ConnectionCredentials,
   type DecisionPayload,
@@ -31,9 +32,51 @@ function externalLinkList(value: unknown): ExternalLink[] | undefined {
       const url = optionalString(record.url)
       if (url) {
         const label = optionalString(record.label)
-        out.push(label ? { url, label } : { url })
+        const ref = optionalString(record.ref)
+        const link: ExternalLink = { url }
+        if (label) link.label = label
+        if (ref) link.ref = ref
+        if (record.mustOpen === true) link.mustOpen = true
+        out.push(link)
       }
     }
+  }
+  return out.length > 0 ? out : undefined
+}
+
+function attachmentList(value: unknown): ApprovalAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: ApprovalAttachment[] = []
+  for (const item of value) {
+    const record = asRecord(item)
+    const name = optionalString(record.name)
+    if (!name) continue
+    const file: ApprovalAttachment = { name }
+    const url = optionalString(record.url)
+    if (url) file.url = url
+    const contentType = optionalString(record.contentType)
+    if (contentType) file.contentType = contentType
+    const ref = optionalString(record.ref)
+    if (ref) file.ref = ref
+    if (record.mustOpen === true) file.mustOpen = true
+    out.push(file)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * `reasonRequired` (hitl-spec 3.6): answer values that need a reason. A malformed
+ * value is refused rather than silently dropped (spec 7).
+ */
+function reasonRequiredList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim())) {
+    throw new Error('reasonRequired must be an array of non-empty answer values')
+  }
+  const out: string[] = []
+  for (const item of value) {
+    const entry = (item as string).trim()
+    if (!out.includes(entry)) out.push(entry)
   }
   return out.length > 0 ? out : undefined
 }
@@ -67,6 +110,7 @@ export const httpPlugin: HitlyPlugin = {
         : undefined
     const editReason =
       body.editReason && typeof body.editReason === 'object' ? (body.editReason as Record<string, unknown>) : undefined
+    const reasonRequired = reasonRequiredList(body.reasonRequired)
 
     return {
       action: {
@@ -76,6 +120,8 @@ export const httpPlugin: HitlyPlugin = {
       allowedActions: allowedActionsFor(allowedActionsPartial ?? { accept: true, reject: true }),
       contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : undefined,
       externalUrls: externalLinkList(body.externalUrls),
+      attachments: attachmentList(body.attachments),
+      ...(reasonRequired ? { reasonRequired } : {}),
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       editableFields: editableFields as any,
       editReason: editReason as any,
@@ -106,6 +152,7 @@ export const httpPlugin: HitlyPlugin = {
     if (approvalId) resumeData.id = approvalId
     if (payload.editedArgs) resumeData.editedArgs = payload.editedArgs
     if (payload.response) resumeData.response = payload.response
+    if (payload.reason) resumeData.reason = payload.reason
     const response = await checkedFetch(
       resumeUrl,
       { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(resumeData) },

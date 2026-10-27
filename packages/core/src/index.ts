@@ -63,11 +63,19 @@ export interface ApprovalAttachment {
   name: string
   url?: string
   contentType?: string
+  /** Gating key, unique within the request (hitl-spec 3.7). Derived from name+url when absent. */
+  ref?: string
+  /** Answer controls stay disabled until this item is opened (hitl-spec 3.7). */
+  mustOpen?: boolean
 }
 
 export interface ExternalLink {
   url: string
   label?: string
+  /** Gating key, unique within the request (hitl-spec 3.7). Derived from the url when absent. */
+  ref?: string
+  /** Answer controls stay disabled until this item is opened (hitl-spec 3.7). */
+  mustOpen?: boolean
 }
 
 export interface EditableFieldSpec {
@@ -92,6 +100,12 @@ export interface EditReasonConfig {
 export interface ApprovalEnvelope {
   action: ActionRequest
   allowedActions: AllowedActions
+  /**
+   * Answer values (decision values, e.g. `reject`) for which the reviewer must give a
+   * reason (hitl-spec 3.6). Absent means: `["reject"]` for binary-shaped requests
+   * (accept + reject only), no required reason otherwise. See `resolveReasonRequired`.
+   */
+  reasonRequired?: string[]
   contextMarkdown?: string
   /** Opaque origin bag. HTTP echoes this unchanged on accept and reject. */
   metadata?: Record<string, unknown>
@@ -147,6 +161,11 @@ export interface DecisionPayload {
   decision: Decision
   editedArgs?: Record<string, unknown>
   response?: string
+  /**
+   * The reviewer's reason (hitl-spec 4.1). Required when the chosen decision triggers
+   * `reasonRequired` (3.6). Optional otherwise; the host never invents or coerces it.
+   */
+  reason?: string
   editReason?: string
   editReasonText?: string
 }
@@ -237,6 +256,12 @@ export function normalizeExternalLinks(externalUrls?: string[] | ExternalLink[])
       if (item.label?.trim()) {
         normalized.label = item.label.trim()
       }
+      if (item.ref?.trim()) {
+        normalized.ref = item.ref.trim()
+      }
+      if (item.mustOpen === true) {
+        normalized.mustOpen = true
+      }
       return normalized
     })
     .filter((link) => link.url)
@@ -296,3 +321,4 @@ export type {
 } from './evidence.ts'
 
 export * from "./address-classify.ts"
+export * from "./answer-gates.ts"

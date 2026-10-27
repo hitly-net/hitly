@@ -20,6 +20,7 @@ import {
   evidenceReceipts,
 } from '@hitly/db/schema'
 import { ingestApproval, decideApproval, parseDecisionBody, authenticateProjectKey } from './approvals'
+import { loadOpenedContextRefs, recordContextOpen } from './context-opens'
 import { generateApiKey } from './keys'
 import { newId } from './ids'
 import { getProjectAccess, canDecide } from './rbac'
@@ -1317,4 +1318,136 @@ test('resumed event includes merged args and final_sha256', async () => {
       })
     })
   }
+})
+
+// --- Answer gating: reasonRequired (spec 3.6) + mustOpen (spec 3.7) ---
+
+test('gating: binary default refuses reject without reason and with unopened mustOpen items', async () => {
+  const payload = buildMastraPayload({
+    externalUrls: [{ url: 'https://example.com/policy', ref: 'policy', mustOpen: true }],
+  })
+
+  const ingestResult = await ingestApproval({
+    apiKey: apiKeyA.raw,
+    body: payload,
+  })
+  assert.ok(ingestResult.ok, `Ingest should succeed: ${ingestResult.ok ? '' : ingestResult.error}`)
+
+  // Binary-shaped request without a declared reasonRequired defaults to ['reject'] (spec 3.6),
+  // and the mustOpen link gates the answer until THIS reviewer opens it (spec 3.7).
+  const refused = await decideApproval({
+    approvalId: ingestResult.approval.id,
+    actorUserId: userAdmin.id,
+    payload: parseDecisionBody({ decision: 'reject' })!,
+    workspaceId: workspaceA.id,
+  })
+  assert.ok('error' in refused && refused.error, 'Gated reject must be refused by the host')
+  assert.ok(refused.error.includes('reason:'), `Refusal should flag the reason field, got: ${refused.error}`)
+  assert.ok(refused.error.includes('context.items.policy'), `Refusal should flag the unopened item, got: ${refused.error}`)
+  assert.equal(refused.status, 400)
+
+  // The same reviewer opens the item, then answers with a reason: the gate passes.
+  await withTenant(workspaceA.id, async () => {
+    await recordContextOpen({
+      workspaceId: workspaceA.id,
+      projectId: ingestResult.approval.projectId,
+      approvalId: ingestResult.approval.id,
+      ref: 'policy',
+      url: 'https://example.com/policy',
+      userId: userAdmin.id,
+    })
+  })
+
+  const openedByAdmin = await withTenant(workspaceA.id, async () =>
+    loadOpenedContextRefs({
+      approvalId: ingestResult.approval.id,
+      workspaceId: workspaceA.id,
+      actorUserId: userAdmin.id,
+    }),
+  )
+  assert.deepEqual(openedByAdmin, ['policy'], 'Admin opens should be readable back per reviewer')
+
+  const openedByViewer = await withTenant(workspaceA.id, async () =>
+    loadOpenedContextRefs({
+      approvalId: ingestResult.approval.id,
+      workspaceId: workspaceA.id,
+      actorUserId: userViewer.id,
+    }),
+  )
+  assert.deepEqual(openedByViewer, [], 'Gating is per-reviewer: admin opens do not unlock the viewer')
+
+  const allowed = await decideApproval({
+    approvalId: ingestResult.approval.id,
+    actorUserId: userAdmin.id,
+    payload: parseDecisionBody({ decision: 'reject', reason: 'Policy looks stale' })!,
+    workspaceId: workspaceA.id,
+  })
+  assert.ok(
+    !('error' in allowed && allowed.error),
+    `Opened + reason given should pass the gate, got: ${'error' in allowed ? allowed.error : ''}`,
+  )
+})
+
+test('gating: declared reasonRequired gates the listed answer; malformed gates refused at ingest', async () => {
+  // Declared reasonRequired ['accept'] overrides the binary default: accept now needs a reason.
+  const ingestGate = await ingestApproval({
+    apiKey: apiKeyA.raw,
+    body: buildMastraPayload({
+      reasonRequired: ['accept'],
+      externalUrls: [{ url: 'https://example.com/one', ref: 'doc-a', mustOpen: true }],
+    }),
+  })
+  assert.ok(ingestGate.ok, `Ingest with valid gating config should succeed: ${ingestGate.ok ? '' : ingestGate.error}`)
+
+  const refusedAccept = await decideApproval({
+    approvalId: ingestGate.approval.id,
+    actorUserId: userAdmin.id,
+    payload: parseDecisionBody({ decision: 'accept' })!,
+    workspaceId: workspaceA.id,
+  })
+  assert.ok(refusedAccept.error?.includes('reason:'), `Accept should be refused without a reason, got: ${refusedAccept.error}`)
+  assert.ok(refusedAccept.error?.includes('context.items.doc-a'), 'Unopened mustOpen item should also block')
+
+  // Reason given + item opened: the gate passes (origin resume itself may fail, that is separate).
+  await withTenant(workspaceA.id, async () => {
+    await recordContextOpen({
+      workspaceId: workspaceA.id,
+      projectId: ingestGate.approval.projectId,
+      approvalId: ingestGate.approval.id,
+      ref: 'doc-a',
+      url: 'https://example.com/one',
+      userId: userAdmin.id,
+    })
+  })
+  const answered = await decideApproval({
+    approvalId: ingestGate.approval.id,
+    actorUserId: userAdmin.id,
+    payload: parseDecisionBody({ decision: 'accept', reason: 'Checked the contract, terms are fine' })!,
+    workspaceId: workspaceA.id,
+  })
+  assert.ok(
+    !('error' in answered && answered.error),
+    `Answered with reason + opens should pass the gate, got: ${'error' in answered ? answered.error : ''}`,
+  )
+
+  // reasonRequired values that are not allowed answer values are refused at ingest (spec 7).
+  const ingestBadReasons = await ingestApproval({
+    apiKey: apiKeyA.raw,
+    body: buildMastraPayload({ reasonRequired: ['banana', 'respond'] }),
+  })
+  assert.ok(!ingestBadReasons.ok, 'reasonRequired with unknown/not-allowed values must be refused')
+  assert.ok(!ingestBadReasons.ok && ingestBadReasons.error.includes('reasonRequired'), 'Refusal should name the reasonRequired field')
+
+  // Context refs must be unique within a request (spec 3.7).
+  const ingestDupRefs = await ingestApproval({
+    apiKey: apiKeyA.raw,
+    body: buildMastraPayload({
+      externalUrls: [
+        { url: 'https://example.com/one', ref: 'shared' },
+        { url: 'https://example.com/two', ref: 'shared', mustOpen: true },
+      ],
+    }),
+  })
+  assert.ok(!ingestDupRefs.ok, 'Duplicate context refs must be refused at ingest')
+  assert.ok(!ingestDupRefs.ok && ingestDupRefs.error.includes('not unique'), 'Refusal should mention the uniqueness rule')
 })

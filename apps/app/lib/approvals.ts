@@ -6,6 +6,8 @@ import {
   isPluginId,
   OPEN_APPROVAL_STATUSES,
   originResumeError,
+  validateAnswerSubmission,
+  validateRequestGating,
   type ApprovalEnvelope,
   type ChannelType,
   type Decision,
@@ -28,6 +30,7 @@ import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 import { approvalHasExpired } from './approval-expiry'
 import { appendEvidence, buildDecidedEvent, buildRequestedEvent, buildResumedEvent, loadLatestReceipt } from './evidence'
+import { loadOpenedContextRefs } from './context-opens'
 import { exportOtelTrace } from './otel-trace'
 import { resumeFailureMessage } from './resume-error'
 
@@ -213,6 +216,20 @@ export async function ingestApproval(args: {
     return { ok: false as const, error: message, status: 400 as const }
   }
 
+  // Request-level gating validation (hitl-spec 7, at ingest): refuse malformed
+  // reasonRequired entries and context refs instead of storing a broken gate.
+  const gatingErrors = validateRequestGating(ingested)
+  if (gatingErrors.length > 0) {
+    const message = `Invalid gating config: ${gatingErrors.map((error) => `${error.field}: ${error.message}`).join('; ')}`
+    await logProjectEvent({
+      projectId: project.id,
+      level: 'error',
+      type: 'ingest',
+      message,
+    })
+    return { ok: false as const, error: message, status: 400 as const }
+  }
+
   ingested.origin.projectId = project.id
   if (pluginId === 'mastra' && !ingested.origin.resumeHandle.mastraBaseUrl && typeof project.credentials.baseUrl === 'string') {
     ingested.origin.resumeHandle.mastraBaseUrl = project.credentials.baseUrl
@@ -345,6 +362,28 @@ export async function decideApproval(args: {
     const envelope = asEnvelope(approval.envelope)
     if (!envelope.allowedActions[args.payload.decision]) {
       return { error: `Decision ${args.payload.decision} is not allowed`, status: 400 as const }
+    }
+
+    // Answer gating (hitl-spec 3.6/3.7/7): the host re-validates reasonRequired and
+    // mustOpen on every submit, per deciding reviewer, and refuses with field errors.
+    // Opens are read from this reviewer's recorded `opened` events (openedAt audit).
+    const openedContextRefs = await loadOpenedContextRefs({
+      approvalId: approval.id,
+      workspaceId,
+      actorUserId: args.actorUserId,
+    })
+    const gatingErrors = validateAnswerSubmission({
+      envelope: envelope,
+      decision: args.payload.decision,
+      reason: args.payload.reason,
+      openedRefs: openedContextRefs,
+    })
+    if (gatingErrors.length > 0) {
+      return {
+        error: gatingErrors.map((error) => `${error.field}: ${error.message}`).join('; '),
+        status: 400 as const,
+        fields: gatingErrors,
+      }
     }
 
     // Fail-closed: if edit is allowed but editableFields is missing or empty, reject
@@ -819,6 +858,7 @@ export function parseDecisionBody(body: Record<string, unknown>): DecisionPayloa
     editedArgs:
       body.editedArgs && typeof body.editedArgs === 'object' ? (body.editedArgs as Record<string, unknown>) : undefined,
     response: typeof body.response === 'string' ? body.response : undefined,
+    reason: typeof body.reason === 'string' ? body.reason : undefined,
     editReason: typeof body.editReason === 'string' ? body.editReason : undefined,
     editReasonText: typeof body.editReasonText === 'string' ? body.editReasonText : undefined,
   }

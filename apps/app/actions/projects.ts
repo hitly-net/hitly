@@ -286,7 +286,7 @@ export async function retryWorkItem(approvalId: string) {
     if (!canDecide(access)) throw new Error('You cannot retry this work item')
     const { retryResume } = await import('@/lib/approvals')
     const result = await retryResume({ approvalId, workspaceId: workspace.id })
-    if (result.error && result.status === 500) {
+    if (result.error && (result.status === 500 || result.status === 400)) {
       const returnPath = `/inbox/${approvalId}`
       const errorParam = encodeURIComponent(result.error)
       redirect(`${returnPath}?error=${errorParam}`)
@@ -397,6 +397,7 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     if (!canDecide(access)) throw new Error('You cannot decide this work item')
     const decision = String(formData.get('decision') ?? '')
     const response = String(formData.get('response') ?? '').trim()
+    const reason = String(formData.get('reason') ?? '').trim()
     const editReason = String(formData.get('editReason') ?? '').trim()
     const editReasonText = String(formData.get('editReasonText') ?? '').trim()
     const editedRaw = String(formData.get('editedArgs') ?? '').trim()
@@ -408,13 +409,14 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     const payload = parseDecisionBody({
       decision,
       response: response || undefined,
+      reason: reason || undefined,
       editedArgs,
       editReason: editReason || undefined,
       editReasonText: editReasonText || undefined,
     })
     if (!payload) throw new Error('Invalid decision')
     const result = await decideApproval({ approvalId, actorUserId: user.id, payload, workspaceId: workspace.id })
-    if (result.error && result.status === 500) {
+    if (result.error && (result.status === 500 || result.status === 400)) {
       const returnPath = workItemReturnPath(formData, approval)
       const errorParam = encodeURIComponent(result.error)
       redirect(`${returnPath}?error=${errorParam}`)

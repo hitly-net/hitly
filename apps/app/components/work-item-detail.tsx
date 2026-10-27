@@ -1,17 +1,18 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { and, desc, eq } from 'drizzle-orm'
-import { isOpenApprovalStatus, type ApprovalEnvelope, type OriginRef, type PluginId } from '@hitly/core'
+import { isOpenApprovalStatus, mustOpenItems, resolveReasonRequired, type ApprovalEnvelope, type OriginRef, type PluginId } from '@hitly/core'
 import { approvals, decisionRecords, projectMemberships, users } from '@hitly/db/schema'
 import { Badge, PluginBadge, PluginMark } from '@hitly/ui'
 import { decideWorkItem, delegateWorkItem, retryWorkItem } from '@/actions/projects'
 import { AppShell } from '@/components/app-shell'
 import { ContextMarkdown } from '@/components/context-markdown'
-import { EditableFieldsForm } from '@/components/editable-fields-form'
+import { AnswerForm } from '@/components/answer-form'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
-import { RefreshOnFocus, WorkItemDecisionButtons } from '@/components/work-item-client'
+import { RefreshOnFocus } from '@/components/work-item-client'
 import { withAppTenant } from '@/lib/context'
+import { loadOpenedContextRefs } from '@/lib/context-opens'
 import { originFields, envelopeMetadata } from '@/lib/origin'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { requireDb } from '@/lib/tenant'
@@ -106,6 +107,24 @@ export async function WorkItemDetail({
   const showEditControl = allowed.edit && hasEditableFields
   const canAct = canDecide(access) && isOpenApprovalStatus(approval.status)
   const expired = approvalHasExpired(approval)
+  // Answer gating (hitl-spec 3.6/3.7): reason prompt per answer value + per-reviewer
+  // mustOpen state. The host re-validates on submit; this drives the UI only.
+  const reasonRequired = resolveReasonRequired(envelope)
+  const gatedItems = canAct && !expired ? mustOpenItems(envelope) : []
+  const openedRefs =
+    gatedItems.length > 0
+      ? await loadOpenedContextRefs({
+          approvalId: approval.id,
+          workspaceId: workspace.id,
+          actorUserId: user.id,
+        })
+      : []
+  const gateItems = gatedItems.map((item) => ({
+    ref: item.ref,
+    label: item.label,
+    url: item.url,
+    opened: openedRefs.includes(item.ref),
+  }))
   const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status)
   const delegateTargets = people.filter(
     (person) => person.role !== 'reader' && person.userId !== approval.assignedUserId,
@@ -244,6 +263,7 @@ export async function WorkItemDetail({
           action: envelope.action,
           allowedActions: envelope.allowedActions,
           contextMarkdown: envelope.contextMarkdown,
+          reasonRequired: envelope.reasonRequired,
           metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
           externalUrls: envelope.externalUrls,
           attachments: envelope.attachments,
@@ -288,24 +308,18 @@ export async function WorkItemDetail({
         <p className="mt-4 text-sm text-amber-700">This work item has expired.</p>
       ) : null}
       {canAct && !expired ? (
-        <form action={decideWorkItem.bind(null, approval.id)} className="mt-6 flex max-w-xl flex-col gap-3">
-          <input type="hidden" name="returnTo" value={returnTo} />
-          {showEditControl ? (
-            <EditableFieldsForm
-              fields={envelope.editableFields!}
-              originalArgs={envelope.action.args}
-              editReasonConfig={envelope.editReason}
-            />
-          ) : null}
-          {allowed.respond ? (
-            <input
-              name="response"
-              placeholder="Response"
-              className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            />
-          ) : null}
-          <WorkItemDecisionButtons allowed={{ ...allowed, edit: showEditControl }} />
-        </form>
+        <AnswerForm
+          approvalId={approval.id}
+          allowed={{ ...allowed, edit: showEditControl }}
+          editableFields={showEditControl ? envelope.editableFields! : undefined}
+          originalArgs={envelope.action.args}
+          editReasonConfig={envelope.editReason}
+          respondAllowed={allowed.respond}
+          reasonRequired={reasonRequired}
+          gateItems={gateItems}
+          returnTo={returnTo}
+          decide={decideWorkItem.bind(null, approval.id)}
+        />
       ) : null}
       {approval.status === 'failed_resume' && canDecide(access) ? (
         <form action={retryWorkItem.bind(null, approval.id)} className="mt-4">

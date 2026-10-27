@@ -36,7 +36,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       workspaceId: ctx.workspace.id,
     })
     if ('error' in decided && decided.error) {
-      return NextResponse.json({ error: decided.error }, { status: decided.status })
+      const fields = 'fields' in decided && decided.fields ? { fields: decided.fields } : {}
+      return NextResponse.json({ error: decided.error, ...fields }, { status: decided.status })
     }
     return NextResponse.json({
       id,
