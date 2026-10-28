@@ -52,6 +52,17 @@ test('declared reasonRequired wins over the binary default', () => {
   assert.ok(!requiresReason(env, 'reject'))
 })
 
+test('explicit empty reasonRequired opts out of the binary default', () => {
+  const env = envelope({ reasonRequired: [] })
+  assert.deepEqual(resolveReasonRequired(env), [])
+  assert.ok(!requiresReason(env, 'reject'), 'a binary-shaped request with [] stays reason-free')
+  assert.deepEqual(
+    validateAnswerSubmission({ envelope: env, decision: 'reject', openedRefs: [] }),
+    [],
+    'host re-validation must not demand a reason when the list is explicitly empty',
+  )
+})
+
 test('resolveReasonRequired dedupes and drops blank entries', () => {
   const env = envelope({ allowedActions: richAllowed, reasonRequired: ['reject', 'reject', '  ', ''] })
   assert.deepEqual(resolveReasonRequired(env), ['reject'])

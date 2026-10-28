@@ -127,7 +127,10 @@ function externalLinkList(value: unknown): ExternalLink[] | undefined {
 
 /**
  * `reasonRequired` (hitl-spec 3.6): answer values that need a reason. A malformed
- * value is refused rather than silently dropped (spec 7).
+ * value is refused rather than silently dropped (spec 7). An explicit `[]` stays `[]`:
+ * that opts out of the reason prompt (the binary default `["reject"]` from
+ * `resolveReasonRequired` only applies when the field is absent). Absent/null stay
+ * `undefined` so the binary-shaped default still applies in @hitly/core.
  */
 function reasonRequiredList(value: unknown): string[] | undefined {
   if (value === undefined || value === null) return undefined
@@ -139,7 +142,7 @@ function reasonRequiredList(value: unknown): string[] | undefined {
     const entry = (item as string).trim()
     if (!out.includes(entry)) out.push(entry)
   }
-  return out.length > 0 ? out : undefined
+  return out
 }
 
 function originDetails(entries: Record<string, string | undefined>): Record<string, string> | undefined {

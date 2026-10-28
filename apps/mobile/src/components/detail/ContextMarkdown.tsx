@@ -1,7 +1,13 @@
 import { type ReactNode } from 'react'
 import { Linking, Pressable, Text, View, StyleSheet } from 'react-native'
 import { lexer, type Token, type Tokens } from 'marked'
-import { normalizeExternalLinks, type ApprovalAttachment, type ExternalLink } from '@hitly/core'
+import {
+  mustOpenItems,
+  normalizeExternalLinks,
+  type ApprovalAttachment,
+  type ContextItemRef,
+  type ExternalLink,
+} from '@hitly/core'
 import { colors } from '../../theme'
 
 function openUrl(url?: string) {
@@ -161,14 +167,22 @@ export function ContextMarkdown({
   value,
   externalUrls,
   attachments,
+  onOpenItem,
 }: {
   value?: string
   externalUrls?: ExternalLink[]
   attachments?: ApprovalAttachment[]
+  /**
+   * Report an opened gating (mustOpen) item. When present, mustOpen links and
+   * attachments route through this instead of a plain `Linking.openURL`, so the
+   * host records the `opened` audit event (hitl-spec 3.7/5.2) that unlocks answering.
+   */
+  onOpenItem?: (item: ContextItemRef) => void
 }) {
   const markdown = value?.trim()
   const links = normalizeExternalLinks(externalUrls)
   const files = attachments?.filter((file) => file.name.trim()) ?? []
+  const gateItems = mustOpenItems({ externalUrls, attachments })
   const empty = !markdown && links.length === 0 && files.length === 0
   let body: ReactNode = null
   if (markdown) {
@@ -187,25 +201,50 @@ export function ContextMarkdown({
       {links.length > 0 ? (
         <View style={styles.meta}>
           <Text style={styles.metaTitle}>Links</Text>
-          {links.map((link) => (
-            <Pressable key={link.url} onPress={() => openUrl(link.url)}>
-              <Text style={styles.link}>{link.label || link.url}</Text>
-            </Pressable>
-          ))}
+          {links.map((link) => {
+            const gating = gateItems.find((item) => item.kind === 'link' && item.url === link.url)
+            return (
+              <Pressable
+                key={link.url}
+                onPress={() => {
+                  if (gating) {
+                    onOpenItem?.(gating)
+                    return
+                  }
+                  openUrl(link.url)
+                }}
+              >
+                <Text style={styles.link}>{link.label || link.url}</Text>
+              </Pressable>
+            )
+          })}
         </View>
       ) : null}
       {files.length > 0 ? (
         <View style={styles.meta}>
           <Text style={styles.metaTitle}>Attachments</Text>
           <Text style={styles.muted}>File preview is not implemented yet.</Text>
-          {files.map((file) => (
-            <Pressable key={`${file.name}:${file.url ?? ''}`} onPress={() => openUrl(file.url)} disabled={!file.url}>
-              <Text style={file.url ? styles.link : styles.paragraph}>
-                {file.name}
-                {file.contentType ? ` · ${file.contentType}` : ''}
-              </Text>
-            </Pressable>
-          ))}
+          {files.map((file) => {
+            const gating = gateItems.find((item) => item.kind === 'attachment' && item.url === file.url)
+            return (
+              <Pressable
+                key={`${file.name}:${file.url ?? ''}`}
+                onPress={() => {
+                  if (gating) {
+                    onOpenItem?.(gating)
+                    return
+                  }
+                  openUrl(file.url)
+                }}
+                disabled={!file.url}
+              >
+                <Text style={file.url ? styles.link : styles.paragraph}>
+                  {file.name}
+                  {file.contentType ? ` · ${file.contentType}` : ''}
+                </Text>
+              </Pressable>
+            )
+          })}
         </View>
       ) : null}
     </View>

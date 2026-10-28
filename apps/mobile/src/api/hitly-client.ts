@@ -99,6 +99,13 @@ export function createHitlyClient(options: ClientOptions) {
     decide(id: string, body: { decision: Decision; editedArgs?: Record<string, unknown>; response?: string; reason?: string }) {
       return request(`/api/v1/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify(body) })
     },
+    /** Record that this reviewer opened a context item (hitl-spec 3.7, client-reported opens). */
+    open(id: string, ref: string) {
+      return request<{ ok: true; ref: string; openedAt: string }>(`/api/v1/approvals/${id}/opens`, {
+        method: 'POST',
+        body: JSON.stringify({ ref }),
+      })
+    },
     retryResume(id: string) {
       return request(`/api/v1/approvals/${id}/retry-resume`, { method: 'POST' })
     },
