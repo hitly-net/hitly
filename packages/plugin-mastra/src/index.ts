@@ -89,11 +89,15 @@ function attachmentList(value: unknown): ApprovalAttachment[] | undefined {
     const record = asRecord(item)
     const name = optionalString(record.name)
     if (!name) continue
-    out.push({
-      name,
-      url: optionalString(record.url),
-      contentType: optionalString(record.contentType),
-    })
+    const file: ApprovalAttachment = { name }
+    const url = optionalString(record.url)
+    if (url) file.url = url
+    const contentType = optionalString(record.contentType)
+    if (contentType) file.contentType = contentType
+    const ref = optionalString(record.ref)
+    if (ref) file.ref = ref
+    if (record.mustOpen === true) file.mustOpen = true
+    out.push(file)
   }
   return out.length > 0 ? out : undefined
 }
@@ -109,11 +113,36 @@ function externalLinkList(value: unknown): ExternalLink[] | undefined {
       const url = optionalString(record.url)
       if (url) {
         const label = optionalString(record.label)
-        out.push(label ? { url, label } : { url })
+        const ref = optionalString(record.ref)
+        const link: ExternalLink = { url }
+        if (label) link.label = label
+        if (ref) link.ref = ref
+        if (record.mustOpen === true) link.mustOpen = true
+        out.push(link)
       }
     }
   }
   return out.length > 0 ? out : undefined
+}
+
+/**
+ * `reasonRequired` (hitl-spec 3.6): answer values that need a reason. A malformed
+ * value is refused rather than silently dropped (spec 7). An explicit `[]` stays `[]`:
+ * that opts out of the reason prompt (the binary default `["reject"]` from
+ * `resolveReasonRequired` only applies when the field is absent). Absent/null stay
+ * `undefined` so the binary-shaped default still applies in @hitly/core.
+ */
+function reasonRequiredList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim())) {
+    throw new Error('reasonRequired must be an array of non-empty answer values')
+  }
+  const out: string[] = []
+  for (const item of value) {
+    const entry = (item as string).trim()
+    if (!out.includes(entry)) out.push(entry)
+  }
+  return out
 }
 
 function originDetails(entries: Record<string, string | undefined>): Record<string, string> | undefined {
@@ -129,9 +158,10 @@ function resumeKind(handle: MastraResumeHandle): MastraResumeKind {
 }
 
 function decisionResumeData(payload: DecisionPayload): Record<string, unknown> {
-  if (payload.decision === 'edit') return { approved: true, ...payload.editedArgs }
-  if (payload.decision === 'respond') return { approved: true, response: payload.response }
-  return { approved: payload.decision === 'accept' }
+  const reason = payload.reason ? { reason: payload.reason } : {}
+  if (payload.decision === 'edit') return { approved: true, ...payload.editedArgs, ...reason }
+  if (payload.decision === 'respond') return { approved: true, response: payload.response, ...reason }
+  return { approved: payload.decision === 'accept', ...reason }
 }
 
 const MAX_RESUME_BODY = 64_000
@@ -248,6 +278,7 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
       : undefined
   const editReason =
     body.editReason && typeof body.editReason === 'object' ? (body.editReason as Record<string, unknown>) : undefined
+  const reasonRequired = reasonRequiredList(suspendPayload.reasonRequired ?? body.reasonRequired)
 
   return {
     action: {
@@ -265,6 +296,7 @@ export function ingestMastra(raw: unknown): ApprovalEnvelope & { origin: OriginR
       optionalString(suspendPayload.reason),
     externalUrls: externalLinkList(suspendPayload.externalUrls) ?? externalLinkList(body.externalUrls),
     attachments: attachmentList(suspendPayload.attachments) ?? attachmentList(body.attachments),
+    ...(reasonRequired ? { reasonRequired } : {}),
     resumeSchema: asRecord(body.resumeSchema),
     expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : undefined,
     editableFields: editableFields as any,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, StyleSheet } from 'react-native'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
-import { allowedActionsFor } from '@hitly/core'
+import { allowedActionsFor, type ContextItemRef } from '@hitly/core'
 import { colors } from '../../src/theme'
 import { useSession } from '../../src/providers/SessionProvider'
 import { StatusHeader } from '../../src/components/detail/StatusHeader'
@@ -29,6 +29,7 @@ export default function WorkItemDetailScreen() {
   const router = useRouter()
   const [detail, setDetail] = useState<ApprovalDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [openedRefs, setOpenedRefs] = useState<string[]>([])
 
   useEffect(() => {
     if (!client || !id || !token) return
@@ -53,6 +54,29 @@ export default function WorkItemDetailScreen() {
 
   const allowed = allowedActionsFor(detail.envelope.allowedActions)
   const expired = isExpired(detail)
+
+  /** Context refs this reviewer has opened on this screen (per-reviewer gating, hitl-spec 3.7). */
+  const openedContextRefs = openedRefs
+  const approvalId = detail.id
+
+  /**
+   * Open a gating (mustOpen) context item and record the open: the host refuses an
+   * answer while a must-open item has no recorded `opened` event for this reviewer
+   * (spec 3.7/5.2), so a plain Linking.openURL without this report would dead-end
+   * the reviewer with a 400 on submit.
+   */
+  async function openContextItem(item: ContextItemRef) {
+    if (item.url) {
+      void Linking.openURL(item.url).catch(() => undefined)
+    }
+    if (!client || openedContextRefs.includes(item.ref)) return
+    try {
+      await client.open(approvalId, item.ref)
+      setOpenedRefs((current) => (current.includes(item.ref) ? current : [...current, item.ref]))
+    } catch {
+      // The open was not recorded; the item keeps gating the answer until it is opened again.
+    }
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
@@ -92,6 +116,7 @@ export default function WorkItemDetailScreen() {
         value={detail.envelope.contextMarkdown}
         externalUrls={detail.envelope.externalUrls}
         attachments={detail.envelope.attachments}
+        onOpenItem={openContextItem}
       />
       <ArgsBlock args={detail.envelope.action.args} />
       <DecisionHistory decisions={detail.decisions} />
@@ -111,6 +136,8 @@ export default function WorkItemDetailScreen() {
         <DecisionBar
           allowed={allowed}
           envelope={detail.envelope}
+          openedRefs={openedContextRefs}
+          onOpen={openContextItem}
           onDecide={async (decision, extra) => {
             try {
               await client?.decide(detail.id, { decision, ...extra })
