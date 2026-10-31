@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, StyleSheet } from 'react-native'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
 import { allowedActionsFor, type ContextItemRef } from '@hitly/core'
@@ -46,6 +46,20 @@ export default function WorkItemDetailScreen() {
       cancelled = true
     }
   }, [client, id, screenEpoch, token])
+
+  // hitl-spec 5.2: record `presented` once when the ask is first shown to a
+  // reviewer who can decide. Server-side it is idempotent; errors are ignored
+  // (never block the reviewer). Decides also record presented implicitly, so a
+  // lost request here cannot leave the evidence chain without a `presented`.
+  const presentedForRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!client || !detail || !detail.canAct) return
+    if (presentedForRef.current === detail.id) return
+    presentedForRef.current = detail.id
+    void client.presented(detail.id).catch(() => {
+      // best-effort only
+    })
+  }, [client, detail])
 
   if (!ready) return null
   if (!token) return <Redirect href="/(auth)/login" />

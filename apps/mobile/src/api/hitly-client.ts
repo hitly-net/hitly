@@ -18,6 +18,10 @@ type ClientOptions = {
   baseUrl: string
   token?: string | null
   workspaceId?: string | null
+  /** Sent in `x-hitly-client` so the server labels evidence `client.channel` as mobile. */
+  platform?: 'ios' | 'android'
+  /** App version shown in `x-hitly-client` (server truncates/validates). */
+  appVersion?: string
 }
 
 async function readError(response: Response) {
@@ -42,6 +46,14 @@ export function createHitlyClient(options: ClientOptions) {
     }
     if (options.token) next.authorization = `Bearer ${options.token}`
     if (options.workspaceId) next[WORKSPACE_HEADER] = options.workspaceId
+    // Device/channel hint for evidence (`hitly.evidence.v1` client field).
+    // Parsed by apps/app/lib/request-client.ts; malformed values are ignored there.
+    if (options.platform || options.appVersion) {
+      const version = options.appVersion ?? 'unknown'
+      next['x-hitly-client'] = options.platform
+        ? `hitly-mobile/${version} (${options.platform})`
+        : `hitly-mobile/${version}`
+    }
     return next
   }
 
@@ -95,6 +107,16 @@ export function createHitlyClient(options: ClientOptions) {
     },
     approval(id: string) {
       return request<ApprovalDetail>(`/api/v1/approvals/${id}`)
+    },
+    /**
+     * Record that this reviewer was FIRST shown the ask (hitl-spec 5.2).
+     * Idempotent server-side: safe to call once per screen load; later calls
+     * return the existing `presentedAt` without touching the evidence chain.
+     */
+    presented(id: string) {
+      return request<{ id: string; presentedAt: string | null }>(`/api/v1/approvals/${id}/presented`, {
+        method: 'POST',
+      })
     },
     decide(id: string, body: { decision: Decision; editedArgs?: Record<string, unknown>; response?: string; reason?: string }) {
       return request(`/api/v1/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify(body) })

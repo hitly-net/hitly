@@ -451,3 +451,78 @@ test('Unknown event returns 404', async () => {
   const response = await fetch(`${baseUrl}/events/evt_does_not_exist`)
   assert.equal(response.status, 404)
 })
+
+test('presented event and oversight.decidedBy/client render in HTML', async () => {
+  const approvalId = 'appr_presented_render'
+  const presentedEvent = buildTestEvent({
+    approval_id: approvalId,
+    event_type: 'presented',
+    seq: 2,
+    presented: {
+      presented_at: '2026-10-30T09:00:00.000Z',
+      actor: { kind: 'human', id: 'usr_alice', display: 'Alice Reviewer' },
+      source: 'host',
+      client: { channel: 'mobile', platform: 'ios', appVersion: '3.2.1' },
+    },
+  })
+  const decidedEvent = buildTestEvent({
+    approval_id: approvalId,
+    event_type: 'decided',
+    seq: 3,
+    oversight: {
+      reviewer_id: 'usr_alice',
+      decision: 'accept',
+      decided_at: '2026-10-30T09:01:00.000Z',
+      decidedBy: { kind: 'human', id: 'usr_alice', display: 'Alice Reviewer' },
+      client: { channel: 'mobile', platform: 'ios', appVersion: '3.2.1' },
+    },
+  })
+  for (const event of [presentedEvent, decidedEvent]) {
+    const post = await fetch(`${baseUrl}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    })
+    assert.equal(post.status, 200, 'events should store')
+  }
+
+  // Event page: presented block.
+  const presentedPage = await (
+    await fetch(`${baseUrl}/events/${presentedEvent.event_id}`, { headers: { Accept: 'text/html' } })
+  ).text()
+  assert.ok(presentedPage.includes('Presented'), 'presented card heading')
+  assert.ok(presentedPage.includes('2026-10-30T09:00:00.000Z'), 'first shown timestamp')
+  assert.ok(presentedPage.includes('Alice Reviewer'), 'presented actor display')
+  assert.ok(presentedPage.includes('mobile'), 'presented client channel')
+  assert.ok(presentedPage.includes('3.2.1'), 'presented client appVersion')
+
+  // Event page: decided oversight decidedBy/client.
+  const decidedPage = await (
+    await fetch(`${baseUrl}/events/${decidedEvent.event_id}`, { headers: { Accept: 'text/html' } })
+  ).text()
+  assert.ok(decidedPage.includes('Decided By'), 'decidedBy label')
+  assert.ok(decidedPage.includes('Alice Reviewer'), 'decidedBy display')
+  assert.ok(decidedPage.includes('usr_alice'), 'decidedBy id kept for machine identity')
+  assert.ok(decidedPage.includes('Client'), 'client label')
+
+  // Chain page lists the presented event type too.
+  const chainPage = await (await fetch(`${baseUrl}/a/${approvalId}`)).text()
+  assert.ok(chainPage.includes('presented'), 'chain lists presented event')
+
+  // A decided event WITHOUT the new fields still renders (fields are optional).
+  const legacy = buildTestEvent({
+    approval_id: 'appr_legacy_shape',
+    event_type: 'decided',
+    oversight: { reviewer_id: 'usr_bob', decision: 'reject' },
+  })
+  await fetch(`${baseUrl}/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(legacy),
+  })
+  const legacyPage = await (
+    await fetch(`${baseUrl}/events/${legacy.event_id}`, { headers: { Accept: 'text/html' } })
+  ).text()
+  assert.ok(legacyPage.includes('usr_bob'), 'legacy reviewer_id still renders')
+  assert.ok(!legacyPage.includes('Decided By'), 'no decidedBy block when absent')
+})

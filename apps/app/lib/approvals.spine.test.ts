@@ -15,11 +15,23 @@ import {
   memberships,
   projects,
   projectApiKeys,
+  projectMemberships,
+  projectEvents,
   approvals,
   decisionRecords,
   evidenceReceipts,
 } from '@hitly/db/schema'
-import { ingestApproval, decideApproval, parseDecisionBody, authenticateProjectKey } from './approvals'
+import {
+  ingestApproval,
+  decideApproval,
+  parseDecisionBody,
+  authenticateProjectKey,
+  markApprovalPresented,
+  retryResume,
+  getApprovalForOrigin,
+} from './approvals'
+import { getApprovalDetail } from './approval-detail'
+import { decodeTenantJson } from './tenant-crypto'
 import { loadOpenedContextRefs, recordContextOpen } from './context-opens'
 import { generateApiKey } from './keys'
 import { newId } from './ids'
@@ -1450,4 +1462,468 @@ test('gating: declared reasonRequired gates the listed answer; malformed gates r
   })
   assert.ok(!ingestDupRefs.ok, 'Duplicate context refs must be refused at ingest')
   assert.ok(!ingestDupRefs.ok && ingestDupRefs.error.includes('not unique'), 'Refusal should mention the uniqueness rule')
+})
+
+// --- `presented` (first shown) evidence, hitl-spec 5.2 / 4.3 ---
+
+test('presented: first mark sets presented_at, writes one receipt + audit row; second call is a no-op', async () => {
+  const ingestResult = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+  assert.ok(ingestResult.ok)
+  const approvalId = ingestResult.approval.id
+
+  const first = await markApprovalPresented({
+    approvalId,
+    actorUserId: userAdmin.id,
+    workspaceRole: 'admin',
+    workspaceId: workspaceA.id,
+    client: { channel: 'web' },
+  })
+  assert.ok(!('error' in first), `mark should succeed, got ${'error' in first ? first.error : ''}`)
+  assert.ok(first.presentedAt, 'first mark returns presentedAt')
+
+  const rows = await db.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1)
+  assert.ok(rows[0]?.presentedAt, 'approvals.presented_at is set')
+  assert.equal(rows[0]?.presentedByUserId, userAdmin.id)
+
+  const receipts = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(eq(evidenceReceipts.approvalId, approvalId))
+    .orderBy(asc(evidenceReceipts.seq))
+  assert.deepEqual(
+    receipts.map((r) => r.eventType),
+    ['requested', 'presented'],
+  )
+  assert.equal(receipts[0]?.seq, 1)
+  assert.equal(receipts[1]?.seq, 2)
+
+  const audit = await db
+    .select()
+    .from(projectEvents)
+    .where(and(eq(projectEvents.approvalId, approvalId), eq(projectEvents.type, 'presented')))
+  assert.equal(audit.length, 1, 'exactly one presented audit row')
+
+  // Idempotent: second call returns the same timestamp, writes nothing new.
+  const second = await markApprovalPresented({
+    approvalId,
+    actorUserId: userAdmin.id,
+    workspaceRole: 'admin',
+    workspaceId: workspaceA.id,
+  })
+  assert.ok(!('error' in second))
+  assert.equal(second.presentedAt, first.presentedAt)
+
+  const receiptsAfter = await db.select().from(evidenceReceipts).where(eq(evidenceReceipts.approvalId, approvalId))
+  assert.equal(receiptsAfter.length, 2, 'second mark adds no receipt')
+  const auditAfter = await db
+    .select()
+    .from(projectEvents)
+    .where(and(eq(projectEvents.approvalId, approvalId), eq(projectEvents.type, 'presented')))
+  assert.equal(auditAfter.length, 1, 'second mark adds no audit row')
+})
+
+test('presented: reader-role viewer is not a reviewer (no-op, stays null)', async () => {
+  const reader = { id: newId('usr'), email: `reader-${Date.now()}@test.hitly.net`, name: 'Reader User' }
+  await db.insert(users).values({ ...reader, emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(memberships).values({
+    id: newId('mem'),
+    workspaceId: workspaceA.id,
+    userId: reader.id,
+    role: 'member',
+    createdAt: new Date(),
+  })
+  await db.insert(projectMemberships).values({
+    id: newId('pm'),
+    workspaceId: workspaceA.id,
+    projectId: projectA.id,
+    userId: reader.id,
+    role: 'reader',
+    createdAt: new Date(),
+  })
+
+  try {
+    const ingestResult = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+    assert.ok(ingestResult.ok)
+
+    const outcome = await markApprovalPresented({
+      approvalId: ingestResult.approval.id,
+      actorUserId: reader.id,
+      workspaceRole: 'member',
+      workspaceId: workspaceA.id,
+      client: { channel: 'web' },
+    })
+    assert.ok(!('error' in outcome))
+    assert.equal(outcome.presentedAt, null, 'reader cannot mark presented')
+
+    const rows = await db.select().from(approvals).where(eq(approvals.id, ingestResult.approval.id)).limit(1)
+    assert.equal(rows[0]?.presentedAt, null)
+    const receipts = await db
+      .select()
+      .from(evidenceReceipts)
+      .where(eq(evidenceReceipts.approvalId, ingestResult.approval.id))
+    assert.equal(receipts.length, 1, 'only the requested receipt exists')
+  } finally {
+    await db.delete(projectMemberships).where(eq(projectMemberships.userId, reader.id))
+    await db.delete(memberships).where(eq(memberships.userId, reader.id))
+    await db.delete(users).where(eq(users.id, reader.id))
+  }
+})
+
+test('presented: marking a closed approval is a no-op', async () => {
+  const ingestResult = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+  assert.ok(ingestResult.ok)
+  // Force the lifecycle closed (a real decide may land in failed_resume, which is still open).
+  await db
+    .update(approvals)
+    .set({ status: 'decided' })
+    .where(and(eq(approvals.id, ingestResult.approval.id), eq(approvals.workspaceId, workspaceA.id)))
+
+  const outcome = await markApprovalPresented({
+    approvalId: ingestResult.approval.id,
+    actorUserId: userAdmin.id,
+    workspaceRole: 'admin',
+    workspaceId: workspaceA.id,
+  })
+  assert.ok(!('error' in outcome))
+  assert.equal(outcome.presentedAt, null, 'closed approvals are not "shown"')
+  const rows = await db.select().from(approvals).where(eq(approvals.id, ingestResult.approval.id)).limit(1)
+  assert.equal(rows[0]?.presentedAt, null)
+})
+
+test('presented: decide without prior mark writes requested(1) -> presented(2) -> decided(3) -> resume(4) in chain order', async () => {
+  const captured: Record<string, unknown>[] = []
+  const http = await import('node:http')
+  const captureServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.includes('/evidence')) {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        try {
+          const event = JSON.parse(body)
+          if (event.event_type !== 'ping') captured.push(event)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            event_id: event.event_id,
+            content_sha256: event.integrity.content_sha256,
+            store_uri: `http://localhost:19995/evidence/${event.event_id}`,
+            stored_at: new Date().toISOString(),
+          }))
+        } catch {
+          res.writeHead(400)
+          res.end()
+        }
+      })
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  await new Promise<void>((resolve) => captureServer.listen(19995, () => resolve()))
+
+  try {
+    const project = { id: newId('prj'), workspaceId: workspaceA.id, name: 'Project Presented Chain' }
+    await db.insert(projects).values({
+      ...project,
+      plugin: 'mastra',
+      credentials: {},
+      evidenceSinkType: 'http',
+      evidenceSinkConfig: { url: 'http://localhost:19995/evidence', authHeader: 'Bearer test' },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    const keyGen = generateApiKey()
+    const key = { raw: keyGen.raw, hashed: keyGen.hashed, id: newId('key') }
+    await db.insert(projectApiKeys).values({
+      id: key.id,
+      projectId: project.id,
+      workspaceId: workspaceA.id,
+      hashedKey: key.hashed,
+      prefix: keyGen.prefix,
+      name: 'Test Key Presented Chain',
+      createdAt: new Date(),
+    })
+
+    const ingestResult = await ingestApproval({
+      apiKey: key.raw,
+      body: buildMastraPayload({ projectId: project.id }),
+    })
+    assert.ok(ingestResult.ok)
+
+    const payload = parseDecisionBody({ decision: 'accept' })
+    assert.ok(payload)
+    const decided = await decideApproval({
+      approvalId: ingestResult.approval.id,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+      client: { channel: 'web', userAgent: 'Mozilla/5.0 (spine test)' },
+    })
+    assert.ok(!('error' in decided), `decide should succeed: ${'error' in decided ? decided.error : ''}`)
+
+    // All appends are awaited inside decideApproval; poll briefly for the sink writes.
+    const deadline = Date.now() + 5000
+    while (captured.length < 4 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    const types = captured.map((e) => e.event_type)
+    assert.deepEqual(types.slice(0, 3), ['requested', 'presented', 'decided'], `chain order, got ${types.join(', ')}`)
+    assert.ok(
+      types[3] === 'resumed' || types[3] === 'resume_failed',
+      `4th event is a resume outcome, got ${types[3]}`,
+    )
+    assert.deepEqual(captured.map((e) => e.seq), [1, 2, 3, 4], 'seq must be 1..4')
+
+    // Chain linkage: every event points at its predecessor.
+    for (let i = 1; i < captured.length; i++) {
+      const cur = captured[i] as { integrity: Record<string, string> }
+      const prev = captured[i - 1] as { event_id: string; integrity: Record<string, string> }
+      assert.equal(cur.integrity.prev_event_id, prev.event_id, `event ${i + 1} prev_event_id`)
+      assert.equal(cur.integrity.prev_content_sha256, prev.integrity.content_sha256, `event ${i + 1} prev hash`)
+    }
+
+    // Implicit presented carries actor + client; decided carries decidedBy + client.
+    const presentedEvent = captured[1] as {
+      presented?: { source?: string; actor?: { kind?: string; id?: string }; client?: Record<string, string> }
+    }
+    assert.equal(presentedEvent.presented?.source, 'host')
+    assert.equal(presentedEvent.presented?.actor?.kind, 'human')
+    assert.equal(presentedEvent.presented?.actor?.id, userAdmin.id)
+    assert.equal(presentedEvent.presented?.client?.channel, 'web')
+    const decidedEvent = captured[2] as {
+      oversight?: { reviewer_id?: string; decidedBy?: { kind?: string; id?: string }; client?: Record<string, string> }
+    }
+    assert.equal(decidedEvent.oversight?.reviewer_id, userAdmin.id)
+    assert.equal(decidedEvent.oversight?.decidedBy?.id, userAdmin.id)
+    assert.equal(decidedEvent.oversight?.decidedBy?.kind, 'human')
+    assert.equal(decidedEvent.oversight?.client?.channel, 'web')
+
+    await db.delete(projectApiKeys).where(eq(projectApiKeys.id, key.id))
+    await db.delete(projects).where(eq(projects.id, project.id))
+  } finally {
+    await new Promise<void>((resolve) => captureServer.close(() => resolve()))
+  }
+})
+
+test('presented: decision_records.client is stored and retryResume reuses it (retry marked in audit only)', async () => {
+  const captured: Record<string, unknown>[] = []
+  const http = await import('node:http')
+  const captureServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.includes('/evidence')) {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        try {
+          const event = JSON.parse(body)
+          if (event.event_type !== 'ping') captured.push(event)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            event_id: event.event_id,
+            content_sha256: event.integrity.content_sha256,
+            store_uri: `http://localhost:19994/evidence/${event.event_id}`,
+            stored_at: new Date().toISOString(),
+          }))
+        } catch {
+          res.writeHead(400)
+          res.end()
+        }
+      })
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  await new Promise<void>((resolve) => captureServer.listen(19994, () => resolve()))
+
+  try {
+    const project = { id: newId('prj'), workspaceId: workspaceA.id, name: 'Project Retry Client' }
+    await db.insert(projects).values({
+      ...project,
+      plugin: 'mastra',
+      credentials: {},
+      evidenceSinkType: 'http',
+      evidenceSinkConfig: { url: 'http://localhost:19994/evidence', authHeader: 'Bearer test' },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    const keyGen = generateApiKey()
+    const key = { raw: keyGen.raw, hashed: keyGen.hashed, id: newId('key') }
+    await db.insert(projectApiKeys).values({
+      id: key.id,
+      projectId: project.id,
+      workspaceId: workspaceA.id,
+      hashedKey: key.hashed,
+      prefix: keyGen.prefix,
+      name: 'Test Key Retry Client',
+      createdAt: new Date(),
+    })
+
+    const ingestResult = await ingestApproval({
+      apiKey: key.raw,
+      body: buildMastraPayload({ projectId: project.id }),
+    })
+    assert.ok(ingestResult.ok)
+
+    const mobileClient = { channel: 'mobile', platform: 'android', appVersion: '9.9.9' }
+    const payload = parseDecisionBody({ decision: 'accept' })
+    assert.ok(payload)
+    await decideApproval({
+      approvalId: ingestResult.approval.id,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+      client: mobileClient as never,
+    })
+
+    // Origin (localhost:4111) is unreachable -> resume failed -> failed_resume -> retry allowed.
+    const rows = await db.select().from(approvals).where(eq(approvals.id, ingestResult.approval.id)).limit(1)
+    assert.equal(rows[0]?.status, 'failed_resume', 'resume should have failed for retry setup')
+
+    const records = await db
+      .select()
+      .from(decisionRecords)
+      .where(eq(decisionRecords.approvalId, ingestResult.approval.id))
+      .orderBy(asc(decisionRecords.createdAt))
+    assert.equal(records.length, 1)
+    assert.ok(records[0]?.client, 'decision_records.client stored')
+    const storedClient = await decodeTenantJson(workspaceA.id, records[0]?.client as never)
+    assert.deepEqual(storedClient, mobileClient)
+
+    const retry = await retryResume({ approvalId: ingestResult.approval.id, workspaceId: workspaceA.id })
+    assert.ok(!('error' in retry), `retryResume should succeed: ${'error' in retry ? retry.error : ''}`)
+
+    const records2 = await db
+      .select()
+      .from(decisionRecords)
+      .where(eq(decisionRecords.approvalId, ingestResult.approval.id))
+      .orderBy(asc(decisionRecords.createdAt))
+    assert.equal(records2.length, 2, 'retry records a new decision row')
+    const retriedClient = await decodeTenantJson(workspaceA.id, records2[1]?.client as never)
+    assert.deepEqual(retriedClient, mobileClient, 'retry reuses the ORIGINAL stored client')
+
+    // The retry decided event must carry the original client, never a fresh web label.
+    const deadline = Date.now() + 5000
+    while (captured.filter((e) => e.event_type === 'decided').length < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    const decidedEvents = captured.filter((e) => e.event_type === 'decided') as {
+      oversight?: { client?: Record<string, string> }
+    }[]
+    assert.ok(decidedEvents.length >= 2, 'two decided events captured')
+    assert.deepEqual(decidedEvents[1]?.oversight?.client, mobileClient, 'retry keeps original device')
+
+    // The retry is marked in the audit trail only. Note: a failed resume logs
+    // type 'resume' (not 'decided'), so accept either for the decision rows.
+    const allAudit = await db
+      .select()
+      .from(projectEvents)
+      .where(eq(projectEvents.approvalId, ingestResult.approval.id))
+      .orderBy(asc(projectEvents.createdAt))
+    const decisionAudit = allAudit.filter((r) => r.type === 'decided' || r.type === 'resume')
+    assert.ok(decisionAudit.length >= 2, 'two decision audit rows (decided/resume)')
+    assert.equal(
+      decisionAudit[decisionAudit.length - 1]?.payload?.retry,
+      true,
+      'latest decision audit marked retry: true',
+    )
+    assert.notEqual(decisionAudit[0]?.payload?.retry, true, 'first decision audit row is not a retry')
+
+    await db.delete(projectApiKeys).where(eq(projectApiKeys.id, key.id))
+    await db.delete(projects).where(eq(projects.id, project.id))
+  } finally {
+    await new Promise<void>((resolve) => captureServer.close(() => resolve()))
+  }
+})
+
+test('presented: with sink none, presented_at and the project_events row are still written', async () => {
+  const project = { id: newId('prj'), workspaceId: workspaceA.id, name: 'Project Sink None' }
+  await db.insert(projects).values({
+    ...project,
+    plugin: 'mastra',
+    credentials: {},
+    evidenceSinkType: 'none',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  })
+  const keyGen = generateApiKey()
+  const key = { raw: keyGen.raw, hashed: keyGen.hashed, id: newId('key') }
+  await db.insert(projectApiKeys).values({
+    id: key.id,
+    projectId: project.id,
+    workspaceId: workspaceA.id,
+    hashedKey: key.hashed,
+    prefix: keyGen.prefix,
+    name: 'Test Key Sink None',
+    createdAt: new Date(),
+  })
+
+  try {
+    const ingestResult = await ingestApproval({
+      apiKey: key.raw,
+      body: buildMastraPayload({ projectId: project.id }),
+    })
+    assert.ok(ingestResult.ok)
+
+    const outcome = await markApprovalPresented({
+      approvalId: ingestResult.approval.id,
+      actorUserId: userAdmin.id,
+      workspaceRole: 'admin',
+      workspaceId: workspaceA.id,
+      client: { channel: 'api' },
+    })
+    assert.ok(!('error' in outcome))
+    assert.ok(outcome.presentedAt, 'presentedAt still returned without a sink')
+
+    const rows = await db.select().from(approvals).where(eq(approvals.id, ingestResult.approval.id)).limit(1)
+    assert.ok(rows[0]?.presentedAt, 'presented_at persisted even with sink none')
+    const receipts = await db
+      .select()
+      .from(evidenceReceipts)
+      .where(eq(evidenceReceipts.approvalId, ingestResult.approval.id))
+    assert.equal(receipts.length, 0, 'no receipts without a sink')
+    const audit = await db
+      .select()
+      .from(projectEvents)
+      .where(and(eq(projectEvents.approvalId, ingestResult.approval.id), eq(projectEvents.type, 'presented')))
+    assert.equal(audit.length, 1, 'audit row keeps it visible')
+  } finally {
+    await db.delete(projectApiKeys).where(eq(projectApiKeys.id, key.id))
+    await db.delete(projects).where(eq(projects.id, project.id))
+  }
+})
+
+test('presented: presentedAt is exposed in getApprovalDetail and the origin GET (null before shown)', async () => {
+  const notShown = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+  assert.ok(notShown.ok)
+  const detailNotShown = await getApprovalDetail({
+    approvalId: notShown.approval.id,
+    userId: userAdmin.id,
+    workspaceId: workspaceA.id,
+    workspaceRole: 'admin',
+  })
+  assert.ok(detailNotShown.ok)
+  assert.equal(detailNotShown.presentedAt, null, 'spec 4.3: null when never shown')
+  const originNotShown = await getApprovalForOrigin({ apiKey: apiKeyA.raw, approvalId: notShown.approval.id })
+  if (!originNotShown?.ok) throw new Error('origin GET should succeed')
+  assert.equal(originNotShown.presentedAt, null)
+
+  const shown = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+  assert.ok(shown.ok)
+  const mark = await markApprovalPresented({
+    approvalId: shown.approval.id,
+    actorUserId: userAdmin.id,
+    workspaceRole: 'admin',
+    workspaceId: workspaceA.id,
+  })
+  assert.ok(!('error' in mark) && mark.presentedAt)
+  const detailShown = await getApprovalDetail({
+    approvalId: shown.approval.id,
+    userId: userAdmin.id,
+    workspaceId: workspaceA.id,
+    workspaceRole: 'admin',
+  })
+  assert.ok(detailShown.ok)
+  assert.equal(detailShown.presentedAt, mark.presentedAt)
+  const originShown = await getApprovalForOrigin({ apiKey: apiKeyA.raw, approvalId: shown.approval.id })
+  if (!originShown?.ok) throw new Error('origin GET should succeed')
+  assert.equal(originShown.presentedAt, mark.presentedAt)
 })

@@ -14,10 +14,13 @@ import {
   type DecisionPayload,
   type EditableFieldSpec,
   type EditReasonConfig,
+  type EvidenceActor,
+  type EvidenceClient,
   type OriginRef,
   type ResumeResponse,
+  type WorkspaceRole,
 } from '@hitly/core'
-import { approvals, decisionRecords, projectApiKeys, projectRules, projects } from '@hitly/db/schema'
+import { approvals, decisionRecords, projectApiKeys, projectRules, projects, users } from '@hitly/db/schema'
 import { getPlugin } from './plugins'
 import { envelopeMetadata } from './origin'
 import { hashApiKey } from './keys'
@@ -29,7 +32,8 @@ import { newId } from './ids'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 import { approvalHasExpired } from './approval-expiry'
-import { appendEvidence, buildDecidedEvent, buildRequestedEvent, buildResumedEvent, loadLatestReceipt } from './evidence'
+import { appendEvidence, buildDecidedEvent, buildPresentedEvent, buildRequestedEvent, buildResumedEvent, loadLatestReceipt } from './evidence'
+import { canDecide, getProjectAccess } from './rbac'
 import { loadOpenedContextRefs } from './context-opens'
 import { exportOtelTrace } from './otel-trace'
 import { resumeFailureMessage } from './resume-error'
@@ -90,6 +94,124 @@ function asEnvelope(value: Record<string, unknown>): ApprovalEnvelope {
 
 function asOrigin(value: Record<string, unknown>): OriginRef {
   return value as unknown as OriginRef
+}
+
+/**
+ * Q2 (PR decision): include the person's display name in `decidedBy`/`presented`
+ * actors for external evidence sinks. Flip to false for id-only actors (no PII
+ * in sinks). Single constant so it is a one-line change.
+ */
+export const EVIDENCE_INCLUDE_ACTOR_DISPLAY = true
+
+/** Resolve the deciding human into the hitl-spec `{kind,id,display?}` actor shape (spec 4.1/4.2). */
+async function resolveReviewerActor(database: ReturnType<typeof requireDb>, actorUserId: string): Promise<EvidenceActor> {
+  let display: string | undefined
+  if (EVIDENCE_INCLUDE_ACTOR_DISPLAY && actorUserId) {
+    const rows = await database
+      .select({ name: users.name, email: users.email })
+      .from(users)
+      .where(eq(users.id, actorUserId))
+      .limit(1)
+    const person = rows[0]
+    display = person?.name || person?.email || undefined
+  }
+  return { kind: 'human', id: actorUserId, ...(display ? { display } : {}) }
+}
+
+/**
+ * Record that an ask was FIRST shown to a reviewer who can decide (hitl-spec 5.2,
+ * sets `activity.presentedAt`, spec 4.3).
+ *
+ * - Runs inside the tenant transaction with a row lock (`forUpdate`) so it
+ *   serialises with `decideApproval` and the receipt `seq` cannot fork.
+ * - Idempotent: first writer wins; later calls are no-ops.
+ * - Readers browsing the item are not reviewers: users who cannot decide do not
+ *   mark it presented.
+ * - The `presented` evidence append is fail-open (same as `requested`): sink
+ *   errors are logged as warnings, never thrown. The `presented` project event
+ *   row keeps it visible even when the sink is `none`.
+ */
+export async function markApprovalPresented(args: {
+  approvalId: string
+  actorUserId: string
+  workspaceRole: WorkspaceRole
+  workspaceId?: string
+  client?: EvidenceClient
+}): Promise<{ presentedAt: string | null } | { error: string; status: 404 }> {
+  const workspaceId = args.workspaceId ?? requireTenantWorkspaceId()
+  return withTenant(workspaceId, async () => {
+    const database = requireDb()
+    const approval = await loadApproval(args.approvalId, workspaceId, { forUpdate: true })
+    if (!approval) return { error: 'Not found', status: 404 as const }
+    const access = await getProjectAccess({
+      projectId: approval.projectId,
+      userId: args.actorUserId,
+      workspaceRole: args.workspaceRole,
+    })
+    if (!access) return { error: 'Not found', status: 404 as const }
+    if (!canDecide(access)) return { presentedAt: null }
+    if (approval.presentedAt) return { presentedAt: approval.presentedAt.toISOString() }
+    if (!isOpenApprovalStatus(approval.status) || approvalHasExpired(approval)) {
+      return { presentedAt: null }
+    }
+
+    const presentedAt = new Date()
+    // Pin updatedAt: "first shown" is audit metadata, not a lifecycle change.
+    await database
+      .update(approvals)
+      .set({
+        presentedAt,
+        presentedByUserId: args.actorUserId || null,
+        updatedAt: approval.updatedAt,
+      })
+      .where(and(eq(approvals.id, approval.id), eq(approvals.workspaceId, workspaceId)))
+
+    await logProjectEvent({
+      workspaceId,
+      projectId: approval.projectId,
+      approvalId: approval.id,
+      type: 'presented',
+      message: 'First shown to reviewer',
+      payload: { actorUserId: args.actorUserId, channel: args.client?.channel ?? null },
+    })
+
+    const envelope = asEnvelope(approval.envelope)
+    const origin = asOrigin(approval.origin)
+    try {
+      const latest = await loadLatestReceipt(approval.id, workspaceId)
+      const actor = await resolveReviewerActor(database, args.actorUserId)
+      const presentedEvent = await buildPresentedEvent({
+        approvalId: approval.id,
+        envelope,
+        origin,
+        actor,
+        client: args.client,
+        seq: latest.seq + 1,
+        prevEventId: latest.prevEventId,
+        prevContentSha256: latest.prevContentSha256,
+      })
+      await appendEvidence({
+        event: presentedEvent,
+        projectId: approval.projectId,
+        workspaceId,
+        evidenceDurable: false,
+      })
+      exportOtelTrace({ event: presentedEvent, envelope, origin, workspaceId }).catch((error) => {
+        console.error('[otel] Export failed (presented):', error)
+      })
+    } catch (error) {
+      await logProjectEvent({
+        workspaceId,
+        projectId: approval.projectId,
+        approvalId: approval.id,
+        level: 'warn',
+        type: 'evidence',
+        message: `Evidence sink append failed (presented): ${error instanceof Error ? error.message : 'unknown'}`,
+      })
+    }
+
+    return { presentedAt: presentedAt.toISOString() }
+  })
 }
 
 function withProjectCredentials(body: Record<string, unknown>, project: typeof projects.$inferSelect) {
@@ -340,6 +462,10 @@ export async function decideApproval(args: {
   actorUserId: string
   payload: DecisionPayload
   workspaceId?: string
+  /** Reviewer device/channel from the decide request (evidence `client`, spec 5.3). */
+  client?: EvidenceClient
+  /** Set by retryResume: marks the audit event only, never the evidence oversight. */
+  retry?: boolean
 }) {
   const workspaceId = args.workspaceId ?? requireTenantWorkspaceId()
   return withTenant(workspaceId, async () => {
@@ -431,7 +557,72 @@ export async function decideApproval(args: {
       origin.resumeHandle.mastraBaseUrl = project.credentials.baseUrl
     }
 
-    const latest = await loadLatestReceipt(approval.id, workspaceId)
+    let latest = await loadLatestReceipt(approval.id, workspaceId)
+    const reviewerActor = await resolveReviewerActor(database, args.actorUserId)
+
+    // Implicit `presented` on decide (hitl-spec 5.2): an API-only decide, an old
+    // mobile build, or a submit that beats the mark-presented effect still records
+    // that the ask was shown. Same transaction, same actor/client, BEFORE `decided`
+    // in the chain (spec 5.4: presented must precede decided).
+    if (!approval.presentedAt) {
+      const implicitPresentedAt = new Date()
+      await database
+        .update(approvals)
+        .set({
+          presentedAt: implicitPresentedAt,
+          presentedByUserId: args.actorUserId || null,
+          updatedAt: approval.updatedAt,
+        })
+        .where(and(eq(approvals.id, approval.id), eq(approvals.workspaceId, workspaceId)))
+      await logProjectEvent({
+        workspaceId,
+        projectId: approval.projectId,
+        approvalId: approval.id,
+        type: 'presented',
+        message: 'First shown to reviewer (implicit on decide)',
+        payload: { actorUserId: args.actorUserId, channel: args.client?.channel ?? null, implicit: true },
+      })
+      try {
+        const presentedEvent = await buildPresentedEvent({
+          approvalId: approval.id,
+          envelope,
+          origin,
+          actor: reviewerActor,
+          client: args.client,
+          seq: latest.seq + 1,
+          prevEventId: latest.prevEventId,
+          prevContentSha256: latest.prevContentSha256,
+        })
+        const presentedReceipt = await appendEvidence({
+          event: presentedEvent,
+          projectId: approval.projectId,
+          workspaceId,
+          evidenceDurable: false,
+        })
+        exportOtelTrace({ event: presentedEvent, envelope, origin, workspaceId }).catch((error) => {
+          console.error('[otel] Export failed (presented):', error)
+        })
+        if (presentedReceipt) {
+          // Carry the presented receipt forward so `decided`/`resumed` chain linearly after it.
+          latest = {
+            seq: presentedEvent.seq,
+            prevEventId: presentedEvent.event_id,
+            prevContentSha256: presentedEvent.integrity.content_sha256,
+          }
+        }
+      } catch (error) {
+        // Fail-open like `requested`: decided still fail-closes on its own append.
+        await logProjectEvent({
+          workspaceId,
+          projectId: approval.projectId,
+          approvalId: approval.id,
+          level: 'warn',
+          type: 'evidence',
+          message: `Evidence sink append failed (presented): ${error instanceof Error ? error.message : 'unknown'}`,
+        })
+      }
+    }
+
     let decidedEventId: string | undefined
     let decidedContentSha256: string | undefined
     try {
@@ -444,6 +635,8 @@ export async function decideApproval(args: {
           editedArgs: editedDelta, // Store only the delta in evidence
         },
         reviewerId: args.actorUserId,
+        decidedBy: reviewerActor,
+        client: args.client,
         seq: latest.seq + 1,
         prevEventId: latest.prevEventId ?? '',
         prevContentSha256: latest.prevContentSha256 ?? '',
@@ -594,6 +787,9 @@ export async function decideApproval(args: {
       actorUserId: args.actorUserId,
       decision: args.payload.decision,
       payload: await encodeTenantJson(workspaceId, args.payload as unknown as Record<string, unknown>),
+      client: args.client
+        ? await encodeTenantJson(workspaceId, args.client as unknown as Record<string, unknown>)
+        : null,
       resumeError,
       resumeResponse: resumeResponse
         ? await encodeTenantJson(workspaceId, resumeResponse as unknown as Record<string, unknown>)
@@ -610,7 +806,7 @@ export async function decideApproval(args: {
       level: resumeError ? 'error' : 'info',
       type: resumeError ? 'resume' : 'decided',
       message: resumeError ?? `Decision ${args.payload.decision}`,
-      payload: { decision: args.payload.decision },
+      payload: { decision: args.payload.decision, ...(args.retry ? { retry: true } : {}) },
     })
 
     const updated = await loadApproval(approval.id, workspaceId)
@@ -675,11 +871,19 @@ export async function retryResume(args: { approvalId: string; workspaceId?: stri
       return { error: 'No decision to retry', status: 409 as const }
     }
     const payload = (await decodeTenantJson(workspaceId, record.payload)) as unknown as DecisionPayload
+    // A retry must not relabel the original decider's device: reuse the STORED
+    // client and actor. The retry itself is marked in the project event only
+    // (payload.retry), never in oversight.client.
+    const storedClient = record.client
+      ? ((await decodeTenantJson(workspaceId, record.client)) as unknown as EvidenceClient)
+      : undefined
     return decideApproval({
       approvalId: approval.id,
       actorUserId: record.actorUserId ?? '',
       payload,
       workspaceId,
+      client: storedClient,
+      retry: true,
     })
   })
 }
@@ -898,6 +1102,8 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
       status: approval.status,
       decision,
       response: typeof payload.response === 'string' ? payload.response : undefined,
+      // hitl-spec 4.3: null when the request was never shown to a reviewer.
+      presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
     }
   })
 }

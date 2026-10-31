@@ -123,3 +123,62 @@ test('LangGraph PATCH uses baseUrl/token, not taskQueue', async () => {
   assert.equal(parsed.address, undefined, 'LangGraph config should not have address')
   assert.equal(parsed.namespace, undefined, 'LangGraph config should not have namespace')
 })
+
+test('presented() POSTs /api/v1/approvals/:id/presented', async () => {
+  let capturedUrl: string | undefined
+  let capturedInit: RequestInit | undefined
+  const mockFetch = async (url: string, init?: RequestInit) => {
+    capturedUrl = url
+    capturedInit = init
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'apr_123', presentedAt: '2026-10-30T09:00:00.000Z' }),
+    } as Response
+  }
+  globalThis.fetch = mockFetch as typeof fetch
+
+  const client = createHitlyClient({ baseUrl: 'http://localhost:3001', token: 'test-token' })
+  const result = await client.presented('apr_123')
+  assert.ok(capturedUrl?.endsWith('/api/v1/approvals/apr_123/presented'), `URL was ${capturedUrl}`)
+  assert.equal(capturedInit?.method, 'POST')
+  assert.equal(result.presentedAt, '2026-10-30T09:00:00.000Z')
+})
+
+test('presented() surfaces server errors so callers can swallow them', async () => {
+  const mockFetch = async (_url: string, _init?: RequestInit) => {
+    return {
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'boom' }),
+    } as Response
+  }
+  globalThis.fetch = mockFetch as typeof fetch
+
+  const client = createHitlyClient({ baseUrl: 'http://localhost:3001', token: 'test-token' })
+  await assert.rejects(() => client.presented('apr_123'), { message: /boom/ })
+})
+
+test('x-hitly-client header carries platform and appVersion when provided', async () => {
+  let capturedHeaders: Record<string, string> | undefined
+  const mockFetch = async (_url: string, init?: RequestInit) => {
+    capturedHeaders = init?.headers as Record<string, string>
+    return { ok: true, status: 200, json: async () => ({ id: 'apr_1', presentedAt: null }) } as Response
+  }
+  globalThis.fetch = mockFetch as typeof fetch
+
+  const client = createHitlyClient({
+    baseUrl: 'http://localhost:3001',
+    token: 'test-token',
+    platform: 'ios',
+    appVersion: '2.1.0',
+  })
+  await client.presented('apr_1')
+  assert.equal(capturedHeaders?.['x-hitly-client'], 'hitly-mobile/2.1.0 (ios)')
+
+  // Without platform/appVersion the header is omitted entirely.
+  capturedHeaders = undefined
+  const plain = createHitlyClient({ baseUrl: 'http://localhost:3001', token: 'test-token' })
+  await plain.presented('apr_1')
+  assert.equal(capturedHeaders?.['x-hitly-client'], undefined)
+})

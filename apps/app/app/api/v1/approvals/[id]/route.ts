@@ -14,6 +14,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
         status: origin.status,
         decision: origin.decision,
         response: origin.response,
+        presentedAt: origin.presentedAt,
       })
     }
     if (origin.status !== 401) {
