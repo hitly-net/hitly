@@ -1,4 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Platform } from 'react-native'
+import Constants from 'expo-constants'
 import { createHitlyClient, probeInstance } from '../api/hitly-client'
 import { CLOUD_BASE_URL } from '../config'
 import { deleteItem, getItem, setItem } from '../storage'
@@ -93,7 +95,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const client = useMemo(() => {
     if (!instance) return null
-    return createHitlyClient({ baseUrl: instance.baseUrl, token, workspaceId })
+    // Device/channel hint for evidence `client` (hitl-spec 5.3: device data only
+    // in our evidence format). Best-effort: version comes from the Expo config.
+    const appVersion =
+      Constants.expoConfig?.version ??
+      (Constants.expoConfig?.extra as { version?: string } | undefined)?.version ??
+      undefined
+    return createHitlyClient({
+      baseUrl: instance.baseUrl,
+      token,
+      workspaceId,
+      platform: Platform.OS === 'android' ? 'android' : 'ios',
+      ...(appVersion ? { appVersion } : {}),
+    })
   }, [instance, token, workspaceId])
 
   const refreshWorkspaces = useCallback(

@@ -4,6 +4,8 @@ import {
   hashEvidenceContent,
   type ApprovalEnvelope,
   type DecisionPayload,
+  type EvidenceActor,
+  type EvidenceClient,
   type EvidenceEvent,
   type OriginRef,
 } from '@hitly/core'
@@ -82,12 +84,90 @@ export async function buildRequestedEvent(args: {
   return event
 }
 
+export async function buildPresentedEvent(args: {
+  approvalId: string
+  envelope: ApprovalEnvelope
+  origin: OriginRef
+  /** The reviewer the ask was first shown to (hitl-spec 5.1 actor). */
+  actor: EvidenceActor
+  /** Device/channel the reviewer reached HITLy with, when known. */
+  client?: EvidenceClient
+  seq: number
+  prevEventId?: string
+  prevContentSha256?: string
+}): Promise<EvidenceEvent> {
+  const occurredAt = new Date().toISOString()
+  const proposedSha256 = await hashActionArgs(args.envelope.action.args)
+
+  const event: EvidenceEvent = {
+    spec: EVIDENCE_SPEC_VERSION,
+    event_id: newId('evt').slice(0, 36),
+    approval_id: args.approvalId,
+    event_type: 'presented',
+    seq: args.seq,
+    occurred_at: occurredAt,
+    origin: {
+      plugin: args.origin.plugin,
+      projectId: args.origin.projectId,
+      runId: args.origin.runId,
+      stepId: args.origin.stepId,
+    },
+    agent: {
+      agentId: args.origin.agentId ?? args.envelope.agentId,
+      traceId: args.origin.traceId ?? args.envelope.traceId,
+      spanId: args.origin.spanId ?? args.envelope.spanId,
+    },
+    system: {
+      systemId: args.origin.systemId ?? args.envelope.systemId,
+      inventoryId: args.origin.inventoryId ?? args.envelope.inventoryId,
+    },
+    policy: {
+      policyId: args.origin.policyId ?? args.envelope.policyId,
+      policyRationale: args.origin.policyRationale ?? args.envelope.policyRationale,
+      riskTier: args.origin.riskTier ?? args.envelope.riskTier,
+    },
+    action: {
+      name: args.envelope.action.name,
+      args: args.envelope.action.args,
+      proposed_sha256: proposedSha256,
+    },
+    // hitl-spec 5.2: `presented` is host-sourced and carries no `data`.
+    presented: {
+      presented_at: occurredAt,
+      actor: args.actor,
+      source: 'host',
+      ...(args.client ? { client: args.client } : {}),
+    },
+    retention: {
+      min_days: 180,
+      expires_at: args.envelope.expiresAt,
+    },
+    integrity: {
+      alg: 'sha256',
+      prev_event_id: args.prevEventId,
+      prev_content_sha256: args.prevContentSha256,
+      content_sha256: '',
+    },
+    toolName: args.origin.toolName ?? args.envelope.toolName,
+    sensitivity: args.envelope.sensitivity,
+    dataCategories: args.envelope.dataCategories,
+    externalUrls: args.envelope.externalUrls,
+  }
+
+  event.integrity.content_sha256 = await hashEvidenceContent(event)
+  return event
+}
+
 export async function buildDecidedEvent(args: {
   approvalId: string
   envelope: ApprovalEnvelope
   origin: OriginRef
   payload: DecisionPayload
   reviewerId: string
+  /** hitl-spec 4.1 `decidedBy` ({kind,id,display?}) for the deciding human. */
+  decidedBy?: EvidenceActor
+  /** Device/channel of the decision (evidence-format-only field, spec 5.3). */
+  client?: EvidenceClient
   seq: number
   prevEventId: string
   prevContentSha256: string
@@ -143,6 +223,8 @@ export async function buildDecidedEvent(args: {
     action,
     oversight: {
       reviewer_id: args.reviewerId,
+      ...(args.decidedBy ? { decidedBy: args.decidedBy } : {}),
+      ...(args.client ? { client: args.client } : {}),
       decision: args.payload.decision,
       decided_at: occurredAt,
       response: args.payload.response,

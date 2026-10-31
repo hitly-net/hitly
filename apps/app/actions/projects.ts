@@ -18,7 +18,9 @@ import { newId } from '@/lib/ids'
 import { insertNewProject } from '@/lib/project-create'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
 import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from '@/lib/rbac'
+import { clientFromHeaders } from '@/lib/request-client'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
+import { headers } from 'next/headers'
 
 function revalidateWorkItem(approvalId: string, projectId: string) {
   revalidatePath('/inbox')
@@ -415,7 +417,9 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
       editReasonText: editReasonText || undefined,
     })
     if (!payload) throw new Error('Invalid decision')
-    const result = await decideApproval({ approvalId, actorUserId: user.id, payload, workspaceId: workspace.id })
+    // Evidence `client`: the web server action is, by definition, a cookie session.
+    const client = clientFromHeaders(await headers())
+    const result = await decideApproval({ approvalId, actorUserId: user.id, payload, workspaceId: workspace.id, client })
     if (result.error && (result.status === 500 || result.status === 400)) {
       const returnPath = workItemReturnPath(formData, approval)
       const errorParam = encodeURIComponent(result.error)

@@ -300,6 +300,9 @@ export const approvals = pgTable(
     origin: jsonb('origin').$type<Record<string, unknown>>().notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 255 }),
     expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }),
+    /** First shown to a reviewer who can decide (hitl-spec 5.2 `presented`). */
+    presentedAt: timestamp('presented_at', { precision: 3, withTimezone: true }),
+    presentedByUserId: id('presented_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -349,6 +352,8 @@ export const decisionRecords = pgTable(
     actorUserId: id('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
     decision: decisionEnum('decision').notNull(),
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    /** Reviewer device/channel at decide time (EvidenceClient, tenant-encrypted). */
+    client: jsonb('client').$type<Record<string, unknown>>(),
     resumeError: text('resume_error'),
     resumeResponse: jsonb('resume_response').$type<Record<string, unknown>>(),
     createdAt: createdAt(),
