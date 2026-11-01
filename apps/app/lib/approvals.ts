@@ -119,6 +119,33 @@ async function resolveReviewerActor(database: ReturnType<typeof requireDb>, acto
 }
 
 /**
+ * B1 guard (hitly#97): a `presented` record may only be written for an ask that
+ * has NOT been decided yet. Migration 0004 added `presented_at` as NULL with no
+ * backfill, so pre-migration rows can legitimately be `failed_resume` (an open
+ * status) with `presented_at IS NULL`. Appending `presented` for those rows
+ * would place it AFTER `decided` in the evidence chain, which is false evidence
+ * (an item that was decided was necessarily already shown) and breaks the
+ * hitl-spec 5.2/5.4 order requested -> presented -> decided -> resumed.
+ *
+ * Returns true when the row is still `pending`, or - belt and braces for odd
+ * states - when no decision has ever been recorded for it.
+ */
+async function mayRecordPresented(
+  database: ReturnType<typeof requireDb>,
+  approvalId: string,
+  status: string,
+  workspaceId: string,
+): Promise<boolean> {
+  if (status === 'pending') return true
+  const decidedRows = await database
+    .select({ id: decisionRecords.id })
+    .from(decisionRecords)
+    .where(and(eq(decisionRecords.approvalId, approvalId), eq(decisionRecords.workspaceId, workspaceId)))
+    .limit(1)
+  return decidedRows.length === 0
+}
+
+/**
  * Record that an ask was FIRST shown to a reviewer who can decide (hitl-spec 5.2,
  * sets `activity.presentedAt`, spec 4.3).
  *
@@ -152,6 +179,12 @@ export async function markApprovalPresented(args: {
     if (!canDecide(access)) return { presentedAt: null }
     if (approval.presentedAt) return { presentedAt: approval.presentedAt.toISOString() }
     if (!isOpenApprovalStatus(approval.status) || approvalHasExpired(approval)) {
+      return { presentedAt: null }
+    }
+    // Legacy rows from before migration 0004 have presented_at NULL even when
+    // already decided (failed_resume is an open status). A late `presented`
+    // would land after `decided` in the chain: false evidence, never recorded.
+    if (!(await mayRecordPresented(database, approval.id, approval.status, workspaceId))) {
       return { presentedAt: null }
     }
 
@@ -564,7 +597,14 @@ export async function decideApproval(args: {
     // mobile build, or a submit that beats the mark-presented effect still records
     // that the ask was shown. Same transaction, same actor/client, BEFORE `decided`
     // in the chain (spec 5.4: presented must precede decided).
-    if (!approval.presentedAt) {
+    // B1 (hitly#97): never for retries (the row is already decided) and never for
+    // legacy rows that carry a decision with presented_at NULL - see
+    // `mayRecordPresented`; a `presented` appended there would land after `decided`.
+    if (
+      !args.retry &&
+      !approval.presentedAt &&
+      (await mayRecordPresented(database, approval.id, approval.status, workspaceId))
+    ) {
       const implicitPresentedAt = new Date()
       await database
         .update(approvals)

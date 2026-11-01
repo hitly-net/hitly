@@ -1834,6 +1834,164 @@ test('presented: decision_records.client is stored and retryResume reuses it (re
   }
 })
 
+test('presented: legacy failed_resume row with presented_at NULL never gets presented after decided (B1)', async () => {
+  const captured: Record<string, unknown>[] = []
+  const http = await import('node:http')
+  const captureServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.includes('/evidence')) {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        try {
+          const event = JSON.parse(body)
+          if (event.event_type !== 'ping') captured.push(event)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            event_id: event.event_id,
+            content_sha256: event.integrity.content_sha256,
+            store_uri: `http://localhost:19993/evidence/${event.event_id}`,
+            stored_at: new Date().toISOString(),
+          }))
+        } catch {
+          res.writeHead(400)
+          res.end()
+        }
+      })
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  await new Promise<void>((resolve) => captureServer.listen(19993, () => resolve()))
+
+  try {
+    const project = { id: newId('prj'), workspaceId: workspaceA.id, name: 'Project Legacy Presented' }
+    await db.insert(projects).values({
+      ...project,
+      plugin: 'mastra',
+      credentials: {},
+      evidenceSinkType: 'http',
+      evidenceSinkConfig: { url: 'http://localhost:19993/evidence', authHeader: 'Bearer test' },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    const keyGen = generateApiKey()
+    const key = { raw: keyGen.raw, hashed: keyGen.hashed, id: newId('key') }
+    await db.insert(projectApiKeys).values({
+      id: key.id,
+      projectId: project.id,
+      workspaceId: workspaceA.id,
+      hashedKey: key.hashed,
+      prefix: keyGen.prefix,
+      name: 'Test Key Legacy Presented',
+      createdAt: new Date(),
+    })
+
+    const ingestResult = await ingestApproval({
+      apiKey: key.raw,
+      body: buildMastraPayload({ projectId: project.id }),
+    })
+    assert.ok(ingestResult.ok)
+    const approvalId = ingestResult.approval.id
+
+    // Decide on a NEW row: presented is recorded before decided, as spec 5.2 requires.
+    const payload = parseDecisionBody({ decision: 'accept' })
+    assert.ok(payload)
+    const decided = await decideApproval({
+      approvalId,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+      client: { channel: 'web' },
+    })
+    assert.ok(!('error' in decided), `decide should succeed: ${'error' in decided ? decided.error : ''}`)
+    // Origin (localhost:4111) is unreachable -> failed_resume, which is an OPEN status.
+    const decidedRows = await db.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1)
+    assert.equal(decidedRows[0]?.status, 'failed_resume', 'failed_resume setup for the legacy probe')
+
+    const chainDeadline = Date.now() + 5000
+    while (captured.length < 4 && Date.now() < chainDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    assert.deepEqual(
+      captured.map((e) => e.event_type),
+      ['requested', 'presented', 'decided', 'resume_failed'],
+      'new rows chain presented before decided',
+    )
+
+    // Simulate a row that predates migration 0004: the columns were added NULL
+    // with no backfill, so wipe the presented_at column and the presented
+    // receipt + audit row. canAct is true for failed_resume, so both write
+    // paths used to append a `presented` AFTER `decided` here (B1).
+    await db
+      .update(approvals)
+      .set({ presentedAt: null, presentedByUserId: null })
+      .where(and(eq(approvals.id, approvalId), eq(approvals.workspaceId, workspaceA.id)))
+    await db
+      .delete(evidenceReceipts)
+      .where(and(eq(evidenceReceipts.approvalId, approvalId), eq(evidenceReceipts.eventType, 'presented')))
+    await db
+      .delete(projectEvents)
+      .where(and(eq(projectEvents.approvalId, approvalId), eq(projectEvents.type, 'presented')))
+    captured.length = 0
+
+    // P1: reviewer opens the legacy item -> MarkPresented must be a no-op.
+    const mark = await markApprovalPresented({
+      approvalId,
+      actorUserId: userAdmin.id,
+      workspaceRole: 'admin',
+      workspaceId: workspaceA.id,
+      client: { channel: 'web' },
+    })
+    assert.ok(!('error' in mark))
+    assert.equal(mark.presentedAt, null, 'no late presented for an already-decided legacy row')
+
+    // P2: retryResume must not append presented (it would land after decided).
+    const retry = await retryResume({ approvalId, workspaceId: workspaceA.id })
+    assert.ok(!('error' in retry), `retryResume should succeed: ${'error' in retry ? retry.error : ''}`)
+    const retryDeadline = Date.now() + 5000
+    while (captured.filter((e) => e.event_type === 'decided').length < 1 && Date.now() < retryDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    assert.deepEqual(
+      captured.map((e) => e.event_type),
+      ['decided', 'resume_failed'],
+      `retry must append no presented event, got ${captured.map((e) => e.event_type).join(', ')}`,
+    )
+
+    const rows = await db.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1)
+    assert.equal(rows[0]?.presentedAt, null, 'presented_at stays NULL through mark + retry')
+
+    const receipts = await db
+      .select()
+      .from(evidenceReceipts)
+      .where(eq(evidenceReceipts.approvalId, approvalId))
+      .orderBy(asc(evidenceReceipts.seq))
+    const chainTypes = receipts.map((r) => r.eventType)
+    assert.ok(
+      !chainTypes.includes('presented'),
+      `no presented receipt in the chain after the legacy wipe: ${chainTypes.join(', ')}`,
+    )
+    const firstDecided = chainTypes.indexOf('decided')
+    const lastPresented = chainTypes.lastIndexOf('presented')
+    assert.ok(
+      lastPresented === -1 || lastPresented < firstDecided,
+      'spec 5.4: presented never appears after decided',
+    )
+
+    const audit = await db
+      .select()
+      .from(projectEvents)
+      .where(and(eq(projectEvents.approvalId, approvalId), eq(projectEvents.type, 'presented')))
+    assert.equal(audit.length, 0, 'no presented audit rows')
+
+    await db.delete(projectApiKeys).where(eq(projectApiKeys.id, key.id))
+    await db.delete(projects).where(eq(projects.id, project.id))
+  } finally {
+    await new Promise<void>((resolve) => captureServer.close(() => resolve()))
+  }
+})
+
 test('presented: with sink none, presented_at and the project_events row are still written', async () => {
   const project = { id: newId('prj'), workspaceId: workspaceA.id, name: 'Project Sink None' }
   await db.insert(projects).values({
