@@ -184,3 +184,52 @@ test('hashEvidenceContent produces same hash regardless of field order', async (
 
   assert.equal(hash1, hash2)
 })
+
+test('hashEvidenceContent is stable with the optional presented/decidedBy/client fields', async () => {
+  const base: EvidenceEvent = {
+    spec: 'hitly.evidence.v1',
+    event_id: 'evt_123',
+    approval_id: 'apr_456',
+    event_type: 'decided',
+    seq: 2,
+    occurred_at: '2024-01-01T00:00:00.000Z',
+    origin: { plugin: 'mastra', projectId: 'prj_789', runId: 'run_abc' },
+    action: { name: 'test', args: {}, proposed_sha256: 'abc123' },
+    oversight: { reviewer_id: 'usr_1', decision: 'accept', decided_at: '2024-01-01T00:00:00.000Z' },
+    retention: { min_days: 180 },
+    integrity: { alg: 'sha256', content_sha256: '' },
+  }
+
+  const hashBaseline = await hashEvidenceContent(base)
+
+  // Explicitly-undefined optional fields must not change the hash (they are
+  // dropped by JSON serialisation, so old readers see identical bytes).
+  const withUndefined: EvidenceEvent = {
+    ...base,
+    presented: undefined,
+    oversight: { ...base.oversight, decidedBy: undefined, client: undefined },
+  }
+  assert.equal(await hashEvidenceContent(withUndefined), hashBaseline)
+
+  // SET optional fields must change the hash (they are real content).
+  const withPresented: EvidenceEvent = {
+    ...base,
+    presented: {
+      presented_at: '2024-01-01T00:00:00.000Z',
+      actor: { kind: 'human', id: 'usr_1', display: 'Alice' },
+      source: 'host',
+      client: { channel: 'mobile', platform: 'ios', appVersion: '1.2.3' },
+    },
+  }
+  assert.notEqual(await hashEvidenceContent(withPresented), hashBaseline)
+
+  const withDecidedBy: EvidenceEvent = {
+    ...base,
+    oversight: {
+      ...base.oversight,
+      decidedBy: { kind: 'human', id: 'usr_1', display: 'Alice' },
+      client: { channel: 'web' },
+    },
+  }
+  assert.notEqual(await hashEvidenceContent(withDecidedBy), hashBaseline)
+})

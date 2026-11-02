@@ -47,6 +47,17 @@ interface EvidenceEvent {
     response?: string
     edit_reason?: string
     edit_reason_text?: string
+    /** hitl-spec 4.1 decider ({kind,id,display?}); additive alongside reviewer_id. */
+    decidedBy?: { kind?: string; id?: string; display?: string }
+    /** Reviewer device/channel (hitly.evidence.v1 only; no IP). */
+    client?: { channel?: string; platform?: string; appVersion?: string; userAgent?: string }
+  }
+  /** `presented` events: first shown to a reviewer who can decide (hitl-spec 5.2). */
+  presented?: {
+    presented_at?: string
+    actor?: { kind?: string; id?: string; display?: string }
+    source?: string
+    client?: { channel?: string; platform?: string; appVersion?: string; userAgent?: string }
   }
   retention?: {
     min_days?: number
@@ -231,6 +242,16 @@ function renderEventHtml(event: EvidenceEvent, baseUrl: string): string {
         <div class="label">Reviewer ID</div>
         <div class="value mono">${escapeHtml(event.oversight.reviewer_id)}</div>
       </div>` : ''}
+      ${event.oversight.decidedBy?.id ? `
+      <div>
+        <div class="label">Decided By</div>
+        <div class="value">${escapeHtml(event.oversight.decidedBy.display || event.oversight.decidedBy.id)}${event.oversight.decidedBy.kind ? ` <span class="mono">(${escapeHtml(event.oversight.decidedBy.kind)}: ${escapeHtml(event.oversight.decidedBy.id)})</span>` : ''}</div>
+      </div>` : ''}
+      ${event.oversight.client?.channel ? `
+      <div>
+        <div class="label">Client</div>
+        <div class="value">${escapeHtml(event.oversight.client.channel)}${event.oversight.client.platform ? ` (${escapeHtml(event.oversight.client.platform)}${event.oversight.client.appVersion ? ` v${escapeHtml(event.oversight.client.appVersion)}` : ''})` : ''}</div>
+      </div>` : ''}
       ${event.oversight.decision ? `
       <div>
         <div class="label">Decision</div>
@@ -255,6 +276,33 @@ function renderEventHtml(event: EvidenceEvent, baseUrl: string): string {
       <div class="full">
         <div class="label">Edit Reason Text</div>
         <pre>${escapeHtml(event.oversight.edit_reason_text)}</pre>
+      </div>` : ''}
+    </div>
+  </div>` : ''}
+
+  ${event.presented ? `
+  <div class="card">
+    <h2 style="margin: 0 0 1rem; font-size: 1.125rem;">Presented</h2>
+    <div class="grid">
+      ${event.presented.presented_at ? `
+      <div class="full">
+        <div class="label">First Shown At</div>
+        <div class="value mono">${escapeHtml(event.presented.presented_at)}</div>
+      </div>` : ''}
+      ${event.presented.actor?.id ? `
+      <div>
+        <div class="label">Shown To</div>
+        <div class="value">${escapeHtml(event.presented.actor.display || event.presented.actor.id)}${event.presented.actor.kind ? ` <span class="mono">(${escapeHtml(event.presented.actor.kind)})</span>` : ''}</div>
+      </div>` : ''}
+      ${event.presented.client?.channel ? `
+      <div>
+        <div class="label">Client</div>
+        <div class="value">${escapeHtml(event.presented.client.channel)}${event.presented.client.platform ? ` (${escapeHtml(event.presented.client.platform)}${event.presented.client.appVersion ? ` v${escapeHtml(event.presented.client.appVersion)}` : ''})` : ''}</div>
+      </div>` : ''}
+      ${event.presented.source ? `
+      <div>
+        <div class="label">Source</div>
+        <div class="value">${escapeHtml(event.presented.source)}</div>
       </div>` : ''}
     </div>
   </div>` : ''}

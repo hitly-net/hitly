@@ -41,6 +41,44 @@ export interface EvidenceActionFinal {
   delta?: Record<string, unknown>
 }
 
+/** Actor kinds mirror hitl-spec `decidedBy.kind` (SPEC 5.1). */
+export type EvidenceActorKind = 'human' | 'group' | 'service'
+
+/** `{kind, id, display?}` - the hitl-spec `decidedBy` shape (SPEC 4.1/4.2). */
+export interface EvidenceActor {
+  kind: EvidenceActorKind
+  id: string
+  display?: string
+}
+
+/**
+ * How the reviewer reached HITLy. Device/channel details live ONLY here, in
+ * `hitly.evidence.v1` (our evidence format): SPEC 5.3 says device data appears
+ * only where an evidence format explicitly defines it, so it never goes into a
+ * `hitl/event/v0` object. No IP address is recorded (privacy; minimal device data).
+ */
+export interface EvidenceClient {
+  channel: 'web' | 'mobile' | 'api'
+  /** Mobile only, when known. */
+  platform?: 'ios' | 'android'
+  /** Mobile only, when sent by the app. */
+  appVersion?: string
+  /** Raw UA, truncated to 512 chars, control chars stripped. */
+  userAgent?: string
+}
+
+/**
+ * `presented` payload (SPEC 5.2): recorded once, when the request is FIRST shown
+ * to a reviewer who can decide. Sets `activity.presentedAt` (SPEC 4.3).
+ * Like `decided`, it is host-sourced and carries no `data`.
+ */
+export interface EvidencePresented {
+  presented_at: string
+  actor: EvidenceActor
+  source: 'host'
+  client?: EvidenceClient
+}
+
 export interface EvidenceOversight {
   reviewer_id?: string
   decision?: Decision
@@ -48,6 +86,10 @@ export interface EvidenceOversight {
   response?: string
   edit_reason?: string
   edit_reason_text?: string
+  /** Who decided, in the hitl-spec `decidedBy` shape (SPEC 4.1). Additive; `reviewer_id` stays. */
+  decidedBy?: EvidenceActor
+  /** Which device/channel the decision was made from. Additive. */
+  client?: EvidenceClient
 }
 
 export interface EvidenceRetention {
@@ -77,6 +119,8 @@ export interface EvidenceEvent {
 
   action: EvidenceActionProposal | EvidenceActionFinal
   oversight?: EvidenceOversight
+  /** Present on `presented` events only (SPEC 5.2): first shown to a reviewer. */
+  presented?: EvidencePresented
   retention: EvidenceRetention
   integrity: EvidenceIntegrity
 

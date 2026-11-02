@@ -1,9 +1,35 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useFormStatus } from 'react-dom'
 import type { AllowedActions, Decision } from '@hitly/core'
+
+/**
+ * Records `presented` (hitl-spec 5.2): the ask was FIRST shown to this
+ * reviewer, who can decide. Explicit POST from a client component only
+ * rendered when the reviewer can act, so Next prefetch, RefreshOnFocus
+ * re-renders and polling are never counted as "shown". Fires once per mount;
+ * the endpoint is idempotent. Never blocks rendering; errors are swallowed.
+ */
+export function MarkPresented({ approvalId }: { approvalId: string }) {
+  const sentRef = useRef(false)
+  useEffect(() => {
+    if (sentRef.current) return
+    sentRef.current = true
+    fetch(`/api/v1/approvals/${approvalId}/presented`, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    })
+      .then((response) => {
+        if (!response.ok) console.warn('[hitly] mark presented failed', response.status)
+      })
+      .catch((error) => {
+        console.warn('[hitly] mark presented failed', error)
+      })
+  }, [approvalId])
+  return null
+}
 
 export function RefreshOnFocus() {
   const router = useRouter()

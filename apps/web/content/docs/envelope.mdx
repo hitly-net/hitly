@@ -356,8 +356,11 @@ See [S3 evidence](/docs/s3) for S3 configuration fields, local setup with Garage
 HITL<sub><i>y</i></sub> stores a **receipt index only**, not the payload as system of record. Evidence lifecycle:
 
 - `requested` - Approval ingested (fail-open: continues on sink error)
+- `presented` - Ask first shown to a reviewer who can decide (fail-open). Host-sourced, no `data`; sets `activity.presentedAt` (hitl-spec 4.3/5.2). Emitted at most once per approval; a decision without a prior `presented` records one immediately before `decided` so the chain order is preserved.
 - `decided` - Reviewer decided (**fail-closed**: origin NOT resumed if sink fails)
 - `resumed` / `resume_failed` - Origin resume outcome (fail-open)
+
+`decided` events carry `oversight.decidedBy` (`{kind, id, display?}`, hitl-spec 4.1: `kind: "human"` with a stable per-person id) and, when the reviewer's client was recognised, `oversight.client` (`{channel: "web" | "mobile" | "api", platform?, appVersion?, userAgent?}`). `presented` events carry the same information as `presented.actor` and `presented.client`. Device/channel details live **only** in `hitly.evidence.v1` (hitl-spec 5.3 permits them only where an evidence format defines them): no IP address is recorded, there is no read tracking, and `presented` means *opened*, never *read*.
 
 Each event includes integrity fields (`prev_event_id`, `prev_content_sha256`, `content_sha256`) for tamper detection.
 

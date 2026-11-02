@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { decideApproval, parseDecisionBody } from '@/lib/approvals'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { withApiTenant } from '@/lib/api-session'
+import { clientFromHeaders } from '@/lib/request-client'
 import { requireDb } from '@/lib/tenant'
 import { and, eq } from 'drizzle-orm'
 import { approvals } from '@hitly/db/schema'
@@ -34,6 +35,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       actorUserId: ctx.session.user.id,
       payload,
       workspaceId: ctx.workspace.id,
+      client: clientFromHeaders(request.headers),
     })
     if ('error' in decided && decided.error) {
       const fields = 'fields' in decided && decided.fields ? { fields: decided.fields } : {}

@@ -60,6 +60,8 @@ export type ApprovalDetail = {
   assignedUserId: string | null
   createdAt: string
   expiresAt: string | null
+  /** hitl-spec 4.3: ISO when first shown to a reviewer who can decide; null if never. */
+  presentedAt?: string | null
   envelope: ApprovalEnvelope
   origin: OriginRef
   originFields: OriginField[]

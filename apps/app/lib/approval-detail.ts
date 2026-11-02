@@ -79,6 +79,8 @@ export async function getApprovalDetail(args: {
       assignedUserId: approval.assignedUserId,
       createdAt: approval.createdAt,
       expiresAt: approval.expiresAt,
+      // hitl-spec 4.3: null when the request was never shown to a reviewer.
+      presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
       envelope: {
         ...envelope,
         metadata: envelopeMetadata(envelope, origin),
