@@ -67,6 +67,12 @@ export type ApprovalDetail = {
   originFields: OriginField[]
   canAct: boolean
   canCancel: boolean
+  /**
+   * Gating refs (hitl-spec 3.7) THIS reviewer has recorded opens for. The detail
+   * screen hydrates its mustOpen checklist from these, so re-entering an approval
+   * does not force opening every item again (hitly#96 S10).
+   */
+  openedRefs?: string[]
   decisions: DecisionRow[]
   evidenceReceipt?: { storeUri: string }
 }

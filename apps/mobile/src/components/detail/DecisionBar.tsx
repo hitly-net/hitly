@@ -160,10 +160,10 @@ export function DecisionBar({
           onChange={(text) => setReasonFlow((flow) => (flow ? { ...flow, reason: text } : flow))}
           onSubmit={() => {
             if (!reasonFlow) return
-            const reason = reasonFlow.reason.trim()
-            if (!reason) return
-            const { decision, extra } = reasonFlow
-            setReasonFlow(null)
+            if (!reasonFlow.reason.trim()) return
+            const { decision, extra, reason } = reasonFlow
+            // Do NOT clear the flow before deciding: run() clears it on success, and
+            // a refused/failed submit keeps the sheet open with the typed reason (S11).
             void run(decision, { ...extra, reason })
           }}
           onClose={() => setReasonFlow(null)}

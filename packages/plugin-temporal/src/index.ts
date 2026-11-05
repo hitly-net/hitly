@@ -232,6 +232,11 @@ export const temporalPlugin: HitlyPlugin = {
         signalPayload.args = payload.editedArgs
       }
 
+      // Include the reviewer's typed reason (hitl-spec 4.1) when present
+      if (payload.reason) {
+        signalPayload.reason = payload.reason
+      }
+
       // Signal the workflow
       await workflow.signal(HITLY_TEMPORAL_SIGNAL, signalPayload)
 

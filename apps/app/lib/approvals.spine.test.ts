@@ -1135,13 +1135,16 @@ test('decided event includes oversight.response, edit_reason, edit_reason_text',
     })
     assert.ok(ingestResult.ok)
 
-    // Decide with edit + reason + response
+    // Decide with edit + reason + response. The reason carries surrounding spaces on
+    // purpose: S3 (hitly#96) stores/forwards the reviewer's typed reason verbatim.
+    const typedReason = '  Customer asked for a partial refund; amount adjusted. '
     const payload = parseDecisionBody({
       decision: 'edit',
       editedArgs: { amount: 70 },
       editReason: 'pricing_correction',
       editReasonText: 'Corrected amount based on customer complaint',
       response: 'Approved with adjustment',
+      reason: typedReason,
     })
     assert.ok(payload)
 
@@ -1169,6 +1172,9 @@ test('decided event includes oversight.response, edit_reason, edit_reason_text',
     assert.ok(oversight, 'Oversight should exist')
     assert.equal(oversight.decision, 'edit', 'Decision should be edit')
     assert.equal(oversight.response, 'Approved with adjustment', 'Response should be present')
+    // S2 (hitly#96): the typed reviewer reason belongs in the oversight block too,
+    // kept verbatim (S3) and distinct from edit_reason/edit_reason_text.
+    assert.equal(oversight.reason, typedReason, 'Typed reason should be preserved verbatim')
     assert.equal(oversight.edit_reason, 'pricing_correction', 'Edit reason should be present')
     assert.equal(oversight.edit_reason_text, 'Corrected amount based on customer complaint', 'Edit reason text should be present')
 
