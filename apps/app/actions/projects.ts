@@ -399,7 +399,9 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     if (!canDecide(access)) throw new Error('You cannot decide this work item')
     const decision = String(formData.get('decision') ?? '')
     const response = String(formData.get('response') ?? '').trim()
-    const reason = String(formData.get('reason') ?? '').trim()
+    // Trim only for the emptiness check: the reviewer's typed reason is stored and
+    // forwarded verbatim so the audit trail shows exactly what was typed.
+    const reason = String(formData.get('reason') ?? '')
     const editReason = String(formData.get('editReason') ?? '').trim()
     const editReasonText = String(formData.get('editReasonText') ?? '').trim()
     const editedRaw = String(formData.get('editedArgs') ?? '').trim()
@@ -411,7 +413,7 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     const payload = parseDecisionBody({
       decision,
       response: response || undefined,
-      reason: reason || undefined,
+      reason: reason.trim() ? reason : undefined,
       editedArgs,
       editReason: editReason || undefined,
       editReasonText: editReasonText || undefined,

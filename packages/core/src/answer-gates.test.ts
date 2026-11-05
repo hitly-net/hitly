@@ -140,6 +140,44 @@ test('findContextItem accepts refs and raw urls', () => {
   assert.equal(findContextItem(env, 'https://other.example.com/x'), undefined)
 })
 
+test('ignore (decline) is gated by mustOpen like every other answer', () => {
+  const env = envelope({
+    allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: true, cancel: false },
+    externalUrls: [{ url: 'https://example.com/policy', ref: 'policy', label: 'Policy', mustOpen: true }],
+  })
+  // Spec 3.7 gates the ANSWER controls; ignore is an answer. Web, mobile and the
+  // host all refuse an ignore while a must-open item is unopened (hitly#96 S4).
+  assert.deepEqual(validateAnswerSubmission({ envelope: env, decision: 'accept', openedRefs: [] }), [
+    {
+      field: 'context.items.policy',
+      message: '"Policy" must be opened before you can answer.',
+    },
+  ])
+  assert.deepEqual(validateAnswerSubmission({ envelope: env, decision: 'ignore', openedRefs: [] }), [
+    {
+      field: 'context.items.policy',
+      message: '"Policy" must be opened before you can answer.',
+    },
+  ])
+  assert.deepEqual(
+    validateAnswerSubmission({ envelope: env, decision: 'ignore', reason: 'Not my queue', openedRefs: ['policy'] }),
+    [],
+    'a declined answer passes once the must-open items are opened',
+  )
+})
+
+test('ignore honours a declared reasonRequired entry', () => {
+  const env = envelope({
+    allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: true, cancel: false },
+    reasonRequired: ['ignore'],
+  })
+  assert.equal(validateAnswerSubmission({ envelope: env, decision: 'ignore', openedRefs: [] }).length, 1)
+  assert.deepEqual(
+    validateAnswerSubmission({ envelope: env, decision: 'ignore', reason: 'Duplicate run', openedRefs: [] }),
+    [],
+  )
+})
+
 // --- ingest validation (spec 7, at request ingest) ---
 
 test('validateRequestGating refuses reasonRequired values that are not allowed answers', () => {
