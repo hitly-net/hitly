@@ -153,6 +153,7 @@ Reviewer routes authenticate with Better Auth: session cookie (web) or `Authoriz
 | `GET` | `/api/v1/inbox` | Session | List items. Query: `scope=all\|open\|closed`, `q`, `projectId` |
 | `GET` | `/api/v1/inbox/summary` | Session | `{ pending, failedResume, decidedToday, projectCount }` |
 | `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct` |
+| `GET` | `/api/v1/approvals/:id/original-request` | Session | Original create-once payload, unredacted, byte-exact (see below) |
 | `POST` | `/api/v1/approvals/:id/decide` | Session | Existing decide JSON |
 | `POST` | `/api/v1/approvals/:id/retry-resume` | Session | Existing retry |
 | `POST` | `/api/v1/approvals/:id/cancel` | Session | Force-close without origin resume |
@@ -223,6 +224,14 @@ Hosted URL validation: GET this path; require `ok === true` and `product === "hi
   "decisions": []
 }
 ```
+
+### Original request (view / copy)
+
+`GET /api/v1/approvals/:id/original-request` (session auth) returns the stored create-once `hitl/request/v0` payload as canonical JSON, its sha256, the canonical args hash and the requested-event evidence anchor. The web detail page shows it under "View original request" with a Copy button.
+
+- **Unredacted and byte-exact.** The payload is served exactly as stored and copied verbatim. No secret redaction is applied, because changing any byte would break off-host verification against the hash. Treat the copy as sensitive.
+- **Same viewers as the approval detail.** Only a signed-in workspace member with access to the project can read it. Unknown ids, other workspaces and members without project access all get `404`. Project API keys cannot read it. Responses are `Cache-Control: no-store`.
+- **Never logged.** Payload contents are never written to logs. Logs carry only ids and hashes, and pass through the secret-redaction policy.
 
 ### Workspaces
 
