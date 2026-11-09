@@ -52,7 +52,7 @@ const ORDER = [
   'pageId',
 ] as const
 
-const HIDDEN = new Set(['mastraBaseUrl', 'resumeUrl', 'deploymentUrl', 'address', 'signal', 'metadata'])
+const HIDDEN = new Set(['mastraBaseUrl', 'resumeUrl', 'deploymentUrl', 'address', 'signal', 'metadata', 'cbAuthToken', 'cb_auth_token', 'lifecycleEvents', 'deliveryEventIds', 'idempotencyKey'])
 
 function take(target: Record<string, string>, key: string, value: unknown) {
   if (typeof value === 'string' && value.trim()) target[key] = value.trim()

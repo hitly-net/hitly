@@ -1,20 +1,48 @@
 # @hitly/plugin-http
 
-Generic HTTP callback adapter: ingest a payload with `resumeUrl`, resume by POSTing the decision JSON plus ingest `metadata`. n8n Wait nodes, Notion automations, Make, and custom webhooks all use this plugin id.
+Generic HTTP pause/resume adapter. The origin supplies `resumeUrl`; on decide HITLy POSTs JSON back.
 
-## Answer gating (hitl-spec 3.6/3.7)
+## Callback upgrades (M0h)
 
-Ingest envelopes may gate the answer:
+Default behaviour is unchanged: a **single** POST of the final decision so n8n Wait (`$execution.resumeUrl`) keeps working (`$json.decision`, `$json.id`, `$json.metadata`).
 
-- `reasonRequired: ["reject", …]` — answer values that need a non-empty `reason`
-  (binary accept/reject requests default to `["reject"]` when the field is absent;
-  an explicit `[]` opts out).
-- `externalUrls[]` / `attachments[]` entries carry an optional `ref` (gating key) and
-  `mustOpen: true`. Until the deciding reviewer recorded an open for every must-open
-  item, the host refuses acting answers (accept/reject/edit/respond). Ignore/dismiss
-  is exempt — it takes no action and does not require opens.
+Optional ingest fields:
 
-The resume POST carries the reviewer's fields verbatim: `decision`, `response`,
-`reason` (typed reason, untrimmed), `editedArgs`, `editReason`, `editReasonText`.
-Reviewer clients report opens via `POST /api/v1/approvals/:id/opens` (see
-`docs/mobile.md`, *Decide & answer gating*).
+| Field | Effect |
+| --- | --- |
+| `cb_auth_token` / `cbAuthToken` | Sent as `Authorization: Bearer …` on every delivery. Stored on the encrypted origin handle; never echoed in API projections, resumeData, metadata, or logs. |
+| `lifecycleEvents` | Opt-in list: `presented`, `opened`, `cancelled`, `expired`. Without this, only the final decision POST is sent. |
+
+### HMAC (optional for receivers)
+
+When the project has a `resumeSecret` (already provisioned for every project), deliveries also send:
+
+- `X-HITLy-Timestamp` — Unix seconds
+- `X-HITLy-Event-Id` — stable across retries; receivers MUST dedupe
+- `X-HITLy-Key-Id` — `hk_` + first 8 hex of SHA-256(secret)
+- `X-HITLy-Signature` — hex HMAC-SHA256 over `timestamp + "." + rawBody`
+
+Verification is optional. Baseline for Grok Bot: Bearer + `get_decision`. To verify:
+
+```ts
+import { verifyHttpSignature } from "@hitly/plugin-http"
+
+const result = verifyHttpSignature({
+  secret: process.env.HITLY_RESUME_SECRET!,
+  rawBody, // exact bytes received
+  timestampHeader: req.headers["x-hitly-timestamp"],
+  signatureHeader: req.headers["x-hitly-signature"],
+  keyIdHeader: req.headers["x-hitly-key-id"],
+})
+if (!result.ok) reject() // missing | bad_timestamp | skew | bad_signature | key_mismatch
+```
+
+Reject timestamps older than 5 minutes. Retries reuse the same `X-HITLy-Event-Id`.
+
+### Typed answers
+
+When the decision payload includes `answer`, the callback `type` is `answered` and `answer` carries the typed value (ready for ask_user). Approvals send `answer: null`.
+
+### Amended values
+
+The stored create-once request is never changed. Approver `editedArgs` travel only in the decision/response callback body.

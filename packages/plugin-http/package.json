@@ -20,15 +20,19 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./sign": "./src/sign.ts",
+    "./deliver": "./src/deliver.ts"
   },
   "scripts": {
+    "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hitly/core": "*"
   },
   "devDependencies": {
+    "tsx": "^4.23.12",
     "typescript": "^5.9.2"
   }
 }
