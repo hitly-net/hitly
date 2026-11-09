@@ -1572,11 +1572,13 @@ test('presented: concurrent marks racing a decide write exactly one presented be
   )
   const seqs = receipts.map((r) => r.seq)
   assert.equal(new Set(seqs).size, seqs.length, `seqs must be unique, got ${seqs.join(', ')}`)
-  const presentedIdx = types.indexOf('presented')
-  const decidedIdx = types.indexOf('decided')
+  // lastIndexOf, not indexOf: a late duplicate presented after decided would
+  // still pass first-presented < first-decided (the S97-S2 race check).
+  const firstDecided = types.indexOf('decided')
+  const lastPresented = types.lastIndexOf('presented')
   assert.ok(
-    presentedIdx !== -1 && decidedIdx !== -1 && presentedIdx < decidedIdx,
-    `presented before decided, got ${types.join(', ')}`,
+    lastPresented !== -1 && firstDecided !== -1 && lastPresented < firstDecided,
+    `presented never after decided, got ${types.join(', ')}`,
   )
 
   const audit = await db
@@ -1607,6 +1609,106 @@ test('presented: concurrent marks racing a decide write exactly one presented be
   assert.equal(soloTypes[0], 'requested')
   assert.equal(soloTypes[1], 'presented')
   assert.equal(soloTypes[2], 'decided')
+  assert.ok(
+    soloTypes.lastIndexOf('presented') < soloTypes.indexOf('decided'),
+    `solo decide: presented never after decided, got ${soloTypes.join(', ')}`,
+  )
+})
+
+test('presented: late duplicate after decided is ignored; mark before decide still records presented', async () => {
+  // Happy path: a normal presented before decide still writes presented then decided.
+  const before = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+  assert.ok(before.ok)
+  const markBefore = await markApprovalPresented({
+    approvalId: before.approval.id,
+    actorUserId: userAdmin.id,
+    workspaceRole: 'admin',
+    workspaceId: workspaceA.id,
+    client: { channel: 'web' },
+  })
+  assert.ok(!('error' in markBefore) && markBefore.presentedAt, 'mark before decide records presented')
+  const payload = parseDecisionBody({ decision: 'accept' })
+  assert.ok(payload)
+  const decideBefore = await decideApproval({
+    approvalId: before.approval.id,
+    actorUserId: userAdmin.id,
+    payload,
+    workspaceId: workspaceA.id,
+    client: { channel: 'web' },
+  })
+  assert.ok(!('error' in decideBefore), 'decide after mark should succeed')
+  const beforeReceipts = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(eq(evidenceReceipts.approvalId, before.approval.id))
+    .orderBy(asc(evidenceReceipts.seq))
+  const beforeTypes = beforeReceipts.map((row) => row.eventType)
+  assert.equal(beforeTypes.filter((t) => t === 'presented').length, 1)
+  assert.ok(
+    beforeTypes.lastIndexOf('presented') < beforeTypes.indexOf('decided'),
+    `mark-then-decide order, got ${beforeTypes.join(', ')}`,
+  )
+
+  // Late duplicate: decide first (implicit presented + decided), then wipe
+  // presented_at and set status back to pending so the old `if (status ===
+  // 'pending') return true` shortcut would accept a second presented AFTER
+  // decided. The after-decided guard must ignore it: no state change, no
+  // fresh presentation after decided.
+  const late = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+  assert.ok(late.ok)
+  const approvalId = late.approval.id
+  const decided = await decideApproval({
+    approvalId,
+    actorUserId: userAdmin.id,
+    payload,
+    workspaceId: workspaceA.id,
+    client: { channel: 'web' },
+  })
+  assert.ok(!('error' in decided), 'solo decide should succeed')
+  const afterDecide = await db.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1)
+  const presentedAtBeforeMark = afterDecide[0]?.presentedAt ?? null
+  assert.ok(presentedAtBeforeMark, 'decide writes implicit presented_at')
+
+  await db
+    .update(approvals)
+    .set({ presentedAt: null, presentedByUserId: null, status: 'pending' })
+    .where(and(eq(approvals.id, approvalId), eq(approvals.workspaceId, workspaceA.id)))
+
+  const markLate = await markApprovalPresented({
+    approvalId,
+    actorUserId: userAdmin.id,
+    workspaceRole: 'admin',
+    workspaceId: workspaceA.id,
+    client: { channel: 'web' },
+  })
+  assert.ok(!('error' in markLate))
+  assert.equal(markLate.presentedAt, null, 'late presented after decided is ignored')
+
+  const lateRows = await db.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1)
+  assert.equal(lateRows[0]?.presentedAt, null, 'presented_at must not change')
+  assert.equal(lateRows[0]?.status, 'pending', 'status must not change')
+
+  const lateReceipts = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(eq(evidenceReceipts.approvalId, approvalId))
+    .orderBy(asc(evidenceReceipts.seq))
+  const lateTypes = lateReceipts.map((row) => row.eventType)
+  assert.equal(
+    lateTypes.filter((t) => t === 'presented').length,
+    1,
+    `no duplicate presented after decided, got ${lateTypes.join(', ')}`,
+  )
+  assert.ok(
+    lateTypes.lastIndexOf('presented') < lateTypes.indexOf('decided'),
+    `late presented must not appear after decided, got ${lateTypes.join(', ')}`,
+  )
+
+  const lateAudit = await db
+    .select()
+    .from(projectEvents)
+    .where(and(eq(projectEvents.approvalId, approvalId), eq(projectEvents.type, 'presented')))
+  assert.equal(lateAudit.length, 1, 'late mark adds no presented audit row')
 })
 
 test('presented: reader-role viewer is not a reviewer (no-op, stays null)', async () => {
