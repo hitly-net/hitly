@@ -162,6 +162,12 @@ export interface DecisionPayload {
   editedArgs?: Record<string, unknown>
   response?: string
   /**
+   * The reviewer's typed answer (ask_user). Carried verbatim into the origin
+   * callback (`type: 'answered'`); validated at parse time — see
+   * `validateTypedAnswer`. Never silently dropped: a malformed answer is a 400.
+   */
+  answer?: unknown
+  /**
    * The reviewer's reason (hitl-spec 4.1). Required when the chosen decision triggers
    * `reasonRequired` (3.6). Optional otherwise; the host never invents or coerces it.
    */
@@ -326,3 +332,4 @@ export type {
 
 export * from "./address-classify.ts"
 export * from "./answer-gates.ts"
+export * from "./typed-answer.ts"
