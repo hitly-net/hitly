@@ -116,6 +116,7 @@ describe('isSecretRequestKey', () => {
   it('folds Armenian lookalikes, schwa, and accented Latin (dropping NFKD+marks or those map entries must go red)', () => {
     assert.equal(isSecretRequestKey('t\u0585ken'), true, 'Armenian OH o in token')
     assert.equal(isSecretRequestKey('\u057Decret'), true, 'Armenian SE s in secret')
+    assert.equal(isSecretRequestKey('s\u0567cret'), true, 'Armenian EH e in secret')
     assert.equal(isSecretRequestKey('s\u0259cret'), true, 'Latin schwa in secret')
     assert.equal(isSecretRequestKey('s\u018Fcret'), true, 'Latin capital schwa in secret')
     assert.equal(isSecretRequestKey('s\u04D9cret'), true, 'Cyrillic schwa in secret')
@@ -123,6 +124,20 @@ describe('isSecretRequestKey', () => {
     assert.equal(isSecretRequestKey('t\u00F2ken'), true, 'Latin ò in token')
     assert.equal(isSecretRequestKey('s\u0301ecret'), true, 'combining acute on s')
     assert.equal(isSecretRequestKey('fooT\u0585kenValue'), true, 'Armenian o inside fooTokenValue')
+  })
+
+  it('redacts strong-secret + suffix keys (bare SAFE_SUFFIXES bypass must go red)', () => {
+    for (const key of [
+      'password_type',
+      'secret_count',
+      'apiKey_required',
+      'authTokenType',
+      'access_token_type',
+      'clientSecretType',
+      'cookie_required',
+    ]) {
+      assert.equal(isSecretRequestKey(key), true, key)
+    }
   })
 })
 
@@ -227,6 +242,35 @@ describe('redactRequestPayload', () => {
     assert.equal(redacted.secret, REDACTED)
     assert.equal(redacted.cookie, REDACTED)
     assert.equal(redacted.signature, REDACTED)
+  })
+
+  it('redacts strong-secret + suffix fields (bare SAFE_SUFFIXES bypass must go red)', () => {
+    const redacted = redactRequestPayload({
+      amount: 4,
+      tokenCount: 9,
+      signatureRequired: true,
+      tokenType: 'Bearer',
+      secretly: 'visible-not-a-secret-key',
+      password_type: 'canary-password-type',
+      secret_count: 'canary-secret-count',
+      apiKey_required: 'canary-apikey-required',
+      authTokenType: 'canary-auth-token-type',
+      access_token_type: 'canary-access-token-type',
+      clientSecretType: 'canary-client-secret-type',
+      cookie_required: 'canary-cookie-required',
+    }) as Record<string, unknown>
+    assert.equal(redacted.amount, 4)
+    assert.equal(redacted.tokenCount, 9)
+    assert.equal(redacted.signatureRequired, true)
+    assert.equal(redacted.tokenType, 'Bearer')
+    assert.equal(redacted.secretly, 'visible-not-a-secret-key')
+    assert.equal(redacted.password_type, REDACTED)
+    assert.equal(redacted.secret_count, REDACTED)
+    assert.equal(redacted.apiKey_required, REDACTED)
+    assert.equal(redacted.authTokenType, REDACTED)
+    assert.equal(redacted.access_token_type, REDACTED)
+    assert.equal(redacted.clientSecretType, REDACTED)
+    assert.equal(redacted.cookie_required, REDACTED)
   })
 })
 

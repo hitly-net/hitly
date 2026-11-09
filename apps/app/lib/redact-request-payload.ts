@@ -14,8 +14,11 @@
  *
  * Key matching is segment-aware (camelCase, snake, kebab, SCREAMING) so
  * `tokenCount` / `signatureRequired` / `tokenType` / `secretly` stay visible.
- * Folding is NFKD + strip combining marks (é → e), then a small Cyrillic /
- * Greek / Armenian / schwa homoglyph map. Not the full Unicode TR39 list.
+ * A count/required/type suffix is ignored only for the weak words `token` and
+ * `signature`; strong words (password, secret, cookie, auth, …) and compounds
+ * (`access`+`token`, `api`+`key`) always redact. Folding is NFKD + strip
+ * combining marks (é → e), then a small Cyrillic / Greek / Armenian / schwa
+ * homoglyph map. Not the full Unicode TR39 list.
  */
 
 export const REDACTED = '[redacted]'
@@ -74,6 +77,8 @@ const HOMOGLYPHS: Record<string, string> = {
   '\u0584': 'p', // ք KEH
   '\u0581': 'g', // ց CO
   '\u056D': 'x', // խ XEH
+  '\u0567': 'e', // է EH
+  '\u0537': 'e', // Է
   // Schwa (Latin and Cyrillic).
   '\u0259': 'e', // ə
   '\u018F': 'e', // Ə
@@ -139,23 +144,37 @@ const EXACT_SECRET_KEYS = new Set([
   'signature',
 ])
 
-const SECRET_SEGMENTS = new Set([
-  'token',
-  'secret',
+/** Weak secret words: a trailing count/required/type suffix may keep these visible. */
+const WEAK_SEGMENTS = new Set(['token', 'signature'])
+
+/** Strong secret words: always redact, even with a count/required/type suffix. */
+const STRONG_SEGMENTS = new Set([
   'password',
   'passwd',
+  'secret',
   'cookie',
-  'signature',
-  'apikey',
   'credential',
   'credentials',
   'authorization',
   'bearer',
   'privatekey',
+  'apikey',
+  'auth',
 ])
 
-/** Last-segment allow-list: tokenCount, signatureRequired, tokenType stay visible. */
+/** Adjacent-segment compounds treated as strong (access_token_type, apiKey_required, …). */
+const STRONG_COMPOUNDS = new Set(['accesstoken', 'apikey', 'privatekey', 'authtoken', 'clientsecret'])
+
+/** Last-segment allow-list, honoured only when no strong word/compound is present. */
 const SAFE_SUFFIXES = new Set(['count', 'required', 'type'])
+
+function hasStrongSecretSegment(segs: readonly string[]): boolean {
+  if (segs.some((seg) => STRONG_SEGMENTS.has(seg))) return true
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (STRONG_COMPOUNDS.has(`${segs[i]}${segs[i + 1]}`)) return true
+  }
+  return false
+}
 
 /** True when this JSON key must never appear with its real value in the reviewer view. */
 export function isSecretRequestKey(key: string): boolean {
@@ -165,9 +184,11 @@ export function isSecretRequestKey(key: string): boolean {
   if (folded.includes('resumehandle')) return true
   const segs = keySegments(key)
   if (segs.length === 0) return false
+  if (hasStrongSecretSegment(segs)) return true
   const last = segs[segs.length - 1]!
+  // Do not early-return on SAFE_SUFFIXES before the strong-word check (HOLD M1).
   if (SAFE_SUFFIXES.has(last)) return false
-  return segs.some((seg) => SECRET_SEGMENTS.has(seg))
+  return segs.some((seg) => WEAK_SEGMENTS.has(seg))
 }
 
 /** Deep-clone `value`, replacing secret-like fields with `[redacted]`. Idempotent. */
