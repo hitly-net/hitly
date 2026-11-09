@@ -239,13 +239,13 @@ A project API key on the same GET route still returns the slim origin-poll paylo
 
 ### Original request (view / copy)
 
-`GET /api/v1/approvals/:id/original-request` (session auth) returns the **canonical JSON of the stored create-once** `hitl/request/v0` record (host-normalised envelope), its sha256, the canonical args hash and the requested-event evidence anchor. It is **not** the requester's raw wire bytes: key order, whitespace, `\u` escapes and number forms are normalised at ingest. The web detail page shows it under "View original request" with a Copy button that hands out that canonical string without re-serializing.
+`GET /api/v1/approvals/:id/original-request` (session auth) returns the stored create-once `hitl/request/v0` record (host-normalised envelope) for reviewer verification. It is **not** the requester's raw wire bytes: key order, whitespace, `\u` escapes and number forms are normalised at ingest. The web detail page shows it under "View original request" with **Copy** and **Download (JSON)**.
 
-- **Canonical JSON, unredacted.** The copy is the deterministic `canonicalJson` of the stored record. No secret redaction is applied in the view — changing any character would break off-host verification against the hash. Treat the copy as sensitive.
+- **Redacted JSON.** Display, copy and download redact `cb_auth_token`, resume handles, and secret-like fields (the read path strips them; the UI redacts again). `editedArgs` are never shown as the request — they have their own labelled section after a decide/edit.
+- **Hashes of the stored original.** `payloadHash` and `argsHash` are hitl-spec `b64url(SHA-256(JCS(...)))` over the stored (pre-redaction) payload and action args, so a reviewer can verify off-host. `payloadSha256` / `argsSha256` remain hex over Hitly `canonicalJson` for the evidence chain.
 - **Same viewers as the approval detail.** A signed-in workspace member with project access can read it. **Unauthenticated requests get `401`** (independent of the id). A session with no workspace, unknown ids, other workspaces and members without project access all get `404`. Project API keys cannot read it (a bare bearer key with no session is refused as `401`). Responses are `Cache-Control: no-store`.
 - **Never logged.** Payload contents are never written to logs. Logs carry only ids and hashes.
 - **Known limitation (ingest precision).** Integers above `Number.MAX_SAFE_INTEGER` lose precision at ingest `JSON.parse` (for example `12345678901234567890` is stored and served as `12345678901234567000`). That is a property of the stored record; this view does not attempt to repair it.
-- **Hash form.** The sha256 shown is hex over Hitly `canonicalJson`, not hitl-spec §5 `b64url(SHA-256(JCS(...)))`. Aligning those is a follow-up.
 
 ### Decide & answer gating
 

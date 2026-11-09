@@ -11,6 +11,7 @@ import { AnswerForm } from '@/components/answer-form'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
 import { MarkPresented, RefreshOnFocus } from '@/components/work-item-client'
+import { EditedArgsPanel, editedArgsFromPayload, omitEditedArgs } from '@/components/edited-args-panel'
 import { OriginalRequestPanel } from '@/components/original-request-panel'
 import { withAppTenant } from '@/lib/context'
 import { loadOpenedContextRefs } from '@/lib/context-opens'
@@ -21,6 +22,7 @@ import { decodeTenantJson } from '@/lib/tenant-crypto'
 import { approvalHasExpired } from '@/lib/approval-expiry'
 import { loadEvidenceReceiptForDisplay } from '@/lib/evidence'
 import { formatStatusLabel } from '@/lib/status-label'
+import { redactRequestPayload, redactedRequestJson } from '@/lib/redact-request-payload'
 
 function personLabel(person: { name: string | null; email: string }) {
   return person.name ? `${person.name} (${person.email})` : person.email
@@ -95,6 +97,7 @@ export async function WorkItemDetail({
     })),
   )
   const latestDecision = decodedDecisions[0]
+  const editedArgs = latestDecision ? editedArgsFromPayload(latestDecision.payload) : null
 
   const evidenceReceipt = await loadEvidenceReceiptForDisplay(approval.id, workspace.id)
   const showEvidenceLink = evidenceReceipt && (evidenceReceipt.storeUri.startsWith('http://') || evidenceReceipt.storeUri.startsWith('https://'))
@@ -257,11 +260,13 @@ export async function WorkItemDetail({
         externalUrls={envelope.externalUrls}
         attachments={envelope.attachments}
       />
-      <pre className="mt-4 max-w-2xl overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-        {JSON.stringify(envelope.action.args ?? {}, null, 2)}
+      <h2 className="mt-4 max-w-2xl text-sm font-semibold">Action arguments</h2>
+      <p className="mt-1 max-w-2xl text-xs text-zinc-500">Original request args from the stored create-once record.</p>
+      <pre className="mt-2 max-w-2xl overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
+        {redactedRequestJson(envelope.action.args ?? {})}
       </pre>
       <JsonDisclosure
-        value={{
+        value={redactRequestPayload({
           action: envelope.action,
           allowedActions: envelope.allowedActions,
           contextMarkdown: envelope.contextMarkdown,
@@ -272,9 +277,10 @@ export async function WorkItemDetail({
           resumeSchema: envelope.resumeSchema,
           expiresAt: envelope.expiresAt,
           origin: approval.origin,
-        }}
+        })}
       />
       <OriginalRequestPanel approvalId={approval.id} />
+      <EditedArgsPanel editedArgs={editedArgs} />
       {latestDecision ? (
         <section className="mt-8 max-w-2xl">
           <h2 className="text-sm font-semibold">Decision</h2>
@@ -288,7 +294,7 @@ export async function WorkItemDetail({
           <h2 className="mt-6 text-sm font-semibold">Origin response</h2>
           <p className="mt-1 text-xs text-zinc-500">Full payload returned to the origin after this decision.</p>
           <pre className="mt-2 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-            {JSON.stringify(latestDecision.resumeResponse ?? latestDecision.payload, null, 2)}
+            {redactedRequestJson(latestDecision.resumeResponse ?? omitEditedArgs(latestDecision.payload))}
           </pre>
         </section>
       ) : null}

@@ -14,8 +14,9 @@ import { createOriginalRequestGet } from '@/lib/original-request-route'
  * read the reviewer-facing payload here. A bearer API key without a session is
  * therefore refused as 401 (no session), not served.
  *
- * The body is the canonical JSON of the stored create-once record (host-normalised
- * envelope), not the raw request bytes — see `lib/original-request.ts`. Only ids
- * and hashes are logged; payload contents never are.
+ * The body is the redacted canonical JSON of the stored create-once record
+ * (host-normalised envelope) plus `payloadHash` / `argsHash` of the stored
+ * original — see `lib/original-request.ts`. Only ids and hashes are logged;
+ * payload contents never are.
  */
 export const GET = createOriginalRequestGet({ withApiTenant, getOriginalRequest })
