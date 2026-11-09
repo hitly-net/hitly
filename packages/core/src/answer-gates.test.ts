@@ -9,6 +9,7 @@ import {
   contextItems,
   findContextItem,
   isBinaryLikeRequest,
+  mustOpenGatesDecision,
   mustOpenItems,
   requiresReason,
   resolveReasonRequired,
@@ -140,29 +141,35 @@ test('findContextItem accepts refs and raw urls', () => {
   assert.equal(findContextItem(env, 'https://other.example.com/x'), undefined)
 })
 
-test('ignore (decline) is gated by mustOpen like every other answer', () => {
+test('mustOpen gates acting answers; ignore is exempt', () => {
   const env = envelope({
     allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: true, cancel: false },
     externalUrls: [{ url: 'https://example.com/policy', ref: 'policy', label: 'Policy', mustOpen: true }],
   })
-  // Spec 3.7 gates the ANSWER controls; ignore is an answer. Web, mobile and the
-  // host all refuse an ignore while a must-open item is unopened (hitly#96 S4).
+  // Spec 3.7 gates acting answers. Ignore/dismiss takes no action and is exempt.
+  assert.equal(mustOpenGatesDecision('accept'), true)
+  assert.equal(mustOpenGatesDecision('reject'), true)
+  assert.equal(mustOpenGatesDecision('ignore'), false)
   assert.deepEqual(validateAnswerSubmission({ envelope: env, decision: 'accept', openedRefs: [] }), [
     {
       field: 'context.items.policy',
       message: '"Policy" must be opened before you can answer.',
     },
   ])
-  assert.deepEqual(validateAnswerSubmission({ envelope: env, decision: 'ignore', openedRefs: [] }), [
-    {
-      field: 'context.items.policy',
-      message: '"Policy" must be opened before you can answer.',
-    },
-  ])
   assert.deepEqual(
-    validateAnswerSubmission({ envelope: env, decision: 'ignore', reason: 'Not my queue', openedRefs: ['policy'] }),
+    validateAnswerSubmission({ envelope: env, decision: 'ignore', openedRefs: [] }),
     [],
-    'a declined answer passes once the must-open items are opened',
+    'ignore is allowed without opening must-open items',
+  )
+  assert.deepEqual(
+    validateAnswerSubmission({ envelope: env, decision: 'reject', reason: 'no', openedRefs: [] }),
+    [
+      {
+        field: 'context.items.policy',
+        message: '"Policy" must be opened before you can answer.',
+      },
+    ],
+    'acting answers still require opens',
   )
 })
 

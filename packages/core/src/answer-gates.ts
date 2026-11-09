@@ -123,6 +123,16 @@ export function unopenedMustOpenItems(
   return mustOpenItems(envelope).filter((item) => !opened.has(item.ref))
 }
 
+
+/**
+ * True when `mustOpen` (spec 3.7) gates this answer. Acting answers (accept, reject,
+ * edit, respond, …) are gated; Ignore/dismiss takes no action and is exempt, so a
+ * reviewer can decline without opening must-open context.
+ */
+export function mustOpenGatesDecision(decision: string): boolean {
+  return decision !== 'ignore'
+}
+
 /**
  * Validate one submitted answer against the request's rules (spec 7, at answer
  * submission): required reason per 3.6 and `mustOpen` gating per 3.7. Returns field
@@ -140,11 +150,14 @@ export function validateAnswerSubmission(args: {
   if (requiresReason(args.envelope, args.decision) && !trimmed(args.reason)) {
     errors.push({ field: 'reason', message: 'A reason is required for this answer.' })
   }
-  for (const item of unopenedMustOpenItems(args.envelope, args.openedRefs)) {
-    errors.push({
-      field: `context.items.${item.ref}`,
-      message: `"${item.label}" must be opened before you can answer.`,
-    })
+  // mustOpen gates acting answers only; Ignore/dismiss is exempt (takes no action).
+  if (mustOpenGatesDecision(args.decision)) {
+    for (const item of unopenedMustOpenItems(args.envelope, args.openedRefs)) {
+      errors.push({
+        field: `context.items.${item.ref}`,
+        message: `"${item.label}" must be opened before you can answer.`,
+      })
+    }
   }
   return errors
 }

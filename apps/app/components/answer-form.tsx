@@ -32,12 +32,12 @@ function takeReasonDraft(approvalId: string): string {
 /**
  * Answer form for one work item: the reason prompt (spec 3.6), the must-open
  * checklist (spec 3.7) and the decision buttons. Ported UX patterns from the
- * approval-card design: reason required for the chosen answer, and answer
- * controls locked while mustOpen items are unopened.
+ * approval-card design: reason required for the chosen answer, and acting answer
+ * controls locked while mustOpen items are unopened (Ignore/dismiss is exempt).
  *
  * The client refuses invalid submits before they leave the form (reason missing,
- * mustOpen skipped). That is presentation only — the host re-validates every
- * submission (see `validateAnswerSubmission` in @hitly/core).
+ * mustOpen skipped on acting answers). That is presentation only — the host
+ * re-validates every submission (see `validateAnswerSubmission` in @hitly/core).
  */
 export function AnswerForm({
   approvalId,
@@ -104,9 +104,8 @@ export function AnswerForm({
     const decision = submitter?.getAttribute('value') ?? lastClickedDecision.current
     lastClickedDecision.current = null
     if (!decision) return
-    // mustOpen gates every answer control, `ignore` included (spec 3.7, hitly#96 S4):
-    // web, mobile and the host apply the same rule.
-    if (blockedByMustOpen) {
+    // mustOpen gates acting answers only; Ignore/dismiss is exempt (spec 3.7).
+    if (blockedByMustOpen && decision !== 'ignore') {
       event.preventDefault()
       setNotice('Open the required context items before you answer.')
       return
@@ -158,8 +157,8 @@ export function AnswerForm({
             ))}
           </ul>
           <p className="mt-2 text-xs text-zinc-500">
-            Your opens are recorded (item and time) for the audit trail. The answer buttons unlock once every
-            must-open item has been opened.
+            Your opens are recorded (item and time) for the audit trail. Acting answer buttons unlock once every
+            must-open item has been opened; Ignore stays available.
           </p>
         </div>
       ) : null}
@@ -216,7 +215,7 @@ function DecisionButtons({
             key={decision}
             name="decision"
             value={decision}
-            disabled={pending || locked}
+            disabled={pending || (locked && decision !== 'ignore')}
             onClick={() => onDecisionClick(decision)}
             className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium capitalize text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
           >

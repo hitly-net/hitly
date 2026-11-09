@@ -261,9 +261,10 @@ field errors:
 }
 ```
 
-`field` is `reason` or `context.items.<ref>`. `mustOpen` gates **every** answer,
-`ignore` included: while a must-open item is unopened for the deciding reviewer,
-web, mobile and the host all refuse the answer.
+`field` is `reason` or `context.items.<ref>`. `mustOpen` gates **acting** answers
+(accept, reject, edit, respond): while a must-open item is unopened for the deciding
+reviewer, web, mobile and the host all refuse those answers. **Ignore/dismiss is
+exempt** — it takes no action, so it stays available without opening context.
 
 ### Open a context item
 

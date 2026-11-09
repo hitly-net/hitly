@@ -11,7 +11,8 @@ Ingest envelopes may gate the answer:
   an explicit `[]` opts out).
 - `externalUrls[]` / `attachments[]` entries carry an optional `ref` (gating key) and
   `mustOpen: true`. Until the deciding reviewer recorded an open for every must-open
-  item, the host refuses the answer — `ignore` included.
+  item, the host refuses acting answers (accept/reject/edit/respond). Ignore/dismiss
+  is exempt — it takes no action and does not require opens.
 
 The resume POST carries the reviewer's fields verbatim: `decision`, `response`,
 `reason` (typed reason, untrimmed), `editedArgs`, `editReason`, `editReasonText`.
