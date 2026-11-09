@@ -4,16 +4,14 @@ import { useState } from 'react'
 
 /**
  * "View original request" panel (hitly#98): opens the create-once
- * `hitl/request/v0` payload lazily (only on explicit open, so the stored bytes are
- * not shipped on every detail-page render) and offers a byte-exact Copy for
+ * `hitl/request/v0` payload lazily (only on explicit open, so the stored record is
+ * not shipped on every detail-page render) and offers a Copy of the canonical JSON for
  * off-host verification. Same authentication as the approval detail: the route
- * answers 404 for anyone who cannot open the approval itself.
+ * returns 401 when unauthenticated and 404 when there is no workspace / no access.
  *
- * The copy hands out `canonicalPayload` verbatim — no redaction, no re-serialization
- * on the client (JSON.parse/stringify round-trips and editor whitespace would both
- * break the byte check; the sha256 shown here is what a verifier recomputes over the
- * exact copy). See lib/original-request.ts for the flagged redaction-vs-exactness
- * decision.
+ * The copy hands out `canonicalPayload` as received — no redaction, no client
+ * re-serialization (JSON.parse/stringify would change the string a verifier hashes).
+ * See lib/original-request.ts.
  */
 
 type OriginalRequestResponse = {
@@ -61,7 +59,7 @@ export function OriginalRequestPanel({ approvalId }: { approvalId: string }) {
 
   async function copy() {
     if (!data) return
-    // Byte-exact: hand out the stored canonical bytes as received, untouched.
+    // Hand out the canonical JSON string as received — do not re-serialise.
     await navigator.clipboard.writeText(data.canonicalPayload)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1500)
@@ -80,7 +78,7 @@ export function OriginalRequestPanel({ approvalId }: { approvalId: string }) {
       {open ? (
         <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            The stored create-once payload, canonical JSON, byte-exact — not re-rendered from the screen. Paste it
+            Canonical JSON of the stored create-once request (not re-rendered from the screen). Paste it
             into a known-good host or verifier to check what you are approving.
           </p>
           {loading ? <p className="mt-2 text-sm text-zinc-500">Loading…</p> : null}

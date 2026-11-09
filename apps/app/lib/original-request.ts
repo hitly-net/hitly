@@ -8,26 +8,28 @@ import { decodeTenantJson } from './tenant-crypto'
 /**
  * Original create-once request view (hitly#98).
  *
- * Returns the ORIGINAL ingested request (`hitl/request/v0`) exactly as persisted,
- * never re-derived from rendered/mutable fields: the create-once `approvals.envelope`
- * row written once at ingest (see `ingestApproval`; nothing updates this column) and
- * tenant-decrypted, serialized with `@hitly/core`'s `canonicalJson` — the same
- * canonicalization the evidence chain hashes over — so a reviewer can paste it into a
- * known-good host/verifier and check the screen against what was stored
- * (hitl-spec discussion #5: `argsHash` alone only binds action args, not the
- * human-facing payload; the create-once record is the source of truth).
+ * Returns the canonical JSON of the stored create-once request (`hitl/request/v0`):
+ * the `approvals.envelope` row written once at ingest (see `ingestApproval`; nothing
+ * updates this column), tenant-decoded, then serialized with `@hitly/core`'s
+ * `canonicalJson` (sorted keys, `JSON.stringify` number formatting). That is the
+ * host-normalised stored record — not the requester's raw wire bytes (key order,
+ * whitespace, `\u` escapes and number forms are normalised at ingest/`JSON.parse`).
+ * Never re-derived from rendered/mutable UI fields. A reviewer can paste the copy
+ * into a known-good verifier and check the screen against what was stored
+ * (hitl-spec discussion #5: `argsHash` alone only binds action args).
  *
- * REDACTION vs EXACTNESS (deliberate, flagged for review): the view is byte-exact,
- * with NO secret redaction. Byte fidelity is the whole feature — redacting any byte
- * would break the off-host verification this exists for, and the payload is already
- * shown (unredacted) to anyone who can open this approval (action args, context,
- * attachments render on the detail screen; the detail JSON disclosure too). Access is
- * therefore the control, identical to the approval detail: session-authenticated
- * workspace member with project access, cross-tenant and non-member reads get 404.
- * The repo's secret-redaction policy (`redactSecrets`, lib/auth-logging.ts) is applied
- * to everything LEAVING via logs: this module only ever logs ids and hashes — see
- * `summarizeForLog`. If product later wants a shareable redacted export, that must be
- * a separate explicit mode, never the default view.
+ * Unredacted on purpose: redacting any character would break the hash check, and the
+ * same payload is already shown to anyone who can open the approval. Access is the
+ * control — identical to the approval detail: session → success for project members;
+ * unauthenticated → 401; no workspace / unknown id / foreign workspace / no access →
+ * 404. Logs carry only ids and hashes via `summarizeForLog` (payload contents are
+ * never logged). Known limitation: integers above `Number.MAX_SAFE_INTEGER` lose
+ * precision at ingest `JSON.parse` (e.g. `12345678901234567890` is stored and served
+ * as `12345678901234567000`); that is not repaired here.
+ *
+ * Hash form: hex SHA-256 over Hitly `canonicalJson`, not hitl-spec §5
+ * `b64url(SHA-256(JCS(...)))`. Aligning with JCS/b64url is a follow-up — changing
+ * `canonicalJson` would rewrite every evidence hash on existing data.
  */
 
 export type OriginalRequestOk = {
@@ -111,9 +113,8 @@ export async function getOriginalRequest(args: {
 }
 
 /**
- * Log-safe summary (secret-redaction policy, hitly#98): only ids and hashes ever
- * reach a log line — never the payload bytes. Values here are non-secret identifiers;
- * callers may additionally pass the line through `redactSecrets`.
+ * Log-safe summary (hitly#98): only ids and hashes ever reach a log line — never
+ * the payload. Values here are non-secret identifiers.
  */
 export function summarizeForLog(result: OriginalRequestOk): {
   requestId: string

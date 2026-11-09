@@ -1,8 +1,8 @@
 /**
  * Original create-once request view (hitly#98) — real Postgres, not mocked.
- * Covers: authorized view of the STORED payload, byte-exact copy vs the stored
- * record, evidence hash binding (hitly#97 chain), cross-tenant / no-access denial,
- * and the flagged redaction-vs-exactness decision (view is byte-exact; logs are not).
+ * Covers: authorized view of the STORED create-once record as canonical JSON,
+ * evidence hash binding (hitly#97 chain), cross-tenant / no-access denial,
+ * unredacted view + log-safe summary, and non-canonical ingest normalisation.
  *
  * Run with: DATABASE_URL=... HITLY_ENCRYPTION_KEK=... yarn workspace @hitly/app test
  */
@@ -188,7 +188,7 @@ async function ingestInto(body?: Record<string, unknown>) {
   return result.approval
 }
 
-test('authorized reviewer gets the stored create-once payload byte-exact', async () => {
+test('authorized reviewer gets the canonical JSON of the stored create-once record', async () => {
   const approval = await ingestInto()
 
   const result = await getOriginalRequest({
@@ -200,15 +200,15 @@ test('authorized reviewer gets the stored create-once payload byte-exact', async
   assert.ok(result.ok, `expected ok, got ${JSON.stringify(result)}`)
   assert.equal(result.requestId, approval.id)
 
-  // Byte-exact against the STORED payload: decode the row straight from the DB and
-  // canonicalize independently — the copy is the stored record, not a re-render.
+  // Against the STORED record: decode the row straight from the DB and
+  // canonicalize independently — the copy is that record, not a UI re-render.
   const stored = await db
     .select({ envelope: approvals.envelope })
     .from(approvals)
     .where(eq(approvals.id, approval.id))
     .limit(1)
   const storedCanonical = canonicalJson(stored[0]!.envelope)
-  assert.equal(result.canonicalPayload, storedCanonical, 'copy must equal canonical bytes of the stored payload')
+  assert.equal(result.canonicalPayload, storedCanonical, 'copy must equal canonicalJson of the stored envelope')
   assert.equal(result.payloadSha256, await sha256Hex(storedCanonical))
   assert.deepEqual(JSON.parse(result.canonicalPayload), stored[0]!.envelope)
 })
@@ -259,7 +259,9 @@ test('view is immutable: deciding the approval does not change the served bytes'
     payload,
     workspaceId: workspaceA.id,
   })
-  assert.ok(!('error' in decided) || (decided as { status?: number }).status !== 404)
+  assert.ok(!('error' in decided), `decide must succeed: ${JSON.stringify(decided)}`)
+  assert.ok('approval' in decided && decided.approval, 'decide must return the approval')
+  assert.notEqual(decided.approval.status, 'pending', 'decide must leave pending')
 
   const after = await getOriginalRequest({
     approvalId: approval.id,
@@ -311,7 +313,7 @@ test('workspace member without project access is denied with 404', async () => {
   assert.ok(!('canonicalPayload' in result), 'no payload bytes may leak to non-members')
 })
 
-test('redaction-vs-exactness: view is byte-exact (flagged decision); logs carry only ids/hashes', async () => {
+test('view stays unredacted (canonical JSON); logs carry only ids/hashes', async () => {
   const secretArg = 'sk_liv…a1b2'
   const approval = await ingestInto({ action: { name: 'leaky.call', args: { apiKey: secretArg } } })
 
@@ -323,10 +325,9 @@ test('redaction-vs-exactness: view is byte-exact (flagged decision); logs carry 
   })
   assert.ok(result.ok)
 
-  // FLAGGED DECISION (see lib/original-request.ts): access control is the control,
-  // the bytes stay exact so an off-host verifier can reproduce the hash. A redacted
-  // byte view would silently break that; it must never be the default mode.
-  assert.ok(result.canonicalPayload.includes(secretArg), 'view stays byte-exact — pinned deliberately')
+  // Access control is the control: the canonical JSON stays unredacted so an
+  // off-host verifier can reproduce the hash. A redacted view would silently break that.
+  assert.ok(result.canonicalPayload.includes(secretArg), 'view stays unredacted — pinned deliberately')
   assert.equal(result.canonicalPayload, canonicalJson(JSON.parse(result.canonicalPayload)))
 
   // Secret-redaction policy on the LOG path: summaries carry only ids and hashes.
@@ -335,4 +336,36 @@ test('redaction-vs-exactness: view is byte-exact (flagged decision); logs carry 
   assert.ok(!logLine.includes(secretArg), 'logs must never carry payload bytes')
   assert.equal(summary.requestId, approval.id)
   assert.equal(summary.payloadSha256, result.payloadSha256)
+})
+
+
+test('non-canonical ingest is served as pinned canonical JSON (key order, escapes, numbers, bigints)', async () => {
+  // Simulate JSON.parse of a non-canonical wire body (unordered keys, \u escapes,
+  // 1.50 / 1e2, >2^53 integer, trailing newline). Precision loss at ingest is expected.
+  const wire =
+    '{ "z": 1, "a": {"y":"caf\\u00e9 \\u2603 \\ud83d\\ude00", "b": [3,1,2]}, "big": 12345678901234567890, "f": 1.50, "e": 1e2 }\n'
+  const parsedArgs = JSON.parse(wire) as Record<string, unknown>
+  assert.equal(parsedArgs.big, 12345678901234567000)
+
+  const expectedArgsCanonical =
+    '{"a":{"b":[3,1,2],"y":"café ☃ 😀"},"big":12345678901234567000,"e":100,"f":1.5,"z":1}'
+  assert.equal(canonicalJson(parsedArgs), expectedArgsCanonical)
+
+  const approval = await ingestInto({ action: { name: 'canon.probe', args: parsedArgs } })
+  const result = await getOriginalRequest({
+    approvalId: approval.id,
+    workspaceId: workspaceA.id,
+    userId: userReviewerA.id,
+    workspaceRole: 'member',
+  })
+  assert.ok(result.ok)
+
+  const served = JSON.parse(result.canonicalPayload) as { action?: { args?: unknown } }
+  assert.deepEqual(served.action?.args, parsedArgs)
+  assert.equal(canonicalJson(served.action?.args), expectedArgsCanonical)
+  assert.equal(result.argsSha256, await sha256Hex(expectedArgsCanonical))
+  assert.equal(result.canonicalPayload, canonicalJson(JSON.parse(result.canonicalPayload)))
+  assert.equal(result.payloadSha256, await sha256Hex(result.canonicalPayload))
+  assert.match(result.canonicalPayload, /"big":12345678901234567000/)
+  assert.ok(!result.canonicalPayload.includes('12345678901234567890'))
 })
