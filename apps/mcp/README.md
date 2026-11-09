@@ -7,7 +7,7 @@ Remote [MCP](https://modelcontextprotocol.io) server that lets a bot ask a human
 | Tool | What it does | Host call |
 | --- | --- | --- |
 | `request_approval` | Approve / Reject / Ignore an action. Returns `requestId`, `state`, `replayed`, `argsHash`, `deadline`, `reviewUrl`. | `POST /api/v1/approvals` (HTTP plugin; `callback_url` → `resumeUrl`; `Idempotency-Key` = `idempotencyKey`) |
-| `ask_user` | Ask a question with an `answerSchema` (`free_text`, `single_choice`, `multi_choice`, `simple_form`). | same ingest, `kind: "question"` |
+| `ask_user` | Ask a question with an `answerSchema` (`free_text`, `single_choice`, `multi_choice`, `simple_form`). Optional markdown `detail` (≤8000 chars) renders under the headline. | same ingest, `kind: "question"` |
 | `get_decision` | Non-blocking read as `hitl/response/v0`. Returns `editedArgs` when the reviewer amended the action. | `GET /api/v1/approvals/:id` |
 | `list_pending` | Open requests created with this key. | `GET /api/v1/approvals?status=pending` (M0) |
 | `cancel` | Withdraw an open request. | `POST /api/v1/approvals/:id/cancel` (M0 requester cancel) |
@@ -16,7 +16,7 @@ There is **no decide tool**. Requester credentials can request, read and cancel 
 
 Rules the server enforces:
 
-- `question` is one sentence, at most 160 characters, ending with `?` (hitl-spec 3.1/3.3). Detail goes in `context`.
+- `question` (and the `ask_user` `prompt` headline) is one sentence, at most 160 characters, ending with `?` (hitl-spec 3.1/3.3). Detail goes in `context`, or in `ask_user`'s optional markdown `detail` (at most 8000 characters), which renders under the headline.
 - Default deadline is **24 hours**. Expiry, cancel and pending are never approval.
 - `callback_url` and links must be `https`. The server never fetches links.
 - `argsHash` = `b64url(SHA-256(JCS(action.args)))` over the original args. The stored request never changes; a reviewer amendment arrives only as `editedArgs` in the decision, and the bot must act on `editedArgs` when present.
@@ -28,7 +28,7 @@ Rules the server enforces:
 
 ## Logging
 
-Logs are JSON lines with only `event`, `tool`, `requestId`, `status`, `latencyMs`, `clientId` (a truncated SHA-256 of the key) and `port`. Questions, context, args, reasons, answers, callback URLs, tokens and host error text are never logged.
+Logs are JSON lines with only `event`, `tool`, `requestId`, `status`, `latencyMs`, `clientId` (a truncated SHA-256 of the key) and `port`. Questions, prompts, detail, context, args, reasons, answers, callback URLs, tokens and host error text are never logged.
 
 ## Run
 

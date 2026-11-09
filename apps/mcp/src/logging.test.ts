@@ -10,6 +10,7 @@ const SENTINELS = {
   callback: 'https://SENTINEL-CALLBACK.example/cb',
   token: 'SENTINEL_TOKEN_abcdefghijklmnop',
   prompt: 'SENTINEL_PROMPT?',
+  detail: 'SENTINEL_DETAIL markdown ## heading',
   option: 'SENTINEL_OPTION',
   reason: 'SENTINEL_REASON',
   response: 'SENTINEL_RESPONSE',
@@ -39,7 +40,19 @@ test('logs carry only ids, status, latency and client id - never payload, key or
       arguments: {
         idempotencyKey: 'bot-ask-log-0001',
         prompt: SENTINELS.prompt,
+        detail: SENTINELS.detail,
         answerSchema: { type: 'single_choice', options: [SENTINELS.option] },
+        callback_url: SENTINELS.callback,
+      },
+    })
+    // Over-cap detail: the refusal message itself must not leak the detail into logs either.
+    await client.callTool({
+      name: 'ask_user',
+      arguments: {
+        idempotencyKey: 'bot-ask-log-0002',
+        prompt: SENTINELS.prompt,
+        detail: `${SENTINELS.detail} ${'x'.repeat(8_001)}`,
+        answerSchema: { type: 'free_text' },
         callback_url: SENTINELS.callback,
       },
     })
@@ -68,7 +81,7 @@ test('logs carry only ids, status, latency and client id - never payload, key or
     const tools = h.logs.map((line) => JSON.parse(line) as Record<string, unknown>).filter((entry) => entry.event === 'tool')
     assert.deepEqual(
       tools.map((entry) => entry.tool),
-      ['request_approval', 'ask_user', 'get_decision', 'list_pending', 'cancel', 'request_approval', 'get_decision'],
+      ['request_approval', 'ask_user', 'ask_user', 'get_decision', 'list_pending', 'cancel', 'request_approval', 'get_decision'],
     )
   } finally {
     await h.close()

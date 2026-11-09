@@ -86,6 +86,15 @@ export function validateQuestion(question: string): string | null {
   return null
 }
 
+/** Optional markdown explanation for ask_user, shown under the headline. Never logged. */
+export const DETAIL_MAX = 8_000
+
+export function validateDetail(detail: string): string | null {
+  if (!detail.trim()) return 'detail must not be blank; omit it if you have nothing to add'
+  if (detail.length > DETAIL_MAX) return `detail must be at most ${DETAIL_MAX} characters`
+  return null
+}
+
 function resolveDeadline(ctx: ToolContext, deadline?: string): { iso: string } | { error: string } {
   const now = ctx.now?.() ?? Date.now()
   if (!deadline) return { iso: new Date(now + DEFAULT_DEADLINE_MS).toISOString() }
@@ -271,10 +280,14 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Ask the user',
       description:
-        'Ask a human a question and get a typed answer later. Returns immediately with requestId and state "pending"; it never waits. Confirm with get_decision before acting.',
+        'Ask a human a question and get a typed answer later. The prompt is the headline shown to the reviewer: one line, at most 160 characters, ending with "?". Use the optional markdown detail (at most 8000 characters) to explain; it renders under the headline. Returns immediately with requestId and state "pending"; it never waits. Confirm with get_decision before acting.',
       inputSchema: {
         ...common,
-        prompt: z.string().min(1).max(500),
+        prompt: z.string().describe('Headline question: one sentence, at most 160 characters, ending with "?".'),
+        detail: z
+          .string()
+          .optional()
+          .describe(`Optional markdown explanation shown under the headline (at most ${DETAIL_MAX} characters).`),
         answerSchema: z.object({
           type: z.enum(['free_text', 'single_choice', 'multi_choice', 'simple_form']),
           options: z.array(z.string().min(1).max(200)).max(20).optional(),
@@ -288,6 +301,12 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     },
     async (input) =>
       timed(ctx, 'ask_user', async () => {
+        const promptError = validateQuestion(input.prompt)
+        if (promptError) return { result: fail('invalid_request', promptError) }
+        if (input.detail !== undefined) {
+          const detailError = validateDetail(input.detail)
+          if (detailError) return { result: fail('invalid_request', detailError) }
+        }
         const schema = input.answerSchema
         if ((schema.type === 'single_choice' || schema.type === 'multi_choice') && !schema.options?.length) {
           return { result: fail('invalid_request', `${schema.type} needs options`) }
@@ -303,6 +322,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
         if (tokenError) return { result: fail('not_supported_by_host', tokenError) }
 
         const lines = [`**${input.prompt.trim()}**`]
+        if (input.detail) lines.push('', input.detail.trim())
         if (schema.options?.length) lines.push('', ...schema.options.map((option) => `- ${option}`))
         if (schema.fields?.length) lines.push('', ...schema.fields.map((field) => `- ${field.label ?? field.name}`))
         if (input.context) lines.push('', input.context)

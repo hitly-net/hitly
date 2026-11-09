@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { DEFAULT_DEADLINE_MS } from './config.ts'
 import { argsHash } from './jcs.ts'
-import { TOOL_NAMES, toResponseV0, validateQuestion } from './tools.ts'
+import { DETAIL_MAX, TOOL_NAMES, toResponseV0, validateDetail, validateQuestion } from './tools.ts'
 import { baseApproval, FakeHost, FIXED_NOW, startHarness, structured } from './test-helpers.ts'
 
 test('exactly the five requester tools are listed; there is no decide tool', async () => {
@@ -206,13 +206,87 @@ test('ask_user maps to HTTP ingest as a question with a free-text answer', async
     assert.equal(body.resumeUrl, baseApproval.callback_url)
     assert.deepEqual(body.allowedActions, { accept: false, reject: false, respond: true, ignore: true })
     assert.deepEqual(body.answerSchema, { type: 'single_choice', options: ['Hall A', 'Hall B'] })
-    assert.match(String(body.contextMarkdown), /- Hall A\n- Hall B/)
+    assert.match(String(body.contextMarkdown), /\n\n- Hall A\n- Hall B/)
+    assert.match(String(body.contextMarkdown), /\*\*Which venue\?\*\*\n\n- Hall A\n- Hall B$/)
 
     const missing = await client.callTool({
       name: 'ask_user',
-      arguments: { idempotencyKey: 'bot-ask-0002', prompt: 'Which?', answerSchema: { type: 'multi_choice' }, callback_url: baseApproval.callback_url },
+      arguments: { idempotencyKey: 'bot-ask-0002', prompt: 'Which one?', answerSchema: { type: 'multi_choice' }, callback_url: baseApproval.callback_url },
     })
     assert.equal(missing.isError, true)
+  } finally {
+    await h.close()
+  }
+})
+
+test('ask_user keeps the headline rule: one line, max 160 chars, ends with "?"', async () => {
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    let seq = 0
+    const ask = (prompt: string, extra: Record<string, unknown> = {}) =>
+      client.callTool({
+        name: 'ask_user',
+        arguments: {
+          idempotencyKey: `bot-ask-headline-${String(++seq).padStart(4, '0')}`,
+          prompt,
+          answerSchema: { type: 'free_text' },
+          callback_url: baseApproval.callback_url,
+          ...extra,
+        },
+      })
+    assert.equal((await ask('Which venue?')).isError, undefined)
+    assert.match(JSON.stringify(structured(await ask('Which venue.'))), /end with/)
+    assert.match(JSON.stringify(structured(await ask(`${'x'.repeat(160)}?`))), /160/)
+    assert.match(JSON.stringify(structured(await ask('Line one\nline two?'))), /one sentence/)
+    assert.match(JSON.stringify(structured(await ask('   '))), /required/)
+    assert.equal(h.host.ingests.length, 1, 'only the accepted ask reached the host')
+  } finally {
+    await h.close()
+  }
+})
+
+test('ask_user accepts optional markdown detail, passes it through under the headline, refuses over the cap', async () => {
+  assert.equal(DETAIL_MAX, 8_000)
+  assert.equal(validateDetail('## Why\nBecause.'), null)
+  assert.equal(validateDetail('x'.repeat(DETAIL_MAX)), null)
+  assert.match(String(validateDetail('x'.repeat(DETAIL_MAX + 1))), /at most 8000 characters/)
+  assert.match(String(validateDetail('   ')), /blank/)
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    const detail = '## Why I ask\nThe venue **matters** because:\n\n- capacity\n- parking'
+    const result = structured(
+      await client.callTool({
+        name: 'ask_user',
+        arguments: {
+          idempotencyKey: 'bot-ask-detail-0001',
+          prompt: 'Which venue?',
+          detail,
+          answerSchema: { type: 'single_choice', options: ['Hall A', 'Hall B'] },
+          context: 'Contract note.',
+          callback_url: baseApproval.callback_url,
+        },
+      }),
+    )
+    assert.equal(result.state, 'pending')
+    const { body } = h.host.ingests[0]
+    assert.equal(body.contextMarkdown, `**Which venue?**\n\n${detail}\n\n- Hall A\n- Hall B\n\nContract note.`)
+
+    const atCap = await client.callTool({
+      name: 'ask_user',
+      arguments: { idempotencyKey: 'bot-ask-detail-cap', prompt: 'Which venue?', detail: 'x'.repeat(DETAIL_MAX), answerSchema: { type: 'free_text' }, callback_url: baseApproval.callback_url },
+    })
+    assert.equal(atCap.isError, undefined)
+
+    const overCap = await client.callTool({
+      name: 'ask_user',
+      arguments: { idempotencyKey: 'bot-ask-detail-over', prompt: 'Which venue?', detail: 'x'.repeat(DETAIL_MAX + 1), answerSchema: { type: 'free_text' }, callback_url: baseApproval.callback_url },
+    })
+    assert.equal(overCap.isError, true)
+    assert.match(JSON.stringify(structured(overCap)), /detail must be at most 8000 characters/)
+    assert.match(JSON.stringify(structured(overCap)), /invalid_request/)
+    assert.equal(h.host.ingests.length, 2, 'over-cap detail never reaches the host')
   } finally {
     await h.close()
   }
