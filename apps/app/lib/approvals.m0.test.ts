@@ -1,6 +1,7 @@
 /**
  * M0 host gaps against real Postgres: create-once replay inside the published
  * retention window (hitl-spec 3.2), scoped to the creating API key (D3),
+ * same-payloadHash replay vs 409 idempotency_conflict on a changed body,
  * hitl/response/v0 reads with an API key (4),
  * requester cancel, the key-scoped pending list, and the JCS argsHash (3.8).
  */
@@ -174,25 +175,86 @@ test('ingest records the requester key and returns JCS argsHash and the create-o
   assert.equal(row?.requesterKeyId, keyP1.id)
 })
 
-test('create-once: replay of an open request returns the original unchanged, no new row', async () => {
+test('create-once: same payloadHash replays the original unchanged, no new row', async () => {
   const idem = `idem-${newId('t')}`
-  const first = await ingest(keyP1, idem)
-  const second = await ingest(keyP1, idem, payload({ action: { name: 'pay', args: { amount: 999999 } } }))
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
+  // Key order in args differs; JCS payloadHash still matches.
+  const shuffled = {
+    ...body,
+    action: { name: 'pay', args: { currency: 'EUR', amount: 100 } },
+  }
+  const second = await ingest(keyP1, idem, shuffled)
   assert.equal(second.replayed, true)
   assert.equal(second.approval.id, first.approval.id)
   assert.deepEqual((second.approval.envelope as { action: { args: unknown } }).action.args, { amount: 100, currency: 'EUR' })
+  assert.equal((await rowsFor(idem)).length, 1)
+
+  const route = await ingestRoute(
+    new Request('http://localhost/api/v1/approvals', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${keyP1.raw}`, 'idempotency-key': idem, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
+  assert.equal(route.status, 200)
+  const routeBody = (await route.json()) as { id: string; replayed: boolean }
+  assert.equal(routeBody.replayed, true)
+  assert.equal(routeBody.id, first.approval.id)
+  assert.equal((await rowsFor(idem)).length, 1)
+})
+
+test('create-once: different payloadHash is 409 idempotency_conflict, no new row and no replay', async () => {
+  const idem = `idem-${newId('t')}`
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
+  const conflict = await ingestApproval({
+    apiKey: keyP1.raw,
+    body: payload({ action: { name: 'pay', args: { amount: 999999 } } }),
+    idempotencyKey: idem,
+  })
+  assert.equal(conflict.ok, false)
+  if (conflict.ok) throw new Error('a changed payload must not replay')
+  assert.equal(conflict.status, 409)
+  assert.equal(conflict.code, 'idempotency_conflict')
+  assert.equal(conflict.error, 'Idempotency-Key reused with a different payload')
+  assert.deepEqual(Object.keys(conflict).sort(), ['code', 'error', 'ok', 'status'])
+  const disclosed = JSON.stringify(conflict)
+  assert.ok(!disclosed.includes(first.approval.id), 'conflict must not replay the stored id')
+  assert.ok(!disclosed.includes('replayed'), 'conflict must not replay the stored response')
+  assert.equal((await rowsFor(idem)).length, 1)
+  const [row] = await rowsFor(idem)
+  assert.equal(row?.id, first.approval.id)
+  assert.deepEqual(
+    ((await ingest(keyP1, idem, body)).approval.envelope as { action: { args: unknown } }).action.args,
+    { amount: 100, currency: 'EUR' },
+  )
+
+  const route = await ingestRoute(
+    new Request('http://localhost/api/v1/approvals', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${keyP1.raw}`, 'idempotency-key': idem, 'content-type': 'application/json' },
+      body: JSON.stringify(payload({ action: { name: 'pay', args: { amount: 1 } } })),
+    }),
+  )
+  assert.equal(route.status, 409)
+  const routeBody = (await route.json()) as Record<string, unknown>
+  assert.equal(routeBody.code, 'idempotency_conflict')
+  assert.equal(routeBody.error, 'Idempotency-Key reused with a different payload')
+  assert.deepEqual(Object.keys(routeBody).sort(), ['code', 'error'])
   assert.equal((await rowsFor(idem)).length, 1)
 })
 
 test('create-once: replay after a decision (decided) returns the decided request, no new ask', async () => {
   const idem = `idem-${newId('t')}`
-  const first = await ingest(keyP1, idem)
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
   const decision = parseDecisionBody({ decision: 'accept' })
   assert.ok(decision)
   await decideApproval({ approvalId: first.approval.id, actorUserId: reviewer.id, payload: decision, workspaceId: workspace.id })
   // The resume target is not running here, so settle the row as decided (closed).
   await setRow(first.approval.id, { status: 'decided' })
-  const replay = await ingest(keyP1, idem)
+  const replay = await ingest(keyP1, idem, body)
   assert.equal(replay.replayed, true)
   assert.equal(replay.approval.id, first.approval.id)
   assert.equal(replay.approval.status, 'decided')
@@ -201,10 +263,11 @@ test('create-once: replay after a decision (decided) returns the decided request
 
 test('create-once: replay after a requester cancel returns the cancelled request', async () => {
   const idem = `idem-${newId('t')}`
-  const first = await ingest(keyP1, idem)
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
   const cancelled = await cancelApprovalAsRequester({ apiKey: keyP1.raw, approvalId: first.approval.id })
   assert.ok(cancelled.ok)
-  const replay = await ingest(keyP1, idem)
+  const replay = await ingest(keyP1, idem, body)
   assert.equal(replay.replayed, true)
   assert.equal(replay.approval.id, first.approval.id)
   assert.equal(replay.approval.status, 'cancelled')
@@ -216,17 +279,19 @@ test('create-once window boundary: created exactly at the cutoff -> new request;
   const cutoff = now - DEFAULT_CREATE_ONCE_RETENTION_DAYS * DAY
 
   const idemOut = `idem-${newId('t')}`
-  const outside = await ingest(keyP1, idemOut)
+  const outsideBody = payload()
+  const outside = await ingest(keyP1, idemOut, outsideBody)
   await setRow(outside.approval.id, { status: 'expired', createdAt: new Date(cutoff) })
-  const fresh = await ingest(keyP1, idemOut, payload(), now)
+  const fresh = await ingest(keyP1, idemOut, outsideBody, now)
   assert.equal(fresh.replayed, false)
   assert.notEqual(fresh.approval.id, outside.approval.id)
   assert.equal((await rowsFor(idemOut)).length, 2)
 
   const idemIn = `idem-${newId('t')}`
-  const inside = await ingest(keyP1, idemIn)
+  const insideBody = payload()
+  const inside = await ingest(keyP1, idemIn, insideBody)
   await setRow(inside.approval.id, { status: 'expired', createdAt: new Date(cutoff + 1) })
-  const replay = await ingest(keyP1, idemIn, payload(), now)
+  const replay = await ingest(keyP1, idemIn, insideBody, now)
   assert.equal(replay.replayed, true)
   assert.equal(replay.approval.id, inside.approval.id)
   assert.equal((await rowsFor(idemIn)).length, 1)
@@ -234,9 +299,10 @@ test('create-once window boundary: created exactly at the cutoff -> new request;
 
 test('create-once: an open request older than the window still replays (never a duplicate ask)', async () => {
   const idem = `idem-${newId('t')}`
-  const first = await ingest(keyP1, idem)
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
   await setRow(first.approval.id, { createdAt: new Date(Date.now() - 30 * DAY) })
-  const replay = await ingest(keyP1, idem)
+  const replay = await ingest(keyP1, idem, body)
   assert.equal(replay.replayed, true)
   assert.equal(replay.approval.id, first.approval.id)
 })
@@ -246,14 +312,16 @@ test('create-once: HITLY_CREATE_ONCE_RETENTION_DAYS overrides the window', async
   process.env.HITLY_CREATE_ONCE_RETENTION_DAYS = '1'
   try {
     const idemOld = `idem-${newId('t')}`
-    const old = await ingest(keyP1, idemOld)
+    const oldBody = payload()
+    const old = await ingest(keyP1, idemOld, oldBody)
     await setRow(old.approval.id, { status: 'cancelled', createdAt: new Date(Date.now() - 2 * DAY) })
-    assert.equal((await ingest(keyP1, idemOld)).replayed, false, '2 days > 1-day window')
+    assert.equal((await ingest(keyP1, idemOld, oldBody)).replayed, false, '2 days > 1-day window')
 
     const idemRecent = `idem-${newId('t')}`
-    const recent = await ingest(keyP1, idemRecent)
+    const recentBody = payload()
+    const recent = await ingest(keyP1, idemRecent, recentBody)
     await setRow(recent.approval.id, { status: 'cancelled', createdAt: new Date(Date.now() - DAY / 2) })
-    assert.equal((await ingest(keyP1, idemRecent)).replayed, true)
+    assert.equal((await ingest(keyP1, idemRecent, recentBody)).replayed, true)
   } finally {
     if (previous === undefined) delete process.env.HITLY_CREATE_ONCE_RETENTION_DAYS
     else process.env.HITLY_CREATE_ONCE_RETENTION_DAYS = previous
@@ -262,21 +330,130 @@ test('create-once: HITLY_CREATE_ONCE_RETENTION_DAYS overrides the window', async
 
 test('create-once: concurrent submissions of a new key create exactly one request', async () => {
   const idem = `idem-${newId('t')}`
-  const results = await Promise.all(Array.from({ length: 6 }, () => ingest(keyP1, idem)))
+  const body = payload()
+  const results = await Promise.all(Array.from({ length: 6 }, () => ingest(keyP1, idem, body)))
   assert.equal(new Set(results.map((r) => r.approval.id)).size, 1)
   assert.equal(results.filter((r) => !r.replayed).length, 1)
   assert.equal((await rowsFor(idem)).length, 1)
 })
 
+test('create-once replay picks the newest matching row (ORDER BY created_at DESC, id DESC)', async () => {
+  // A18: reversing created_at DESC to ASC must go red. The older row has the
+  // greater id, so ORDER BY id DESC only (drop-createdAt) returns the wrong
+  // row. Dropping id DESC must also go red: five tied rows are inserted in
+  // id ASC (lowest first), the reverse of the expected id DESC order. Without
+  // the tie-break, Seq Scan + Sort on equal created_at keeps heap order and
+  // LIMIT 1 returns the lowest id. Replays use one body so payloadHash matches (#108).
+  const idem = `idem-${newId('t')}`
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
+  await setRow(first.approval.id, { idempotencyKey: `idem-${newId('t')}` })
+  const second = await ingest(keyP1, idem, body)
+  const t0 = Date.now() - 60_000
+  // Older createdAt must have the greater id so ORDER BY id DESC only (no
+  // created_at) returns the wrong row every time.
+  const older = first.approval.id > second.approval.id ? first : second
+  const newer = older === first ? second : first
+  await setRow(older.approval.id, { idempotencyKey: idem, createdAt: new Date(t0) })
+  await setRow(newer.approval.id, { idempotencyKey: idem, createdAt: new Date(t0 + 5_000) })
+  assert.ok(older.approval.id > newer.approval.id, 'older row must have the greater id')
+
+  const replay = await ingest(keyP1, idem, body)
+  assert.equal(replay.replayed, true)
+  assert.equal(replay.approval.id, newer.approval.id, 'replay must return the newest matching row, not the oldest')
+  assert.notEqual(replay.approval.id, older.approval.id)
+  assert.equal((await rowsFor(idem)).length, 2)
+
+  const idemTie = `idem-${newId('t')}`
+  const ids = Array.from({ length: 5 }, () => newId('apr').slice(0, 36)).sort()
+  const expectedOrder = [...ids].reverse()
+  const same = new Date(t0 + 30_000)
+  const seed = await ingest(keyP1, `seed-${newId('t')}`, body)
+  const [stored] = await db.select().from(approvals).where(eq(approvals.id, seed.approval.id))
+  if (!stored) throw new Error('seed row missing')
+  await setRow(seed.approval.id, { idempotencyKey: `done-${newId('t')}` })
+  // Insert one row at a time, lowest id first, highest last, copying the seeded
+  // envelope so payloadHash matches the replay body.
+  for (const id of ids) {
+    await db.insert(approvals).values({
+      id,
+      workspaceId: workspace.id,
+      projectId: projectP.id,
+      plugin: 'mastra',
+      status: 'pending',
+      actionName: stored.actionName,
+      envelope: stored.envelope,
+      origin: stored.origin,
+      idempotencyKey: idemTie,
+      requesterKeyId: keyP1.id,
+      expiresAt: stored.expiresAt ?? new Date(t0 + 3_600_000),
+      createdAt: same,
+    })
+  }
+  const heap = await client.query<{ id: string }>(
+    'select id from approvals where workspace_id = $1 and project_id = $2 and idempotency_key = $3 order by ctid',
+    [workspace.id, projectP.id, idemTie],
+  )
+  assert.deepEqual(
+    heap.rows.map((row) => row.id),
+    ids,
+    'physical/insert order must be the reverse of id DESC (lowest id first, highest last)',
+  )
+
+  const seen: string[] = []
+  for (const expected of expectedOrder) {
+    const tieReplay = await ingest(keyP1, idemTie, body)
+    assert.equal(tieReplay.replayed, true)
+    assert.equal(
+      tieReplay.approval.id,
+      expected,
+      `id DESC order; want ${expectedOrder.join(',')} after ${seen.join(',') || '(start)'}, got ${tieReplay.approval.id}`,
+    )
+    seen.push(tieReplay.approval.id)
+    await setRow(tieReplay.approval.id, { idempotencyKey: `done-${newId('t')}` })
+  }
+  assert.deepEqual(seen, expectedOrder, 'replay must walk matching rows in id DESC order')
+})
+
+test('create-once: sibling keys racing a fresh id: one create, the other 409, no duplicate row', async () => {
+  // S14: real Postgres, not mocked. Two sibling requester keys race to create
+  // the same unused Idempotency-Key. Exactly one row exists afterwards: one
+  // create wins, the other key gets 409.
+  const RUNS = 8
+  for (let run = 1; run <= RUNS; run++) {
+    const idem = `idem-${newId('t')}`
+    const [left, right] = await Promise.all([
+      ingestApproval({ apiKey: keyP1.raw, body: payload(), idempotencyKey: idem }),
+      ingestApproval({ apiKey: keyP2.raw, body: payload(), idempotencyKey: idem }),
+    ])
+    const winners = [left, right].filter((result) => result.ok)
+    const losers = [left, right].filter((result) => !result.ok)
+    assert.equal(winners.length, 1, `run ${run}: exactly one create must win`)
+    assert.equal(losers.length, 1, `run ${run}: the other key must lose`)
+    const winner = winners[0]
+    const loser = losers[0]
+    if (!winner || !winner.ok || !loser || loser.ok) throw new Error(`run ${run}: expected one ok and one error`)
+    assert.equal(winner.replayed, false, `run ${run}: the winner is a create, not a replay`)
+    assert.equal(loser.status, 409, `run ${run}: the losing sibling must get 409`)
+    const rows = await rowsFor(idem)
+    assert.equal(rows.length, 1, `run ${run}: no duplicate row`)
+    assert.ok(
+      rows[0]?.requesterKeyId === keyP1.id || rows[0]?.requesterKeyId === keyP2.id,
+      `run ${run}: the surviving row belongs to one of the racing keys`,
+    )
+  }
+})
+
 test('create-once: ingest waits on the per-project, per-key advisory lock', async () => {
   const idem = `idem-${newId('t')}`
+  const body = payload()
   const locker = new pg.Client({ connectionString: DATABASE_URL })
   await locker.connect()
   try {
     await locker.query('begin')
     await locker.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`hitly:create-once:${projectP.id}:${idem}`])
     let settled = false
-    const pending = ingest(keyP1, idem).finally(() => {
+    const pending = ingest(keyP1, idem, body).finally(() => {
       settled = true
     })
     await new Promise((resolve) => setTimeout(resolve, 400))
@@ -292,8 +469,9 @@ test('create-once: ingest waits on the per-project, per-key advisory lock', asyn
 
 test('create-once is per project: the same key in another project is a different request', async () => {
   const idem = `idem-${newId('t')}`
-  const p = await ingest(keyP1, idem)
-  const q = await ingest(keyQ, idem, payload({ projectId: projectQ.id }))
+  const body = payload()
+  const p = await ingest(keyP1, idem, body)
+  const q = await ingest(keyQ, idem, { ...body, projectId: projectQ.id })
   assert.equal(q.replayed, false)
   assert.notEqual(q.approval.id, p.approval.id)
 })
@@ -438,6 +616,32 @@ test('pending list: scoped to the calling key, open and unexpired only', async (
   assert.equal(badStatus.status, 400)
   const badLimit = await listRoute(new Request('http://localhost/api/v1/approvals?limit=ten', { headers: { authorization: `Bearer ${k2.raw}` } }))
   assert.equal(badLimit.status, 400)
+})
+
+test('pending list: failed_resume rows are included in GET /api/v1/approvals open list', async () => {
+  // A8d: failed_resume is an open status. Dropping it from the list filter
+  // (or treating it like overdue pending) must go red here.
+  const k = await insertKey(projectP.id, 'failed-resume list key')
+  const failed = await ingest(k)
+  await setRow(failed.approval.id, { status: 'failed_resume', expiresAt: new Date(Date.now() - 1000) })
+  const pending = await ingest(k)
+
+  const list = await listRequesterPending({ apiKey: k.raw })
+  if (!list.ok) throw new Error(list.error)
+  const byId = new Map(list.items.map((item) => [item.id, item]))
+  assert.equal(byId.get(failed.approval.id)?.status, 'failed_resume')
+  assert.equal(byId.get(pending.approval.id)?.status, 'pending')
+
+  const route = await listRoute(
+    new Request(`http://localhost/api/v1/approvals?projectId=${projectP.id}&status=open`, {
+      headers: { authorization: `Bearer ${k.raw}` },
+    }),
+  )
+  assert.equal(route.status, 200)
+  const body = (await route.json()) as { status: string; items: Array<{ id: string; status: string }> }
+  assert.equal(body.status, 'open')
+  assert.equal(body.items.find((item) => item.id === failed.approval.id)?.status, 'failed_resume')
+  assert.equal(body.items.find((item) => item.id === pending.approval.id)?.status, 'pending')
 })
 
 test('deleting the requester key keeps the request (FK set null)', async () => {
@@ -608,10 +812,11 @@ test('create-once replay is scoped to the creating key; a sibling key gets 409 a
   // (mutant A4b) must go red: the sibling would replay the other key's
   // request instead of getting the conflict error.
   const idem = `idem-${newId('t')}`
-  const first = await ingest(keyP1, idem)
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
 
   // The creating key replays its own open request, unchanged.
-  const own = await ingest(keyP1, idem)
+  const own = await ingest(keyP1, idem, body)
   assert.equal(own.replayed, true)
   assert.equal(own.approval.id, first.approval.id)
 
@@ -639,7 +844,7 @@ test('create-once replay is scoped to the creating key; a sibling key gets 409 a
   assert.ok('approval' in decided)
   // The resume target is not running here, so settle the row as decided (closed).
   await setRow(first.approval.id, { status: 'decided' })
-  const closedReplay = await ingest(keyP1, idem)
+  const closedReplay = await ingest(keyP1, idem, body)
   assert.equal(closedReplay.replayed, true)
   assert.equal(closedReplay.approval.id, first.approval.id)
   assert.equal(closedReplay.approval.status, 'decided')

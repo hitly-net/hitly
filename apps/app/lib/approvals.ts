@@ -4,6 +4,7 @@ import {
   isDecision,
   isOpenApprovalStatus,
   isPluginId,
+  jcsHash,
   OPEN_APPROVAL_STATUSES,
   originResumeError,
   validateAnswerSubmission,
@@ -264,6 +265,66 @@ function withProjectCredentials(body: Record<string, unknown>, project: typeof p
   return merged
 }
 
+type LoadedProject = Awaited<ReturnType<typeof decodeProject<typeof projects.$inferSelect>>>
+type IngestedEnvelope = ApprovalEnvelope & { origin: OriginRef }
+
+/**
+ * hitl-spec payloadHash (`b64url(SHA-256(JCS(envelope)))`) over a JSON-normalised
+ * envelope so undefined keys dropped at ingest/JSONB match the stored record.
+ */
+async function envelopePayloadHash(envelope: unknown): Promise<string> {
+  return jcsHash(JSON.parse(JSON.stringify(envelope)) as unknown)
+}
+
+async function ingestBodyToEnvelope(args: {
+  body: Record<string, unknown>
+  project: LoadedProject
+}): Promise<{ ok: true; ingested: IngestedEnvelope } | { ok: false; error: string; status: 400 }> {
+  const pluginId = args.body.plugin ?? args.project.plugin
+  if (!isPluginId(pluginId) || pluginId !== args.project.plugin) {
+    await logProjectEvent({
+      projectId: args.project.id,
+      level: 'error',
+      type: 'ingest',
+      message: `Plugin mismatch: expected ${args.project.plugin}`,
+    })
+    return { ok: false as const, error: `Project is configured for ${args.project.plugin}`, status: 400 as const }
+  }
+
+  const merged = withProjectCredentials(args.body, args.project)
+  let ingested: IngestedEnvelope
+  try {
+    ingested = getPlugin(pluginId).ingest(merged)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Ingest failed'
+    await logProjectEvent({
+      projectId: args.project.id,
+      level: 'error',
+      type: 'ingest',
+      message,
+    })
+    return { ok: false as const, error: message, status: 400 as const }
+  }
+
+  const gatingErrors = validateRequestGating(ingested)
+  if (gatingErrors.length > 0) {
+    const message = `Invalid gating config: ${gatingErrors.map((error) => `${error.field}: ${error.message}`).join('; ')}`
+    await logProjectEvent({
+      projectId: args.project.id,
+      level: 'error',
+      type: 'ingest',
+      message,
+    })
+    return { ok: false as const, error: message, status: 400 as const }
+  }
+
+  ingested.origin.projectId = args.project.id
+  if (pluginId === 'mastra' && !ingested.origin.resumeHandle.mastraBaseUrl && typeof args.project.credentials.baseUrl === 'string') {
+    ingested.origin.resumeHandle.mastraBaseUrl = args.project.credentials.baseUrl
+  }
+  return { ok: true as const, ingested }
+}
+
 async function applyRules(args: {
   project: typeof projects.$inferSelect
   envelope: ApprovalEnvelope
@@ -333,8 +394,10 @@ export async function ingestApproval(args: {
     // Replay is scoped to the API key that created the request, consistent
     // with key-scoped cancel and the pending list (PM ruling D3). Open
     // requests replay at any age; closed ones replay inside the published
-    // retention window (lib/create-once.ts). The stored request is returned
-    // unchanged, whatever the new body says.
+    // retention window (lib/create-once.ts). Newest matching row wins
+    // (created_at DESC, id DESC as the tie-break). Same payloadHash (JCS of
+    // the ingested envelope) replays the stored request; a different payloadHash
+    // is 409 idempotency_conflict so a changed body is never silently recorded.
     const existing = await database
       .select()
       .from(approvals)
@@ -347,9 +410,31 @@ export async function ingestApproval(args: {
           or(inArray(approvals.status, OPEN_APPROVAL_STATUSES), gt(approvals.createdAt, createOnceCutoff(args.now ?? Date.now()))),
         ),
       )
-      .orderBy(desc(approvals.createdAt))
+      .orderBy(desc(approvals.createdAt), desc(approvals.id))
       .limit(1)
     if (existing[0]) {
+      const incoming = await ingestBodyToEnvelope({ body: args.body, project })
+      if (!incoming.ok) return incoming
+      const storedEnvelope = await decodeTenantJson(project.workspaceId, existing[0].envelope)
+      const storedHash = await envelopePayloadHash(storedEnvelope)
+      const incomingHash = await envelopePayloadHash(incoming.ingested)
+      if (storedHash !== incomingHash) {
+        await logProjectEvent({
+          workspaceId: project.workspaceId,
+          projectId: project.id,
+          approvalId: existing[0].id,
+          type: 'ingest',
+          level: 'warn',
+          message: 'Create-once conflict: payloadHash does not match the stored request',
+          payload: { conflict: true, code: 'idempotency_conflict', requesterKeyId: key.id },
+        })
+        return {
+          ok: false as const,
+          error: 'Idempotency-Key reused with a different payload',
+          code: 'idempotency_conflict' as const,
+          status: 409 as const,
+        }
+      }
       await logProjectEvent({
         workspaceId: project.workspaceId,
         projectId: project.id,
@@ -362,7 +447,7 @@ export async function ingestApproval(args: {
         ok: true as const,
         approval: {
           ...existing[0],
-          envelope: await decodeTenantJson(project.workspaceId, existing[0].envelope),
+          envelope: storedEnvelope,
           origin: await decodeTenantJson(project.workspaceId, existing[0].origin),
         },
         replayed: true,
@@ -405,50 +490,10 @@ export async function ingestApproval(args: {
     }
   }
 
-  const pluginId = args.body.plugin ?? project.plugin
-  if (!isPluginId(pluginId) || pluginId !== project.plugin) {
-    await logProjectEvent({
-      projectId: project.id,
-      level: 'error',
-      type: 'ingest',
-      message: `Plugin mismatch: expected ${project.plugin}`,
-    })
-    return { ok: false as const, error: `Project is configured for ${project.plugin}`, status: 400 as const }
-  }
-
-  const merged = withProjectCredentials(args.body, project)
-  let ingested
-  try {
-    ingested = getPlugin(pluginId).ingest(merged)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Ingest failed'
-    await logProjectEvent({
-      projectId: project.id,
-      level: 'error',
-      type: 'ingest',
-      message,
-    })
-    return { ok: false as const, error: message, status: 400 as const }
-  }
-
-  // Request-level gating validation (hitl-spec 7, at ingest): refuse malformed
-  // reasonRequired entries and context refs instead of storing a broken gate.
-  const gatingErrors = validateRequestGating(ingested)
-  if (gatingErrors.length > 0) {
-    const message = `Invalid gating config: ${gatingErrors.map((error) => `${error.field}: ${error.message}`).join('; ')}`
-    await logProjectEvent({
-      projectId: project.id,
-      level: 'error',
-      type: 'ingest',
-      message,
-    })
-    return { ok: false as const, error: message, status: 400 as const }
-  }
-
-  ingested.origin.projectId = project.id
-  if (pluginId === 'mastra' && !ingested.origin.resumeHandle.mastraBaseUrl && typeof project.credentials.baseUrl === 'string') {
-    ingested.origin.resumeHandle.mastraBaseUrl = project.credentials.baseUrl
-  }
+  const prepared = await ingestBodyToEnvelope({ body: args.body, project })
+  if (!prepared.ok) return prepared
+  const ingested = prepared.ingested
+  const pluginId = ingested.origin.plugin
 
   const routed = await applyRules({ project, envelope: ingested, origin: ingested.origin })
   const approvalId = newId('apr').slice(0, 36)

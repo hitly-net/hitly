@@ -9,12 +9,14 @@ The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origi
 
 ### Create-once
 
-Within a project, a repeat POST with the same `Idempotency-Key` **from the API key that created the request** returns the existing request instead of creating a second ask (`"replayed": true`, same `id`, the stored request unchanged even if the new body differs) when:
+Within a project, a repeat POST with the same `Idempotency-Key` **from the API key that created the request** returns the existing request instead of creating a second ask (`"replayed": true`, same `id`, stored request unchanged) **only when the new body's `payloadHash` matches the stored request**. `payloadHash` is `b64url(SHA-256(JCS(envelope)))` of the ingested create-once record ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) JSON Canonicalization, unpadded base64url). Replay applies when:
 
 - the existing request is still **open** (`pending` or `failed_resume`), at any age; or
 - it is **closed** (decided, rejected, cancelled or expired) and was created less than the **create-once retention period** ago.
 
-Replay is **per API key** (consistent with key-scoped cancel and the pending list): a sibling key on the same project never replays another key's request. While the `Idempotency-Key` is still held by a request the calling key cannot replay (a sibling's, still open or inside the retention window), that POST is rejected with `409` and `{ "error": … }` only - no id, status or payload of the other request is disclosed.
+If the same key reuses the `Idempotency-Key` with a **different** `payloadHash`, the POST is rejected with `409` and `{ "error": "…", "code": "idempotency_conflict" }`. The stored response is not replayed and no second row is created, so a bot cannot treat a changed body as recorded. To re-ask with a revised payload, send a **new** `Idempotency-Key` (hitl-spec 4.2: a re-submit is a new `requestId`).
+
+Replay is **per API key** (consistent with key-scoped cancel and the pending list): a sibling key on the same project never replays another key's request. While the `Idempotency-Key` is still held by a request the calling key cannot replay (a sibling's, still open or inside the retention window), that POST is rejected with `409` and `{ "error": … }` only - no id, status or payload of the other request is disclosed. During the 10-day idempotency window (the boundary instant is exclusive), a legacy row with no requester key returns `409` for any key. An open legacy row with no requester key returns `409` at any age.
 
 The retention period is **10 days** by default and is published in every create response as `createOnce.retentionSeconds`. Self-hosted operators can change it with `HITLY_CREATE_ONCE_RETENTION_DAYS` (whole days, 1–3650). After the period, a repeat POST of the same `Idempotency-Key` may create a new request. Keep your own record of a spent `requestId` at least that long.
 
@@ -103,7 +105,9 @@ Query: `scope=all|open|closed`, `q`, `projectId`. `open` is pending + failed res
 
 `GET /api/v1/inbox/summary` returns `{ pending, failedResume, decidedToday, projectCount }`.
 
-`GET /api/v1/approvals/:id` returns envelope, origin, `originFields`, decisions, and `canAct` (session cookie or reviewer Bearer token).
+`GET /api/v1/approvals/:id` (session cookie or reviewer Bearer token) returns envelope, origin, `originFields`, decisions, `canAct`, and — when the item is actionable for this reviewer — `openedRefs`.
+
+`openedRefs` is the gating keys (hitl-spec 3.7) **this** reviewer has already recorded opens for. It is built from `opened` audit events written by `POST /api/v1/approvals/:id/opens`. Reviewer clients hydrate the must-open checklist from it so re-entering an approval does not force opening every item again. The field is omitted when `canAct` is false. The host still re-validates decide against the recorded events, not against this field.
 
 A **project** API key on the same route returns the requester view. It keeps the origin-poll fields `{ id, status, decision?, response?, presentedAt }` that Hermes polls while `present()` waits, and adds:
 

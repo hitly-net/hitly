@@ -8,7 +8,9 @@ import { loadOpenedContextRefs } from './context-opens'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
 import { loadEvidenceReceiptForDisplay } from './evidence'
+import { isSecretRequestKey, redactRequestPayload } from './redact-request-payload'
 
+/** Session GET /api/v1/approvals/:id. Origin/envelope secrets are redacted in the response only. */
 export async function getApprovalDetail(args: {
   approvalId: string
   userId: string
@@ -34,6 +36,9 @@ export async function getApprovalDetail(args: {
 
     const envelope = (await decodeTenantJson(args.workspaceId, approval.envelope)) as unknown as ApprovalEnvelope
     const origin = (await decodeTenantJson(args.workspaceId, approval.origin)) as unknown as OriginRef
+    // Display fields from the stored original; JSON below is a redacted *view*.
+    const metadata = envelopeMetadata(envelope, origin)
+    const fields = originFields(origin)
     const expired = approvalHasExpired(approval)
     const canAct = canDecide(access) && isOpenApprovalStatus(approval.status) && !expired
     const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status)
@@ -92,12 +97,13 @@ export async function getApprovalDetail(args: {
       expiresAt: approval.expiresAt,
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
-      envelope: {
+      // Response-only: stored envelope/origin and payloadHash/argsHash are not rewritten.
+      envelope: redactRequestPayload({
         ...envelope,
-        metadata: envelopeMetadata(envelope, origin),
-      },
-      origin,
-      originFields: originFields(origin),
+        metadata,
+      }) as ApprovalEnvelope,
+      origin: redactRequestPayload(origin) as OriginRef,
+      originFields: fields.filter((row) => !isSecretRequestKey(row.key)),
       canAct,
       canCancel,
       ...(openedRefs ? { openedRefs } : {}),

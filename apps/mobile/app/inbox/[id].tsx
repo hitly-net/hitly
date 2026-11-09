@@ -12,6 +12,12 @@ import { DecisionHistory } from '../../src/components/detail/DecisionHistory'
 import { DecisionBar } from '../../src/components/detail/DecisionBar'
 import { RetryResumeButton } from '../../src/components/detail/RetryResumeButton'
 import { handleDecideError } from '../../src/components/detail/decide-helpers'
+import {
+  appendOpenedRef,
+  localOpensForApproval,
+  mergeOpenedRefs,
+  shouldRecordOpen,
+} from '../../src/components/detail/open-helpers'
 import { useAttention } from '../../src/providers/AttentionProvider'
 import type { ApprovalDetail } from '../../src/types'
 
@@ -30,6 +36,16 @@ export default function WorkItemDetailScreen() {
   const [detail, setDetail] = useState<ApprovalDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [openedRefs, setOpenedRefs] = useState<string[]>([])
+  const openedForId = useRef<string | undefined>(undefined)
+
+  useEffect(() => {
+    if (!id) return
+    setOpenedRefs((current) => {
+      const next = localOpensForApproval(id, openedForId.current, current)
+      openedForId.current = id
+      return next
+    })
+  }, [id])
 
   useEffect(() => {
     if (!client || !id || !token) return
@@ -74,7 +90,7 @@ export default function WorkItemDetailScreen() {
    * the host-recorded opens hydrated with the detail payload (S10) unioned with
    * taps from this screen, so re-entering does not force opening items again.
    */
-  const openedContextRefs = Array.from(new Set([...(detail.openedRefs ?? []), ...openedRefs]))
+  const openedContextRefs = mergeOpenedRefs(detail.openedRefs, openedRefs)
   const approvalId = detail.id
 
   /**
@@ -87,10 +103,10 @@ export default function WorkItemDetailScreen() {
     if (item.url) {
       void Linking.openURL(item.url).catch(() => undefined)
     }
-    if (!client || openedContextRefs.includes(item.ref)) return
+    if (!client || !shouldRecordOpen(item.ref, openedContextRefs)) return
     try {
       await client.open(approvalId, item.ref)
-      setOpenedRefs((current) => (current.includes(item.ref) ? current : [...current, item.ref]))
+      setOpenedRefs((current) => appendOpenedRef(current, item.ref))
     } catch {
       // The open was not recorded; the item keeps gating the answer until it is opened again.
     }
