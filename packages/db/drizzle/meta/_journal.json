@@ -50,6 +50,13 @@
       "when": 1794228833721,
       "tag": "0006_approval_requester_key",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794266643086,
+      "tag": "0007_pending_email_changes",
+      "breakpoints": true
     }
   ]
 }
