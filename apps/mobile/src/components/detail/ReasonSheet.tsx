@@ -1,5 +1,6 @@
 import { Modal, Pressable, Text, TextInput, View, StyleSheet } from 'react-native'
 import { colors } from '../../theme'
+import { canSubmitReason } from './reason-helpers'
 
 /**
  * Reason prompt for answers that list `reasonRequired` (hitl-spec 3.6).
@@ -33,7 +34,7 @@ export function ReasonSheet({
           style={styles.input}
           placeholder="Why are you answering this way?"
         />
-        <Pressable style={styles.button} onPress={onSubmit} disabled={!value.trim()}>
+        <Pressable style={styles.button} onPress={onSubmit} disabled={!canSubmitReason(value)}>
           <Text style={styles.label}>Send</Text>
         </Pressable>
         <Pressable onPress={onClose}>

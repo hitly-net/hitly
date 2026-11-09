@@ -103,7 +103,9 @@ Query: `scope=all|open|closed`, `q`, `projectId`. `open` is pending + failed res
 
 `GET /api/v1/inbox/summary` returns `{ pending, failedResume, decidedToday, projectCount }`.
 
-`GET /api/v1/approvals/:id` returns envelope, origin, `originFields`, decisions, and `canAct` (session cookie or reviewer Bearer token).
+`GET /api/v1/approvals/:id` (session cookie or reviewer Bearer token) returns envelope, origin, `originFields`, decisions, `canAct`, and — when the item is actionable for this reviewer — `openedRefs`.
+
+`openedRefs` is the gating keys (hitl-spec 3.7) **this** reviewer has already recorded opens for. It is built from `opened` audit events written by `POST /api/v1/approvals/:id/opens`. Reviewer clients hydrate the must-open checklist from it so re-entering an approval does not force opening every item again. The field is omitted when `canAct` is false. The host still re-validates decide against the recorded events, not against this field.
 
 A **project** API key on the same route returns the requester view. It keeps the origin-poll fields `{ id, status, decision?, response?, presentedAt }` that Hermes polls while `present()` waits, and adds:
 

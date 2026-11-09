@@ -227,6 +227,16 @@ Hosted URL validation: GET this path; require `ok === true` and `product === "hi
 }
 ```
 
+#### `openedRefs`
+
+`openedRefs` is the list of **gating keys** (hitl-spec 3.7 `ref`) that **this reviewer** has already recorded as opened on this approval.
+
+- **What it is.** Distinct from the envelope's `mustOpen` flags. `mustOpen` is declared on context links/attachments at ingest. `openedRefs` is the reviewer's own open history for those keys (`policy`, a url, `name:url`, …). Another reviewer's opens never appear here.
+- **When it is set.** `GET /api/v1/approvals/:id` (session / reviewer Bearer) includes `openedRefs` when the item is **actionable for this reviewer** (`canAct`). The host builds it from `opened` project events recorded by `POST /api/v1/approvals/:id/opens` (each event carries `itemRef`, `openedAt`, and the actor). The field is **omitted** when the reviewer cannot act (already decided, expired, cancelled, or no decide permission) — there is nothing to hydrate.
+- **How clients use it.** Reviewer clients (mobile and web) hydrate the must-open checklist from `openedRefs` on load, then union in taps from the current visit. Re-entering an approval does not force opening every item again, and a tap on an already-recorded ref should not POST another `opened` event from the checklist. The host still re-validates on decide against the recorded events, not against this field.
+
+A project API key on the same GET route still returns the slim origin-poll payload and never includes `openedRefs`.
+
 ### Original request (view / copy)
 
 `GET /api/v1/approvals/:id/original-request` (session auth) returns the **canonical JSON of the stored create-once** `hitl/request/v0` record (host-normalised envelope), its sha256, the canonical args hash and the requested-event evidence anchor. It is **not** the requester's raw wire bytes: key order, whitespace, `\u` escapes and number forms are normalised at ingest. The web detail page shows it under "View original request" with a Copy button that hands out that canonical string without re-serializing.
@@ -236,10 +246,6 @@ Hosted URL validation: GET this path; require `ok === true` and `product === "hi
 - **Never logged.** Payload contents are never written to logs. Logs carry only ids and hashes.
 - **Known limitation (ingest precision).** Integers above `Number.MAX_SAFE_INTEGER` lose precision at ingest `JSON.parse` (for example `12345678901234567890` is stored and served as `12345678901234567000`). That is a property of the stored record; this view does not attempt to repair it.
 - **Hash form.** The sha256 shown is hex over Hitly `canonicalJson`, not hitl-spec §5 `b64url(SHA-256(JCS(...)))`. Aligning those is a follow-up.
-
-`openedRefs` lists the gating keys (hitl-spec 3.7) this reviewer has recorded opens
-for; reviewer clients hydrate the must-open checklist from it so re-entering an
-approval does not force opening every item again. Absent when the item is not actionable.
 
 ### Decide & answer gating
 
@@ -289,7 +295,7 @@ item's gating key (its raw url is also accepted). Response:
 
 Opens are per reviewer and repeatable (every open is audited). The host never fetches
 the target itself: the client opens the real URL (new tab / in-app browser) and reports
-the open here.
+the open here. Those events are what `openedRefs` on the approval detail is built from.
 
 ### Workspaces
 
