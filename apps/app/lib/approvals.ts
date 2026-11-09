@@ -330,7 +330,9 @@ export async function ingestApproval(args: {
     await database.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${`hitly:create-once:${project.id}:${args.idempotencyKey}`}, 0))`,
     )
-    // Open requests replay at any age; closed ones replay inside the published
+    // Replay is scoped to the API key that created the request, consistent
+    // with key-scoped cancel and the pending list (PM ruling D3). Open
+    // requests replay at any age; closed ones replay inside the published
     // retention window (lib/create-once.ts). The stored request is returned
     // unchanged, whatever the new body says.
     const existing = await database
@@ -341,6 +343,7 @@ export async function ingestApproval(args: {
           eq(approvals.workspaceId, project.workspaceId),
           eq(approvals.projectId, project.id),
           eq(approvals.idempotencyKey, args.idempotencyKey),
+          eq(approvals.requesterKeyId, key.id),
           or(inArray(approvals.status, OPEN_APPROVAL_STATUSES), gt(approvals.createdAt, createOnceCutoff(args.now ?? Date.now()))),
         ),
       )
@@ -363,6 +366,41 @@ export async function ingestApproval(args: {
           origin: await decodeTenantJson(project.workspaceId, existing[0].origin),
         },
         replayed: true,
+      }
+    }
+
+    // D3 (PM ruling): replay is per creating key, so a sibling key in the
+    // same project never replays another key's request. If the id is still
+    // held by a request this key cannot replay - a sibling's, or a legacy
+    // key-less row - the submission is a plain conflict: no id, status or
+    // payload of the other request is disclosed, and no second ask is
+    // created for a live id.
+    const heldByOther = await database
+      .select({ id: approvals.id })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.workspaceId, project.workspaceId),
+          eq(approvals.projectId, project.id),
+          eq(approvals.idempotencyKey, args.idempotencyKey),
+          sql`${approvals.requesterKeyId} is distinct from ${key.id}`,
+          or(inArray(approvals.status, OPEN_APPROVAL_STATUSES), gt(approvals.createdAt, createOnceCutoff(args.now ?? Date.now()))),
+        ),
+      )
+      .limit(1)
+    if (heldByOther[0]) {
+      await logProjectEvent({
+        workspaceId: project.workspaceId,
+        projectId: project.id,
+        type: 'ingest',
+        level: 'warn',
+        message: 'Create-once conflict: Idempotency-Key is held by a different API key',
+        payload: { conflict: true, requesterKeyId: key.id },
+      })
+      return {
+        ok: false as const,
+        error: 'Idempotency-Key already used in this project by a different API key',
+        status: 409 as const,
       }
     }
   }

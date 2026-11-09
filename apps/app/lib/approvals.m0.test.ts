@@ -1,6 +1,7 @@
 /**
  * M0 host gaps against real Postgres: create-once replay inside the published
- * retention window (hitl-spec 3.2), hitl/response/v0 reads with an API key (4),
+ * retention window (hitl-spec 3.2), scoped to the creating API key (D3),
+ * hitl/response/v0 reads with an API key (4),
  * requester cancel, the key-scoped pending list, and the JCS argsHash (3.8).
  */
 import assert from 'node:assert/strict'
@@ -599,4 +600,66 @@ test('pending list route: the server caps the page at the published 200 even wit
   assert.equal(new Set(body.items.map((item) => item.id)).size, REQUESTER_PENDING_MAX_LIMIT)
   // Newest first still holds under the cap.
   assert.equal(body.items[0]?.createdAt, new Date(base + total - 1).toISOString())
+})
+
+test('create-once replay is scoped to the creating key; a sibling key gets 409 and learns nothing', async () => {
+  // D3 (PM ruling): replay is per API key, consistent with key-scoped cancel
+  // and list. Reverting the requesterKeyId scoping on the replay lookup
+  // (mutant A4b) must go red: the sibling would replay the other key's
+  // request instead of getting the conflict error.
+  const idem = `idem-${newId('t')}`
+  const first = await ingest(keyP1, idem)
+
+  // The creating key replays its own open request, unchanged.
+  const own = await ingest(keyP1, idem)
+  assert.equal(own.replayed, true)
+  assert.equal(own.approval.id, first.approval.id)
+
+  // A sibling key on the same project gets the normal conflict error.
+  const sibling = await ingestApproval({ apiKey: keyP2.raw, body: payload(), idempotencyKey: idem })
+  assert.equal(sibling.ok, false)
+  if (sibling.ok) throw new Error('a sibling key must not replay another key request')
+  assert.equal(sibling.status, 409)
+  assert.equal(typeof sibling.error, 'string')
+  assert.deepEqual(Object.keys(sibling).sort(), ['error', 'ok', 'status'])
+  const disclosed = JSON.stringify(sibling)
+  assert.ok(!disclosed.includes(first.approval.id), 'conflict must not disclose the other approval id')
+  assert.ok(!disclosed.includes('pending'), 'conflict must not disclose the other request status')
+
+  // No second ask is created for a live id; the owner's row is untouched.
+  const rows = await rowsFor(idem)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]?.status, 'pending')
+  assert.equal(rows[0]?.requesterKeyId, keyP1.id)
+
+  // Closed inside the window: the creating key still replays, the sibling still 409s.
+  const decision = parseDecisionBody({ decision: 'accept' })
+  assert.ok(decision)
+  const decided = await decideApproval({ approvalId: first.approval.id, actorUserId: reviewer.id, payload: decision, workspaceId: workspace.id })
+  assert.ok('approval' in decided)
+  // The resume target is not running here, so settle the row as decided (closed).
+  await setRow(first.approval.id, { status: 'decided' })
+  const closedReplay = await ingest(keyP1, idem)
+  assert.equal(closedReplay.replayed, true)
+  assert.equal(closedReplay.approval.id, first.approval.id)
+  assert.equal(closedReplay.approval.status, 'decided')
+  const siblingClosed = await ingestApproval({ apiKey: keyP2.raw, body: payload(), idempotencyKey: idem })
+  assert.equal(siblingClosed.ok, false)
+  if (siblingClosed.ok) throw new Error('a sibling key must not replay a closed request')
+  assert.equal(siblingClosed.status, 409)
+  const disclosedClosed = JSON.stringify(siblingClosed)
+  assert.ok(!disclosedClosed.includes(first.approval.id), 'conflict must not disclose the other approval id')
+  assert.ok(!disclosedClosed.includes('decided'), 'conflict must not disclose the other request status')
+  assert.equal((await rowsFor(idem)).length, 1, 'a conflicted sibling submit must not create a row')
+
+  // Through the route: plain 409, body is the error only.
+  const route = await ingestRoute(
+    new Request('http://localhost/api/v1/approvals', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${keyP2.raw}`, 'idempotency-key': idem, 'content-type': 'application/json' },
+      body: JSON.stringify(payload()),
+    }),
+  )
+  assert.equal(route.status, 409)
+  assert.deepEqual(Object.keys((await route.json()) as Record<string, unknown>), ['error'])
 })

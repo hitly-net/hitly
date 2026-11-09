@@ -1,13 +1,20 @@
 /**
  * Create-once retention (hitl-spec 3.2).
  *
- * A repeat submission with the same `Idempotency-Key` in the same project
- * returns the existing request, and never creates a second ask, when either:
+ * A repeat submission with the same `Idempotency-Key` in the same project,
+ * made with the API key that created the request, returns the existing
+ * request, and never creates a second ask, when either:
  *
  * - the existing request is still open (`pending` or `failed_resume`), at any
  *   age; or
  * - it is closed (`decided`, `expired` or `cancelled`) and was created less
  *   than the create-once retention period ago.
+ *
+ * Replay is per API key (consistent with key-scoped cancel and the pending
+ * list): a sibling key in the same project never replays another key's
+ * request. While the id is still held by a request the calling key cannot
+ * replay, that submission is rejected with `409` and discloses nothing about
+ * the other request.
  *
  * After the period, the same key MAY create a new request. The period is
  * published in every ingest response (`createOnce.retentionSeconds`) and in
