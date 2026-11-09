@@ -45,7 +45,6 @@ export async function deliverHttpCallback(args: DeliverHttpArgs): Promise<Delive
   const host = destinationHost(args.resumeUrl)
   let lastError: unknown
   let lastStatus = 0
-  let lastBody: unknown = null
   let attempts = 0
 
   for (let i = 0; i < backoff.length; i++) {
@@ -87,7 +86,6 @@ export async function deliverHttpCallback(args: DeliverHttpArgs): Promise<Delive
         }
       }
       lastStatus = response.status
-      lastBody = body
 
       if (response.ok) {
         const parsed = safeParse(args.rawBody)
@@ -133,7 +131,7 @@ export async function deliverHttpCallback(args: DeliverHttpArgs): Promise<Delive
     response: {
       resumeData: redactSecrets(safeParse(args.rawBody)),
       status: lastStatus || 0,
-      body: lastBody,
+      body: null,
       error: message,
     },
   }

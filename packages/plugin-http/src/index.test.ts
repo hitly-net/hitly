@@ -381,5 +381,24 @@ describe('@hitly/plugin-http M0h', () => {
       assert.equal(sigs[1]?.length, 64)
       mock.restoreAll()
     })
+
+    it('omits the response body after exhausted 5xx retries', async () => {
+      const CANARY = 'canary-4b9d2e7f-response-text'
+      mock.method(globalThis, 'fetch', async () => new Response(CANARY, { status: 500 }))
+      const result = await deliverHttpCallback({
+        resumeUrl: 'https://hooks.example/resume',
+        rawBody: JSON.stringify({ decision: 'accept' }),
+        eventId: 'evt_body_redact',
+        backoffMs: [0, 1, 1],
+        sleep: async () => {},
+      })
+      assert.equal(result.attempts, 3)
+      assert.equal(result.response.status, 500)
+      assert.equal(result.response.body, null)
+      assert.ok(result.response.error?.includes('failed (500)'))
+      const shown = JSON.stringify(result.response)
+      assert.ok(!shown.includes(CANARY), 'response body must never leak the canary')
+      mock.restoreAll()
+    })
   })
 })
