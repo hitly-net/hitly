@@ -338,34 +338,75 @@ test('create-once: concurrent submissions of a new key create exactly one reques
 })
 
 test('create-once replay picks the newest matching row (ORDER BY created_at DESC, id DESC)', async () => {
-  // A18: two matching rows. Reversing the replay ORDER BY to oldest-first
-  // (created_at ASC / id ASC) must go red.
+  // A18: reversing created_at DESC to ASC must go red. Dropping id DESC must
+  // also go red: five tied rows are inserted in id ASC (lowest first), the
+  // reverse of the expected id DESC order. Without the tie-break, Seq Scan +
+  // Sort on equal created_at keeps heap order and LIMIT 1 returns the lowest id.
+  // Replays use one body so payloadHash matches (#108).
   const idem = `idem-${newId('t')}`
-  const older = await ingest(keyP1, idem)
+  const body = payload()
+  const older = await ingest(keyP1, idem, body)
   await setRow(older.approval.id, { idempotencyKey: `idem-${newId('t')}` })
-  const newer = await ingest(keyP1, idem)
+  const newer = await ingest(keyP1, idem, body)
   const t0 = Date.now() - 60_000
   await setRow(older.approval.id, { idempotencyKey: idem, createdAt: new Date(t0) })
   await setRow(newer.approval.id, { createdAt: new Date(t0 + 5_000) })
 
-  const replay = await ingest(keyP1, idem)
+  const replay = await ingest(keyP1, idem, body)
   assert.equal(replay.replayed, true)
   assert.equal(replay.approval.id, newer.approval.id, 'replay must return the newest matching row, not the oldest')
   assert.notEqual(replay.approval.id, older.approval.id)
   assert.equal((await rowsFor(idem)).length, 2)
 
   const idemTie = `idem-${newId('t')}`
-  const first = await ingest(keyP1, idemTie)
-  await setRow(first.approval.id, { idempotencyKey: `idem-${newId('t')}` })
-  const second = await ingest(keyP1, idemTie)
+  const ids = Array.from({ length: 5 }, () => newId('apr').slice(0, 36)).sort()
+  const expectedOrder = [...ids].reverse()
   const same = new Date(t0 + 30_000)
-  await setRow(first.approval.id, { idempotencyKey: idemTie, createdAt: same })
-  await setRow(second.approval.id, { createdAt: same })
-  const [, hi] = [first.approval.id, second.approval.id].sort()
-  const tieReplay = await ingest(keyP1, idemTie)
-  assert.equal(tieReplay.replayed, true)
-  assert.equal(tieReplay.approval.id, hi, 'equal createdAt: the greater id must win (id DESC)')
-  assert.equal((await rowsFor(idemTie)).length, 2)
+  const seed = await ingest(keyP1, `seed-${newId('t')}`, body)
+  const [stored] = await db.select().from(approvals).where(eq(approvals.id, seed.approval.id))
+  if (!stored) throw new Error('seed row missing')
+  await setRow(seed.approval.id, { idempotencyKey: `done-${newId('t')}` })
+  // Insert one row at a time, lowest id first, highest last, copying the seeded
+  // envelope so payloadHash matches the replay body.
+  for (const id of ids) {
+    await db.insert(approvals).values({
+      id,
+      workspaceId: workspace.id,
+      projectId: projectP.id,
+      plugin: 'mastra',
+      status: 'pending',
+      actionName: stored.actionName,
+      envelope: stored.envelope,
+      origin: stored.origin,
+      idempotencyKey: idemTie,
+      requesterKeyId: keyP1.id,
+      expiresAt: stored.expiresAt ?? new Date(t0 + 3_600_000),
+      createdAt: same,
+    })
+  }
+  const heap = await client.query<{ id: string }>(
+    'select id from approvals where workspace_id = $1 and project_id = $2 and idempotency_key = $3 order by ctid',
+    [workspace.id, projectP.id, idemTie],
+  )
+  assert.deepEqual(
+    heap.rows.map((row) => row.id),
+    ids,
+    'physical/insert order must be the reverse of id DESC (lowest id first, highest last)',
+  )
+
+  const seen: string[] = []
+  for (const expected of expectedOrder) {
+    const tieReplay = await ingest(keyP1, idemTie, body)
+    assert.equal(tieReplay.replayed, true)
+    assert.equal(
+      tieReplay.approval.id,
+      expected,
+      `id DESC order; want ${expectedOrder.join(',')} after ${seen.join(',') || '(start)'}, got ${tieReplay.approval.id}`,
+    )
+    seen.push(tieReplay.approval.id)
+    await setRow(tieReplay.approval.id, { idempotencyKey: `done-${newId('t')}` })
+  }
+  assert.deepEqual(seen, expectedOrder, 'replay must walk matching rows in id DESC order')
 })
 
 test('create-once: sibling keys racing a fresh id: one create, the other 409, no duplicate row', async () => {
