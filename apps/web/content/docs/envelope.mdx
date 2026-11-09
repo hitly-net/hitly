@@ -356,7 +356,7 @@ See [S3 evidence](/docs/s3) for S3 configuration fields, local setup with Garage
 HITL<sub><i>y</i></sub> stores a **receipt index only**, not the payload as system of record. Evidence lifecycle:
 
 - `requested` - Approval ingested (fail-open: continues on sink error)
-- `presented` - Ask first shown to a reviewer who can decide (fail-open). Host-sourced, no `data`; sets `activity.presentedAt` (hitl-spec 4.3/5.2). Emitted at most once per approval; a decision without a prior `presented` records one immediately before `decided` so the chain order is preserved. Legacy rows that predate `presented_at` (migration `0004_glamorous_shard`) keep `presented_at` NULL; no `presented` is ever back-filled after a decision.
+- `presented` - Ask first shown to a reviewer who can decide (fail-open). Host-sourced, no `data`; sets `activity.presentedAt` (hitl-spec 4.3/5.2). Emitted at most once per approval; a decision without a prior `presented` records one immediately before `decided` so the chain order is preserved. A `presented` that arrives after a terminal decision (`decided` / accept or reject, `expired`, `cancelled`, or `failed_resume`) is ignored: it does not change state and does not appear as a fresh presentation after `decided`. Legacy rows that predate `presented_at` (migration `0004_glamorous_shard`) keep `presented_at` NULL; no `presented` is ever back-filled after a decision.
 - `decided` - Reviewer decided (**fail-closed**: origin NOT resumed if sink fails)
 - `resumed` / `resume_failed` - Origin resume outcome (fail-open)
 

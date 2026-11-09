@@ -243,6 +243,22 @@ test('create-once: different payloadHash is 409 idempotency_conflict, no new row
   assert.equal(routeBody.error, 'Idempotency-Key reused with a different payload')
   assert.deepEqual(Object.keys(routeBody).sort(), ['code', 'error'])
   assert.equal((await rowsFor(idem)).length, 1)
+
+  const conflictLogs = await db
+    .select()
+    .from(projectEvents)
+    .where(and(eq(projectEvents.approvalId, first.approval.id), eq(projectEvents.type, 'ingest')))
+  const conflictLog = conflictLogs.find((row) => row.message.includes('payloadHash does not match'))
+  assert.ok(conflictLog, '409 must write a create-once conflict log row')
+  assert.ok(
+    conflictLog.message.includes(first.approval.id),
+    `409 log line must include approvalId, got ${conflictLog.message}`,
+  )
+  assert.equal(conflictLog.approvalId, first.approval.id)
+  const logged = JSON.stringify({ message: conflictLog.message, payload: conflictLog.payload })
+  assert.ok(!logged.includes('999999'), '409 log must not include the request payload')
+  assert.ok(!logged.includes(keyP1.raw), '409 log must not include the API key secret')
+  assert.ok(!logged.includes('hitly_'), '409 log must not include raw key material')
 })
 
 test('create-once: replay after a decision (decided) returns the decided request, no new ask', async () => {

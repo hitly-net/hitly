@@ -10,6 +10,12 @@
  * - it is closed (`decided`, `expired` or `cancelled`) and was created less
  *   than the create-once retention period ago.
  *
+ * Same-key replay also requires a matching `payloadHash` (JCS of the ingested
+ * envelope; see `envelopePayloadHash` in `lib/approvals.ts` for which fields
+ * are included vs excluded). A different hash is `409 idempotency_conflict`.
+ * The project log line for that conflict includes `approvalId` and does not
+ * log the request payload or secrets.
+ *
  * Replay is per API key (consistent with key-scoped cancel and the pending
  * list): a sibling key in the same project never replays another key's
  * request. While the id is still held by a request the calling key cannot
