@@ -2,6 +2,9 @@
  * /inbox/:id (and the other server-rendered approval pages) must not leak
  * secrets in the loader DTO / RSC-shaped payload. Real Postgres, not mocked.
  *
+ * Also covers mobile session GET /api/v1/approvals/:id: planted canaries must
+ * not appear raw. Passing the raw approval through that path must go red.
+ *
  * Dropping redactApprovalForReviewer in loadWorkItemPage must go red.
  *
  * Run with: DATABASE_URL=... HITLY_ENCRYPTION_KEK=... yarn workspace @hitly/app test
@@ -25,10 +28,13 @@ import {
   approvals,
   decisionRecords,
 } from '@hitly/db/schema'
-import { ingestApproval } from './approvals'
+import { ingestApproval, getApprovalForOrigin } from './approvals'
+import { getApprovalDetail } from './approval-detail'
+import { createApprovalDetailGet } from './approval-detail-route'
 import { AUDIT_LIST_KEYS, INBOX_LIST_KEYS, listAudit, listInboxItems, serializeAuditList, serializeInboxList } from './inbox'
 import { loadWorkItemPage, serializeWorkItemPage } from './work-item-page'
 import { REDACTED } from './redact-request-payload'
+import type { ApiWorkspaceOk } from './api-session'
 import { encodeTenantJson } from './tenant-crypto'
 import { generateApiKey } from './keys'
 import { newId } from './ids'
@@ -58,8 +64,21 @@ const CANARY = {
   callback: ['page', 'canary', 'callback-secret'].join('-'),
   secretKey: ['page', 'canary', 'secretKey'].join('-'),
   passwordType: ['page', 'canary', 'password-type'].join('-'),
+  secretCount: ['page', 'canary', 'secret-count'].join('-'),
+  apiKeyRequired: ['page', 'canary', 'apikey-required'].join('-'),
+  authTokenType: ['page', 'canary', 'auth-token-type'].join('-'),
+  accessTokenType: ['page', 'canary', 'access-token-type'].join('-'),
+  clientSecretType: ['page', 'canary', 'client-secret-type'].join('-'),
+  cookieRequired: ['page', 'canary', 'cookie-required'].join('-'),
   decisionPayload: ['page', 'canary', 'decision-payload'].join('-'),
   resumeResponse: ['page', 'canary', 'resume-response'].join('-'),
+}
+
+/** False-positive keys from the #115 matcher: must stay visible (not redacted). */
+const VISIBLE = {
+  secretly: ['page', 'visible', 'secretly'].join('-'),
+  tokenType: 'Bearer',
+  tokenCount: 9,
 }
 
 const ALL_CANARIES = Object.values(CANARY)
@@ -174,14 +193,35 @@ async function plantCanaries(approvalId: string) {
   const envelopeHandle = asRecord(envelopeOrigin.resumeHandle)
   const originHandle = asRecord(origin.resumeHandle)
 
+  const m1Args = {
+    amount: 7,
+    tokenCount: VISIBLE.tokenCount,
+    signatureRequired: true,
+    tokenType: VISIBLE.tokenType,
+    secretly: VISIBLE.secretly,
+    callback_secret: CANARY.callback,
+    cb_auth_token: CANARY.cbAuth,
+    password_type: CANARY.passwordType,
+    secret_count: CANARY.secretCount,
+    apiKey_required: CANARY.apiKeyRequired,
+    authTokenType: CANARY.authTokenType,
+    access_token_type: CANARY.accessTokenType,
+    clientSecretType: CANARY.clientSecretType,
+    cookie_required: CANARY.cookieRequired,
+  }
   const plantedEnvelope = {
     ...envelope,
     action: {
       ...action,
-      args: { ...args, amount: 7, callback_secret: CANARY.callback, cb_auth_token: CANARY.cbAuth },
+      args: { ...args, ...m1Args },
     },
-    _meta: { secretKey: CANARY.secretKey, callback_secret: CANARY.callback },
-    metadata: { resumeToken: CANARY.resume, cb_auth_token: CANARY.cbAuth },
+    _meta: {
+      secretKey: CANARY.secretKey,
+      callback_secret: CANARY.callback,
+      secret_count: CANARY.secretCount,
+      cookie_required: CANARY.cookieRequired,
+    },
+    metadata: { resumeToken: CANARY.resume, cb_auth_token: CANARY.cbAuth, authTokenType: CANARY.authTokenType },
     origin: {
       ...envelopeOrigin,
       resumeHandle: { ...envelopeHandle, reviewToken: CANARY.resume, cb_auth_token: CANARY.cbAuth },
@@ -196,11 +236,18 @@ async function plantCanaries(approvalId: string) {
       reviewToken: CANARY.resume,
       cb_auth_token: CANARY.cbAuth,
     },
-    _meta: { secretKey: CANARY.secretKey },
+    _meta: { secretKey: CANARY.secretKey, apiKey_required: CANARY.apiKeyRequired },
     details: {
       ...(asRecord(origin.details) as Record<string, string>),
       cb_auth_token: CANARY.cbAuth,
       password_type: CANARY.passwordType,
+      secret_count: CANARY.secretCount,
+      apiKey_required: CANARY.apiKeyRequired,
+      authTokenType: CANARY.authTokenType,
+      access_token_type: CANARY.accessTokenType,
+      clientSecretType: CANARY.clientSecretType,
+      cookie_required: CANARY.cookieRequired,
+      secretly: VISIBLE.secretly,
     },
   }
 
@@ -223,15 +270,26 @@ async function plantDecisionCanaries(approvalId: string) {
     payload: await encodeTenantJson(workspaceA.id, {
       decision: 'accept',
       amount: 3,
+      tokenCount: VISIBLE.tokenCount,
+      secretly: VISIBLE.secretly,
       cb_auth_token: CANARY.decisionPayload,
       secretKey: CANARY.secretKey,
       callback_secret: CANARY.callback,
+      password_type: CANARY.passwordType,
+      secret_count: CANARY.secretCount,
+      apiKey_required: CANARY.apiKeyRequired,
+      authTokenType: CANARY.authTokenType,
+      access_token_type: CANARY.accessTokenType,
+      cookie_required: CANARY.cookieRequired,
     }),
     resumeError: null,
     resumeResponse: await encodeTenantJson(workspaceA.id, {
       ok: true,
+      tokenType: VISIBLE.tokenType,
       accessToken: CANARY.resumeResponse,
       resumeToken: CANARY.resume,
+      clientSecretType: CANARY.clientSecretType,
+      cookie_required: CANARY.cookieRequired,
     }),
   })
 }
@@ -247,11 +305,12 @@ test('inbox detail / list / audit / mobile loaders redact on the server (source)
   const inboxLibSrc = fs.readFileSync(path.join(dir, 'inbox.ts'), 'utf8')
   const inboxApiSrc = fs.readFileSync(path.join(dir, '../app/api/v1/inbox/route.ts'), 'utf8')
   const detailApiSrc = fs.readFileSync(path.join(dir, '../app/api/v1/approvals/[id]/route.ts'), 'utf8')
-  const mobileDetailSrc = fs.readFileSync(path.join(dir, '../../mobile/app/inbox/[id].tsx'), 'utf8')
+  const detailRouteFactorySrc = fs.readFileSync(path.join(dir, 'approval-detail-route.ts'), 'utf8')
 
   const loaderCode = code(loaderSrc)
   const viewCode = code(viewSrc)
   const inboxLibCode = code(inboxLibSrc)
+  const detailRouteFactoryCode = code(detailRouteFactorySrc)
 
   assert.match(inboxPageSrc, /WorkItemDetail/, '/inbox/:id must render WorkItemDetail')
   assert.match(projectItemSrc, /WorkItemDetail/, 'project item page must render WorkItemDetail')
@@ -281,9 +340,15 @@ test('inbox detail / list / audit / mobile loaders redact on the server (source)
   )
 
   assert.match(inboxApiSrc, /listInboxItems/, 'mobile inbox list API must use listInboxItems')
-  assert.match(detailApiSrc, /getApprovalDetail/, 'mobile detail API must use getApprovalDetail')
-  assert.match(mobileDetailSrc, /\.approval\(/, 'mobile detail screen must load via the session detail API')
-  assert.match(mobileDetailSrc, /originFields/, 'mobile Origin card must use originFields from the API DTO')
+  assert.match(detailApiSrc, /createApprovalDetailGet/, 'GET /api/v1/approvals/:id must use the injectable factory')
+  assert.match(detailApiSrc, /getApprovalDetail/, 'mobile detail API must wire getApprovalDetail')
+  assert.match(detailRouteFactoryCode, /deps\.getApprovalDetail/, 'session path must call getApprovalDetail')
+  assert.match(
+    detailRouteFactoryCode,
+    /return NextResponse\.json\(detail\)/,
+    'session path must return the getApprovalDetail body (a raw passthrough must go red)',
+  )
+  assert.doesNotMatch(detailRouteFactoryCode, /decodeTenantJson/, 'session path must not decode the raw approval row')
 })
 
 test('loadWorkItemPage redacts origin/args/_meta/decisions/resumeResponse; serialised RSC/HTML has no canaries', async () => {
@@ -299,7 +364,20 @@ test('loadWorkItemPage redacts origin/args/_meta/decisions/resumeResponse; seria
     'select payload::text as payload, resume_response::text as resume_response from decision_records where approval_id = $1',
     [approval.id],
   )
-  for (const canary of [CANARY.cbAuth, CANARY.resume, CANARY.callback, CANARY.secretKey, CANARY.passwordType]) {
+  const plantedInEnvelopeOrOrigin = [
+    CANARY.cbAuth,
+    CANARY.resume,
+    CANARY.callback,
+    CANARY.secretKey,
+    CANARY.passwordType,
+    CANARY.secretCount,
+    CANARY.apiKeyRequired,
+    CANARY.authTokenType,
+    CANARY.accessTokenType,
+    CANARY.clientSecretType,
+    CANARY.cookieRequired,
+  ]
+  for (const canary of plantedInEnvelopeOrOrigin) {
     assert.ok(
       stored.rows[0]!.envelope.includes(canary) || stored.rows[0]!.origin.includes(canary),
       `planted canary ${canary} must be in stored envelope or origin`,
@@ -307,6 +385,8 @@ test('loadWorkItemPage redacts origin/args/_meta/decisions/resumeResponse; seria
   }
   assert.ok(storedDecision.rows[0]!.payload.includes(CANARY.decisionPayload))
   assert.ok(storedDecision.rows[0]!.resume_response.includes(CANARY.resumeResponse))
+  assert.ok(storedDecision.rows[0]!.payload.includes(CANARY.secretCount))
+  assert.ok(storedDecision.rows[0]!.resume_response.includes(CANARY.clientSecretType))
 
   const page = await loadWorkItemPage({
     approvalId: approval.id,
@@ -320,18 +400,63 @@ test('loadWorkItemPage redacts origin/args/_meta/decisions/resumeResponse; seria
   assertNoCanary('loadWorkItemPage RSC/HTML/props JSON', serialized)
   assert.ok(serialized.includes(REDACTED), 'redacted view should mark secrets')
 
+  const m1ArgKeys = [
+    'callback_secret',
+    'cb_auth_token',
+    'password_type',
+    'secret_count',
+    'apiKey_required',
+    'authTokenType',
+    'access_token_type',
+    'clientSecretType',
+    'cookie_required',
+  ] as const
   assert.equal(page.originalArgs.amount, 7)
-  assert.equal(page.originalArgs.callback_secret, REDACTED)
-  assert.equal(page.originalArgs.cb_auth_token, REDACTED)
+  assert.equal(page.originalArgs.tokenCount, VISIBLE.tokenCount)
+  assert.equal(page.originalArgs.signatureRequired, true)
+  assert.equal(page.originalArgs.tokenType, VISIBLE.tokenType)
+  assert.equal(page.originalArgs.secretly, VISIBLE.secretly)
+  for (const key of m1ArgKeys) {
+    assert.equal(page.originalArgs[key], REDACTED, `${key} must be redacted in originalArgs`)
+  }
+  assert.ok(serialized.includes(VISIBLE.secretly), 'non-secret secretly must stay visible')
+  assert.ok(serialized.includes(String(VISIBLE.tokenCount)), 'non-secret tokenCount must stay visible')
   assert.equal((page.envelope as ApprovalEnvelopeLike)._meta?.secretKey, REDACTED)
   assert.equal(
     page.originFields.some((row) => ALL_CANARIES.includes(row.value)),
     false,
     'Origin section fields must not surface canaries',
   )
-  assert.equal(page.originFields.some((row) => row.key === 'cb_auth_token' || row.key === 'password_type'), false)
-  assert.equal(page.decisions[0]?.payload && asRecord(page.decisions[0].payload).cb_auth_token, REDACTED)
-  assert.equal(page.decisions[0]?.resumeResponse && asRecord(page.decisions[0].resumeResponse).accessToken, REDACTED)
+  const secretOriginKeys = [
+    'cb_auth_token',
+    'password_type',
+    'secret_count',
+    'apiKey_required',
+    'authTokenType',
+    'access_token_type',
+    'clientSecretType',
+    'cookie_required',
+  ]
+  assert.equal(
+    page.originFields.some((row) => secretOriginKeys.includes(row.key)),
+    false,
+    'Origin section must drop #115 M1 secret-like keys',
+  )
+  assert.equal(
+    page.originFields.some((row) => row.key === 'secretly' && row.value === VISIBLE.secretly),
+    true,
+    'Origin section must keep non-secret secretly',
+  )
+  assert.equal(page.originFields.some((row) => row.key === 'runId'), true, 'Origin section must keep runId')
+  const decisionPayload = asRecord(page.decisions[0]?.payload)
+  const resumeResponse = asRecord(page.decisions[0]?.resumeResponse)
+  assert.equal(decisionPayload.cb_auth_token, REDACTED)
+  assert.equal(decisionPayload.secret_count, REDACTED)
+  assert.equal(decisionPayload.secretly, VISIBLE.secretly)
+  assert.equal(decisionPayload.tokenCount, VISIBLE.tokenCount)
+  assert.equal(resumeResponse.accessToken, REDACTED)
+  assert.equal(resumeResponse.clientSecretType, REDACTED)
+  assert.equal(resumeResponse.tokenType, VISIBLE.tokenType)
 
   const after = await client.query<{ envelope: string; origin: string }>(
     'select envelope::text as envelope, origin::text as origin from approvals where id = $1',
@@ -369,4 +494,79 @@ test('inbox list and audit/history loaders omit planted secrets from serialised 
   assert.deepEqual(Object.keys(auditRow).sort(), [...AUDIT_LIST_KEYS].sort())
   const auditJson = serializeAuditList(audit)
   assertNoCanary('audit/history JSON', auditJson)
+})
+
+function sessionWorkspaceCtx(): ApiWorkspaceOk {
+  return {
+    ok: true,
+    session: {
+      user: {
+        id: userReviewerA.id,
+        name: userReviewerA.id,
+        email: `${userReviewerA.id}@page-redact.hitly.invalid`,
+      },
+    },
+    workspaces: [{ id: workspaceA.id, name: workspaceA.name, slug: workspaceA.slug, role: 'admin' }],
+    workspace: { id: workspaceA.id, name: workspaceA.name, slug: workspaceA.slug, role: 'admin' },
+    role: 'admin',
+  } as ApiWorkspaceOk
+}
+
+test('mobile session GET /api/v1/approvals/:id has no raw canaries (passthrough must go red)', async () => {
+  const approval = await ingest()
+  await plantCanaries(approval.id)
+  await plantDecisionCanaries(approval.id)
+
+  // Mobile sends Bearer session + workspace header. Bearer is not a project key, so
+  // getApprovalForOrigin 401s and the handler falls through to getApprovalDetail.
+  const GET = createApprovalDetailGet({
+    getApprovalForOrigin,
+    getApprovalDetail,
+    requireApiWorkspace: async () => sessionWorkspaceCtx(),
+  })
+  const response = await GET(
+    new Request(`http://hitly.invalid/api/v1/approvals/${approval.id}`, {
+      headers: {
+        authorization: 'Bearer session-not-a-project-key',
+        'x-hitly-workspace-id': workspaceA.id,
+        'x-hitly-client': 'hitly-mobile/test (ios)',
+      },
+    }),
+    { params: Promise.resolve({ id: approval.id }) },
+  )
+  assert.equal(response.status, 200)
+  const body = await response.text()
+  assertNoCanary('mobile session GET JSON', body)
+
+  const json = JSON.parse(body) as {
+    ok: boolean
+    envelope?: { action?: { args?: Record<string, unknown> }; _meta?: { secretKey?: unknown } }
+    originFields?: Array<{ key: string; value: string }>
+    decisions?: Array<{ payload?: unknown; resumeResponse?: unknown }>
+  }
+  assert.equal(json.ok, true)
+  const args = json.envelope?.action?.args ?? {}
+  assert.equal(args.amount, 7)
+  assert.equal(args.tokenCount, VISIBLE.tokenCount)
+  assert.equal(args.signatureRequired, true)
+  assert.equal(args.tokenType, VISIBLE.tokenType)
+  assert.equal(args.secretly, VISIBLE.secretly)
+  assert.equal(args.callback_secret, REDACTED)
+  assert.equal(args.secret_count, REDACTED)
+  assert.equal(args.apiKey_required, REDACTED)
+  assert.equal(args.authTokenType, REDACTED)
+  assert.equal(args.access_token_type, REDACTED)
+  assert.equal(args.clientSecretType, REDACTED)
+  assert.equal(args.cookie_required, REDACTED)
+  assert.equal(args.password_type, REDACTED)
+  assert.equal(json.envelope?._meta?.secretKey, REDACTED)
+  assert.equal(
+    (json.originFields ?? []).some((row) => ALL_CANARIES.includes(row.value)),
+    false,
+    'mobile originFields must not surface canaries',
+  )
+  assert.equal(asRecord(json.decisions?.[0]?.payload).secret_count, REDACTED)
+  assert.equal(asRecord(json.decisions?.[0]?.payload).secretly, VISIBLE.secretly)
+  assert.equal(asRecord(json.decisions?.[0]?.resumeResponse).accessToken, REDACTED)
+  assert.equal(asRecord(json.decisions?.[0]?.resumeResponse).tokenType, VISIBLE.tokenType)
 })
