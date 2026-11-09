@@ -338,19 +338,25 @@ test('create-once: concurrent submissions of a new key create exactly one reques
 })
 
 test('create-once replay picks the newest matching row (ORDER BY created_at DESC, id DESC)', async () => {
-  // A18: reversing created_at DESC to ASC must go red. Dropping id DESC must
-  // also go red: five tied rows are inserted in id ASC (lowest first), the
-  // reverse of the expected id DESC order. Without the tie-break, Seq Scan +
-  // Sort on equal created_at keeps heap order and LIMIT 1 returns the lowest id.
-  // Replays use one body so payloadHash matches (#108).
+  // A18: reversing created_at DESC to ASC must go red. The older row has the
+  // greater id, so ORDER BY id DESC only (drop-createdAt) returns the wrong
+  // row. Dropping id DESC must also go red: five tied rows are inserted in
+  // id ASC (lowest first), the reverse of the expected id DESC order. Without
+  // the tie-break, Seq Scan + Sort on equal created_at keeps heap order and
+  // LIMIT 1 returns the lowest id. Replays use one body so payloadHash matches (#108).
   const idem = `idem-${newId('t')}`
   const body = payload()
-  const older = await ingest(keyP1, idem, body)
-  await setRow(older.approval.id, { idempotencyKey: `idem-${newId('t')}` })
-  const newer = await ingest(keyP1, idem, body)
+  const first = await ingest(keyP1, idem, body)
+  await setRow(first.approval.id, { idempotencyKey: `idem-${newId('t')}` })
+  const second = await ingest(keyP1, idem, body)
   const t0 = Date.now() - 60_000
+  // Older createdAt must have the greater id so ORDER BY id DESC only (no
+  // created_at) returns the wrong row every time.
+  const older = first.approval.id > second.approval.id ? first : second
+  const newer = older === first ? second : first
   await setRow(older.approval.id, { idempotencyKey: idem, createdAt: new Date(t0) })
-  await setRow(newer.approval.id, { createdAt: new Date(t0 + 5_000) })
+  await setRow(newer.approval.id, { idempotencyKey: idem, createdAt: new Date(t0 + 5_000) })
+  assert.ok(older.approval.id > newer.approval.id, 'older row must have the greater id')
 
   const replay = await ingest(keyP1, idem, body)
   assert.equal(replay.replayed, true)
