@@ -20,6 +20,49 @@ function likeTerm(q: string) {
 export type { InboxScope }
 export { INBOX_SCOPES }
 
+/** Allowlisted inbox-row fields. Never envelope/origin/payload. */
+export const INBOX_LIST_KEYS = [
+  'id',
+  'status',
+  'actionName',
+  'plugin',
+  'projectId',
+  'projectName',
+  'createdAt',
+  'expiresAt',
+  'decision',
+] as const
+
+export type InboxListItem = {
+  id: string
+  status: string
+  actionName: string
+  plugin: string
+  projectId: string
+  projectName: string
+  createdAt: Date
+  expiresAt: Date | null
+  decision: string | null
+}
+
+export function toInboxListItem(row: InboxListItem): InboxListItem {
+  return {
+    id: row.id,
+    status: row.status,
+    actionName: row.actionName,
+    plugin: row.plugin,
+    projectId: row.projectId,
+    projectName: row.projectName,
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    decision: row.decision,
+  }
+}
+
+export function serializeInboxList(items: InboxListItem[]): string {
+  return JSON.stringify(items)
+}
+
 export async function listInboxItems(args: {
   workspaceId: string
   userId: string
@@ -27,7 +70,7 @@ export async function listInboxItems(args: {
   projectId?: string
   scope?: string
   q?: string
-}) {
+}): Promise<InboxListItem[]> {
   return withTenant(args.workspaceId, async () => {
     const visibleIds = await listVisibleProjectIds(args)
     const projectIds = args.projectId ? visibleIds.filter((id) => id === args.projectId) : visibleIds
@@ -45,7 +88,7 @@ export async function listInboxItems(args: {
     const search = or(ilike(approvals.actionName, term), ilike(projects.name, term))
     if (search) filters.push(search)
   }
-  return database
+  const rows = await database
     .select({
       id: approvals.id,
       status: approvals.status,
@@ -68,6 +111,7 @@ export async function listInboxItems(args: {
     .where(and(...filters))
     .orderBy(desc(approvals.createdAt))
     .limit(100)
+  return rows.map(toInboxListItem)
   })
 }
 
@@ -156,7 +200,7 @@ export async function listAudit(args: {
     projectName: projects.name,
     actorName: users.name,
   }[sort]
-  return database
+  const rows = await database
     .select({
       id: decisionRecords.id,
       decision: decisionRecords.decision,
@@ -176,5 +220,52 @@ export async function listAudit(args: {
     .where(and(...filters))
     .orderBy(direction(sortColumn))
     .limit(200)
+  return rows.map(toAuditRow)
   })
+}
+
+/** Allowlisted audit-row fields. Never decision JSON, origin resume JSON, envelope, or origin. */
+export const AUDIT_LIST_KEYS = [
+  'id',
+  'decision',
+  'createdAt',
+  'approvalId',
+  'actionName',
+  'projectId',
+  'projectName',
+  'actorName',
+  'actorEmail',
+  'resumeError',
+] as const
+
+export type AuditListItem = {
+  id: string
+  decision: string
+  createdAt: Date
+  approvalId: string
+  actionName: string
+  projectId: string
+  projectName: string
+  actorName: string | null
+  actorEmail: string | null
+  resumeError: string | null
+}
+
+export function toAuditRow(row: AuditListItem): AuditListItem {
+  return {
+    id: row.id,
+    decision: row.decision,
+    createdAt: row.createdAt,
+    approvalId: row.approvalId,
+    actionName: row.actionName,
+    projectId: row.projectId,
+    projectName: row.projectName,
+    actorName: row.actorName,
+    actorEmail: row.actorEmail,
+    resumeError: row.resumeError,
+  }
+}
+
+export function serializeAuditList(rows: AuditListItem[]): string {
+  return JSON.stringify(rows)
 }

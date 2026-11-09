@@ -4,7 +4,6 @@ import {
   isDecision,
   isOpenApprovalStatus,
   isPluginId,
-  jcsHash,
   OPEN_APPROVAL_STATUSES,
   originResumeError,
   validateAnswerSubmission,
@@ -21,7 +20,7 @@ import {
   type ResumeResponse,
   type WorkspaceRole,
 } from '@hitly/core'
-import { approvals, decisionRecords, projectApiKeys, projectEvents, projectRules, projects, users } from '@hitly/db/schema'
+import { approvals, decisionRecords, evidenceReceipts, projectApiKeys, projectEvents, projectRules, projects, users } from '@hitly/db/schema'
 import { getPlugin } from './plugins'
 import { envelopeMetadata } from './origin'
 import { hashApiKey } from './keys'
@@ -38,7 +37,7 @@ import { canDecide, getProjectAccess } from './rbac'
 import { loadOpenedContextRefs } from './context-opens'
 import { exportOtelTrace } from './otel-trace'
 import { resumeFailureMessage } from './resume-error'
-import { createOnceCutoff } from './create-once'
+import { createOnceCutoff, envelopePayloadHash } from './create-once'
 import { buildHitlRead } from './hitl-response'
 
 export async function authenticateProjectKey(rawKey: string, projectId?: string) {
@@ -173,30 +172,47 @@ function decodeStoredDecisionContext(raw: unknown): StoredDecisionContext {
 }
 
 /**
- * B1 guard (hitly#97): a `presented` record may only be written for an ask that
- * has NOT been decided yet. Migration 0004 added `presented_at` as NULL with no
- * backfill, so pre-migration rows can legitimately be `failed_resume` (an open
- * status) with `presented_at IS NULL`. Appending `presented` for those rows
- * would place it AFTER `decided` in the evidence chain, which is false evidence
- * (an item that was decided was necessarily already shown) and breaks the
- * hitl-spec 5.2/5.4 order requested -> presented -> decided -> resumed.
+ * A `presented` record may only be written for an ask that has NOT been
+ * decided yet (hitl-spec 5.2/5.4: requested -> presented -> decided).
  *
- * Returns true when the row is still `pending`, or - belt and braces for odd
- * states - when no decision has ever been recorded for it.
+ * B1 (hitly#97): migration 0004 added `presented_at` as NULL with no backfill,
+ * so pre-migration rows can be `failed_resume` (an open status) with
+ * `presented_at IS NULL`. Appending `presented` there would land AFTER
+ * `decided` — false evidence, because a decided item was necessarily shown.
+ *
+ * Status `pending` is not enough. A late duplicate `presented` can still
+ * arrive after a terminal decision (`decided` / accept or reject,
+ * `expired`, `cancelled`, or `failed_resume`) when `presented_at` is NULL.
+ * The S97-S2 race check used `indexOf`, which only sees the first of each
+ * type and would still pass if a second `presented` landed after `decided`.
+ * Always look at `decision_records` and at decided/resume receipts: any
+ * prior decision means skip. Does not change state and does not appear as
+ * a fresh presentation after decided.
  */
 async function mayRecordPresented(
   database: ReturnType<typeof requireDb>,
   approvalId: string,
-  status: string,
   workspaceId: string,
 ): Promise<boolean> {
-  if (status === 'pending') return true
   const decidedRows = await database
     .select({ id: decisionRecords.id })
     .from(decisionRecords)
     .where(and(eq(decisionRecords.approvalId, approvalId), eq(decisionRecords.workspaceId, workspaceId)))
     .limit(1)
-  return decidedRows.length === 0
+  if (decidedRows.length > 0) return false
+
+  const terminal = await database
+    .select({ eventType: evidenceReceipts.eventType })
+    .from(evidenceReceipts)
+    .where(
+      and(
+        eq(evidenceReceipts.approvalId, approvalId),
+        eq(evidenceReceipts.workspaceId, workspaceId),
+        inArray(evidenceReceipts.eventType, ['decided', 'resumed', 'resume_failed']),
+      ),
+    )
+    .limit(1)
+  return terminal.length === 0
 }
 
 /**
@@ -238,7 +254,7 @@ export async function markApprovalPresented(args: {
     // Legacy rows from before migration 0004 have presented_at NULL even when
     // already decided (failed_resume is an open status). A late `presented`
     // would land after `decided` in the chain: false evidence, never recorded.
-    if (!(await mayRecordPresented(database, approval.id, approval.status, workspaceId))) {
+    if (!(await mayRecordPresented(database, approval.id, workspaceId))) {
       return { presentedAt: null }
     }
 
@@ -319,14 +335,6 @@ function withProjectCredentials(body: Record<string, unknown>, project: typeof p
 
 type LoadedProject = Awaited<ReturnType<typeof decodeProject<typeof projects.$inferSelect>>>
 type IngestedEnvelope = ApprovalEnvelope & { origin: OriginRef }
-
-/**
- * hitl-spec payloadHash (`b64url(SHA-256(JCS(envelope)))`) over a JSON-normalised
- * envelope so undefined keys dropped at ingest/JSONB match the stored record.
- */
-async function envelopePayloadHash(envelope: unknown): Promise<string> {
-  return jcsHash(JSON.parse(JSON.stringify(envelope)) as unknown)
-}
 
 async function ingestBodyToEnvelope(args: {
   body: Record<string, unknown>
@@ -477,7 +485,8 @@ export async function ingestApproval(args: {
           approvalId: existing[0].id,
           type: 'ingest',
           level: 'warn',
-          message: 'Create-once conflict: payloadHash does not match the stored request',
+          // approvalId belongs on the log line; never log the request payload or secrets.
+          message: `Create-once conflict: payloadHash does not match the stored request (approvalId=${existing[0].id})`,
           payload: { conflict: true, code: 'idempotency_conflict', requesterKeyId: key.id },
         })
         return {
@@ -764,7 +773,7 @@ export async function decideApproval(args: {
       !args.retry &&
       !approval.presentedAt &&
       reviewerActor &&
-      (await mayRecordPresented(database, approval.id, approval.status, workspaceId))
+      (await mayRecordPresented(database, approval.id, workspaceId))
     ) {
       const implicitPresentedAt = new Date()
       await database

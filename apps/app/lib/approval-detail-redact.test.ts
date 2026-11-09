@@ -277,25 +277,28 @@ test('GET /api/v1/approvals/:id source: session path uses getApprovalDetail; loa
   const dir = path.dirname(fileURLToPath(import.meta.url))
   const routeSrc = fs.readFileSync(path.join(dir, '../app/api/v1/approvals/[id]/route.ts'), 'utf8')
   const detailSrc = fs.readFileSync(path.join(dir, 'approval-detail.ts'), 'utf8')
+  const helperSrc = fs.readFileSync(path.join(dir, 'reviewer-approval.ts'), 'utf8')
   const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 
   assert.match(routeSrc, /getApprovalDetail/, 'GET /api/v1/approvals/:id session path must use getApprovalDetail')
-  assert.match(detailSrc, /redactRequestPayload/, 'getApprovalDetail must reuse the shared helper (not a copy)')
-  assert.match(code(detailSrc), /redactRequestPayload\(\{/, 'must redact the envelope view')
-  assert.match(code(detailSrc), /redactRequestPayload\(origin\)/, 'must redact origin (dropping this call must go red)')
+  assert.match(detailSrc, /redactApprovalForReviewer/, 'getApprovalDetail must reuse the shared helper (not a copy)')
+  assert.match(helperSrc, /redactRequestPayload/, 'shared helper must reuse redactRequestPayload (not a copy)')
+  assert.match(code(helperSrc), /redactRequestPayload\(\{/, 'must redact the envelope view')
+  assert.match(code(helperSrc), /redactRequestPayload\(args\.origin\)/, 'must redact origin (dropping this call must go red)')
   assert.match(
-    code(detailSrc),
+    code(helperSrc),
     /payload:\s*redactRequestPayload\(/,
     'must redact decisions[].payload (dropping this call must go red)',
   )
   assert.match(
-    code(detailSrc),
+    code(helperSrc),
     /row\.resumeResponse\s*\?\s*redactRequestPayload\(/,
     'must redact resumeResponse (dropping this call must go red)',
   )
   assert.doesNotMatch(code(detailSrc), /encodeTenantJson/, 'redaction must not write envelope/origin back')
   assert.doesNotMatch(code(detailSrc), /\.update\(approvals\)/, 'getApprovalDetail must not update the stored row')
   assert.doesNotMatch(code(detailSrc), /\.update\(decisionRecords\)/, 'getApprovalDetail must not update decision rows')
+  assert.doesNotMatch(code(helperSrc), /encodeTenantJson/, 'shared helper must not write back')
 })
 
 test('getApprovalDetail redacts origin, envelope.origin, args, _meta; stored bytes and hashes stay put', async () => {

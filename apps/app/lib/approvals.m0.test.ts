@@ -243,6 +243,117 @@ test('create-once: different payloadHash is 409 idempotency_conflict, no new row
   assert.equal(routeBody.error, 'Idempotency-Key reused with a different payload')
   assert.deepEqual(Object.keys(routeBody).sort(), ['code', 'error'])
   assert.equal((await rowsFor(idem)).length, 1)
+
+  const conflictLogs = await db
+    .select()
+    .from(projectEvents)
+    .where(and(eq(projectEvents.approvalId, first.approval.id), eq(projectEvents.type, 'ingest')))
+  const conflictLog = conflictLogs.find((row) => row.message.includes('payloadHash does not match'))
+  assert.ok(conflictLog, '409 must write a create-once conflict log row')
+  assert.ok(
+    conflictLog.message.includes(first.approval.id),
+    `409 log line must include approvalId, got ${conflictLog.message}`,
+  )
+  assert.equal(conflictLog.approvalId, first.approval.id)
+  const logged = JSON.stringify({ message: conflictLog.message, payload: conflictLog.payload })
+  assert.ok(!logged.includes('999999'), '409 log must not include the request payload')
+  assert.ok(!logged.includes(keyP1.raw), '409 log must not include the API key secret')
+  assert.ok(!logged.includes('hitly_'), '409 log must not include raw key material')
+})
+
+test('create-once: same request differing only in origin is 409 payloadHash mismatch', async () => {
+  const idem = `idem-${newId('t')}`
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
+  const conflict = await ingestApproval({
+    apiKey: keyP1.raw,
+    body: { ...body, runId: newId('run') },
+    idempotencyKey: idem,
+  })
+  assert.equal(conflict.ok, false)
+  if (conflict.ok) throw new Error('an origin-only change must not replay')
+  assert.equal(conflict.status, 409)
+  assert.equal(conflict.code, 'idempotency_conflict')
+  assert.equal(conflict.error, 'Idempotency-Key reused with a different payload')
+  assert.equal((await rowsFor(idem)).length, 1)
+  assert.equal((await ingest(keyP1, idem, body)).approval.id, first.approval.id)
+
+  const route = await ingestRoute(
+    new Request('http://localhost/api/v1/approvals', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${keyP1.raw}`, 'idempotency-key': idem, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...body, mastraBaseUrl: 'https://origin.example/other' }),
+    }),
+  )
+  assert.equal(route.status, 409)
+  const routeBody = (await route.json()) as Record<string, unknown>
+  assert.equal(routeBody.code, 'idempotency_conflict')
+  assert.equal((await rowsFor(idem)).length, 1)
+})
+
+test('create-once: same request differing only in expiresAt is 409 payloadHash mismatch', async () => {
+  const idem = `idem-${newId('t')}`
+  const body = payload({ expiresAt: '2026-12-01T00:00:00.000Z' })
+  const first = await ingest(keyP1, idem, body)
+  const conflict = await ingestApproval({
+    apiKey: keyP1.raw,
+    body: { ...body, expiresAt: '2026-12-02T00:00:00.000Z' },
+    idempotencyKey: idem,
+  })
+  assert.equal(conflict.ok, false)
+  if (conflict.ok) throw new Error('an expiresAt-only change must not replay')
+  assert.equal(conflict.status, 409)
+  assert.equal(conflict.code, 'idempotency_conflict')
+  assert.equal(conflict.error, 'Idempotency-Key reused with a different payload')
+  assert.equal((await rowsFor(idem)).length, 1)
+  assert.equal((await ingest(keyP1, idem, body)).approval.id, first.approval.id)
+
+  const route = await ingestRoute(
+    new Request('http://localhost/api/v1/approvals', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${keyP1.raw}`, 'idempotency-key': idem, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...body, expiresAt: '2026-12-03T00:00:00.000Z' }),
+    }),
+  )
+  assert.equal(route.status, 409)
+  assert.equal((await rowsFor(idem)).length, 1)
+})
+
+test('create-once: Authorization header and extra auth headers do not change payloadHash', async () => {
+  const idem = `idem-${newId('t')}`
+  const body = payload()
+  const first = await ingest(keyP1, idem, body)
+
+  const replay = await ingestRoute(
+    new Request('http://localhost/api/v1/approvals', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${keyP1.raw}`,
+        'idempotency-key': idem,
+        'content-type': 'application/json',
+        cookie: 'session=should-not-hash',
+        'x-api-key': 'should-not-hash',
+        'x-hitly-client': 'test-client',
+      },
+      body: JSON.stringify(body),
+    }),
+  )
+  assert.equal(replay.status, 200)
+  const replayBody = (await replay.json()) as { id: string; replayed: boolean }
+  assert.equal(replayBody.replayed, true)
+  assert.equal(replayBody.id, first.approval.id)
+  assert.equal((await rowsFor(idem)).length, 1)
+
+  // Extra auth/secret fields on the JSON body are dropped at ingest, so the hash is unchanged.
+  const withAuthInBody = await ingest(keyP1, idem, {
+    ...body,
+    Authorization: 'Bearer should-not-hash',
+    cookie: 'session=should-not-hash',
+    resumeSecret: 'should-not-hash',
+  })
+  assert.equal(withAuthInBody.replayed, true)
+  assert.equal(withAuthInBody.approval.id, first.approval.id)
+  assert.equal((await rowsFor(idem)).length, 1)
 })
 
 test('create-once: replay after a decision (decided) returns the decided request, no new ask', async () => {
