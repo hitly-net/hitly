@@ -36,6 +36,7 @@ export {
   buildDecidedBody,
   buildLifecycleBody,
   EVENT_DECIDED,
+  deterministicEventId,
   LIFECYCLE_EVENTS,
   newEventId,
   parseLifecycleEvents,
@@ -212,7 +213,10 @@ export const httpPlugin: HitlyPlugin = {
     const resumeUrl = String(origin.resumeHandle.resumeUrl ?? '')
     const handle = origin.resumeHandle
     const approvalId = optionalString(handle.approvalId)
-    const eventId = eventIdFor(handle, 'decided')
+    // Logical key mirrors buildDecidedBody's type derivation: an ask_user answer
+    // and the final decision are distinct logical deliveries of one approval.
+    const logicalKey = (payload as HttpDecisionPayload).answer !== undefined ? 'answered' : 'decided'
+    const eventId = eventIdFor(handle, logicalKey)
     const body = buildDecidedBody({
       eventId,
       origin,

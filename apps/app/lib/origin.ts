@@ -54,6 +54,26 @@ const ORDER = [
 
 const HIDDEN = new Set(['mastraBaseUrl', 'resumeUrl', 'deploymentUrl', 'address', 'signal', 'metadata', 'cbAuthToken', 'cb_auth_token', 'lifecycleEvents', 'deliveryEventIds', 'idempotencyKey'])
 
+/**
+ * Bag keys that hold credentials (M0h cb_auth_token et al.). They live on the
+ * approvals.origin column only — never in the stored create-once envelope and
+ * never in a reader projection (spec: "never echo it in reads"). Mirrors
+ * @hitly/plugin-http SECRET_HANDLE_KEYS; kept local so the host stays plugin-agnostic.
+ */
+const SECRET_BAG_KEYS = new Set(['cbAuthToken', 'cb_auth_token', 'authorization', 'authHeader'])
+
+/** Deep copy of an origin/envelope bag with credential keys dropped at every depth. */
+export function stripOriginSecrets<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((item) => stripOriginSecrets(item)) as unknown as T
+  if (value === null || typeof value !== 'object') return value
+  const out: Record<string, unknown> = {}
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (SECRET_BAG_KEYS.has(key) || key.toLowerCase() === 'authorization') continue
+    out[key] = stripOriginSecrets(child)
+  }
+  return out as unknown as T
+}
+
 function take(target: Record<string, string>, key: string, value: unknown) {
   if (typeof value === 'string' && value.trim()) target[key] = value.trim()
 }

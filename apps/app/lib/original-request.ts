@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { canonicalJson, sha256Hex, type ApprovalEnvelope, type WorkspaceRole } from '@hitly/core'
 import { approvals, evidenceReceipts } from '@hitly/db/schema'
 import { getProjectAccess } from './rbac'
+import { stripOriginSecrets } from './origin'
 import { requireDb, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
 
@@ -75,7 +76,13 @@ export async function getOriginalRequest(args: {
     if (!access) return { ok: false, error: 'Not found', status: 404 }
 
     // The create-once record itself — decode in place, never rebuild from UI fields.
-    const payload = (await decodeTenantJson(args.workspaceId, approval.envelope)) as unknown as ApprovalEnvelope
+    // M0h: origin credentials are never stored here (ingest strips them); strip again
+    // defensively so a legacy row can't echo the callback token. For credential-free
+    // rows (every row written by current code) this is a no-op: the byte-exact
+    // canonical copy and its hash are unchanged for verification.
+    const payload = stripOriginSecrets(
+      (await decodeTenantJson(args.workspaceId, approval.envelope)) as unknown as ApprovalEnvelope,
+    )
     const canonicalPayload = canonicalJson(payload)
     const payloadSha256 = await sha256Hex(canonicalPayload)
     const argsSha256 = await sha256Hex(canonicalJson(payload.action?.args ?? {}))

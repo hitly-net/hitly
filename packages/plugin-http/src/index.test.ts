@@ -1,13 +1,16 @@
 import { describe, it, mock } from 'node:test'
 import { strict as assert } from 'node:assert'
+import { createHash, createHmac } from 'node:crypto'
 import type { DecisionPayload, OriginRef } from '@hitly/core'
 import { DestinationCheckError, globalFetchTransport, setDestinationCheckTestHooks } from '@hitly/core/destination-check'
 import {
   buildDecidedBody,
   buildSignatureHeaders,
   containsSecretValue,
+  DEFAULT_BACKOFF_MS,
   deliverHttpCallback,
   deliverHttpLifecycleEvent,
+  deterministicEventId,
   HEADER_EVENT_ID,
   HEADER_KEY_ID,
   HEADER_SIGNATURE,
@@ -317,7 +320,10 @@ describe('@hitly/plugin-http M0h', () => {
       })
       assert.equal(result.response.status, 200)
       assert.equal(result.attempts, 3)
-      assert.deepEqual(sleeps, [10, 20])
+      // Jittered backoff: each sleep is the schedule entry plus up to 25% jitter.
+      assert.equal(sleeps.length, 2)
+      assert.ok(sleeps[0]! >= 10 && sleeps[0]! <= 13, `first backoff ${sleeps[0]} within [10, 13]`)
+      assert.ok(sleeps[1]! >= 20 && sleeps[1]! <= 25, `second backoff ${sleeps[1]} within [20, 25]`)
       assert.deepEqual(eventIds, ['evt_stable', 'evt_stable', 'evt_stable'])
       mock.restoreAll()
     })
@@ -399,6 +405,335 @@ describe('@hitly/plugin-http M0h', () => {
       const shown = JSON.stringify(result.response)
       assert.ok(!shown.includes(CANARY), 'response body must never leak the canary')
       mock.restoreAll()
+    })
+  })
+
+  describe('M3: HMAC pinned by independent verification', () => {
+    const KAV_BODY = '{"event_id":"evt_kav","decision":"accept","metadata":{"pageId":"p1"}}'
+    const KAV_TS = 1736000000
+    // Independently computed (Python hmac, out-of-band) over `"<ts>.<body>"`:
+    // if signBody ever signs different bytes or drops the timestamp, this fails.
+    const KAV_SIGNATURE = 'e529757b74768c820c5809ebeef054ece05973612c1ce092797ee893750a2c74'
+    const KAV_KEY_ID = 'hk_43b95ba5' // hk_ + sha256(secret).hex[:8]
+
+    it('signBody matches the known-answer vector and key-id derivation', () => {
+      assert.equal(signBody(SECRET, KAV_TS, KAV_BODY), KAV_SIGNATURE)
+      assert.equal(webhookKeyId(SECRET), KAV_KEY_ID)
+    })
+
+    it('the wire signature is HMAC over timestamp + "." + the exact bytes sent', async () => {
+      const sent: Array<{ body: string; headers: Headers }> = []
+      mock.method(globalThis, 'fetch', async (_u: any, init?: any) => {
+        sent.push({ body: String(init?.body ?? ''), headers: new Headers(init?.headers) })
+        return new Response('{}', { status: 200 })
+      })
+      try {
+        await httpPlugin.resume(
+          baseOrigin('https://hooks.example/resume'),
+          { decision: 'accept' },
+          { plugin: 'http', resumeSecret: SECRET },
+        )
+        assert.equal(sent.length, 1)
+        const { body, headers } = sent[0]!
+        const ts = headers.get(HEADER_TIMESTAMP)
+        assert.ok(ts && /^\d+$/.test(ts), 'timestamp header is unix seconds')
+        // Recompute with raw node:crypto over what was ACTUALLY sent: catches
+        // MU01 (signature computed over different bytes than sent) and
+        // MU02 (timestamp dropped from the signed string).
+        const recomputed = createHmac('sha256', SECRET).update(`${ts}.${body}`, 'utf8').digest('hex')
+        assert.equal(headers.get(HEADER_SIGNATURE), recomputed)
+        assert.equal(
+          headers.get(HEADER_KEY_ID),
+          'hk_' + createHash('sha256').update(SECRET, 'utf8').digest('hex').slice(0, 8),
+        )
+        const bodyOnly = createHmac('sha256', SECRET).update(body, 'utf8').digest('hex')
+        assert.notEqual(headers.get(HEADER_SIGNATURE), bodyOnly, 'body-only HMAC must not match')
+        assert.equal(headers.get(HEADER_EVENT_ID), JSON.parse(body).event_id)
+      } finally {
+        mock.restoreAll()
+      }
+    })
+
+    it('lifecycle deliveries carry the same independent signature over their sent bytes', async () => {
+      const sent: Array<{ body: string; headers: Headers }> = []
+      mock.method(globalThis, 'fetch', async (_u: any, init?: any) => {
+        sent.push({ body: String(init?.body ?? ''), headers: new Headers(init?.headers) })
+        return new Response('{}', { status: 200 })
+      })
+      try {
+        await deliverHttpLifecycleEvent({
+          origin: baseOrigin('https://hooks.example/resume', { lifecycleEvents: ['presented'] }),
+          type: 'presented',
+          credentials: { plugin: 'http', resumeSecret: SECRET },
+        })
+        assert.equal(sent.length, 1)
+        const { body, headers } = sent[0]!
+        const ts = headers.get(HEADER_TIMESTAMP)!
+        const recomputed = createHmac('sha256', SECRET).update(`${ts}.${body}`, 'utf8').digest('hex')
+        assert.equal(headers.get(HEADER_SIGNATURE), recomputed)
+      } finally {
+        mock.restoreAll()
+      }
+    })
+  })
+
+  describe('M4: destination check pinned on every attempt and lifecycle', () => {
+    const prod = (fn: () => Promise<void>) => {
+      const prev = process.env.NODE_ENV
+      const prevFlag = process.env.HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS
+      process.env.NODE_ENV = 'production'
+      delete process.env.HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS
+      return fn().finally(() => {
+        process.env.NODE_ENV = prev
+        if (prevFlag === undefined) delete process.env.HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS
+        else process.env.HITLY_ALLOW_PRIVATE_EVIDENCE_SINKS = prevFlag
+        setDestinationCheckTestHooks({
+          resolve: async () => [{ address: '203.0.113.10' }],
+          transport: globalFetchTransport,
+        })
+      })
+    }
+
+    it('refuses a retry whose re-resolved address flips to private, without a second connect', () => {
+      let resolveCalls = 0
+      let connects = 0
+      setDestinationCheckTestHooks({
+        resolve: async () => {
+          resolveCalls++
+          // DNS-rebinding shape: attempt 1 public, attempt 2+ private.
+          return resolveCalls === 1 ? [{ address: '203.0.113.10' }] : [{ address: '127.0.0.1' }]
+        },
+        transport: async () => {
+          connects++
+          return { status: 503, statusText: 'Unavailable', headers: new Headers(), body: new Uint8Array(0) }
+        },
+      })
+      return prod(async () => {
+        await assert.rejects(
+          () =>
+            deliverHttpCallback({
+              resumeUrl: 'https://hooks.example/resume',
+              rawBody: '{"decision":"accept"}',
+              eventId: 'evt_ssrf_flip',
+              backoffMs: [0, 1, 1],
+              sleep: async () => {},
+            }),
+          (err: unknown) => err instanceof DestinationCheckError && (err as DestinationCheckError).code === 'refused',
+        )
+        assert.equal(connects, 1, 'the flipped-private retry must be refused before any connect (MU09)')
+        assert.ok(resolveCalls >= 2, 'each attempt re-resolves (no cached destination)')
+      })
+    })
+
+    it('refuses a lifecycle delivery to a metadata address in production (MU10)', () => {
+      let connects = 0
+      setDestinationCheckTestHooks({
+        resolve: async () => [{ address: '169.254.169.254' }],
+        transport: async () => {
+          connects++
+          return { status: 200, statusText: 'OK', headers: new Headers(), body: new Uint8Array(0) }
+        },
+      })
+      return prod(async () => {
+        await assert.rejects(
+          () =>
+            deliverHttpLifecycleEvent({
+              origin: baseOrigin('https://metadata.example/resume', { lifecycleEvents: ['presented'] }),
+              type: 'presented',
+              credentials: { plugin: 'http', resumeSecret: SECRET },
+            }),
+          (err: unknown) => err instanceof DestinationCheckError && (err as DestinationCheckError).code === 'refused',
+        )
+        assert.equal(connects, 0, 'a refused lifecycle destination must never connect')
+      })
+    })
+  })
+
+  describe('M5: event-id dedupe across host retries', () => {
+    const captureResume = async (origin: OriginRef, payload: DecisionPayload): Promise<any> => {
+      let posted: any
+      let headerId: string | null = null
+      mock.method(globalThis, 'fetch', async (_u: any, init?: any) => {
+        posted = JSON.parse(String(init?.body ?? ''))
+        headerId = new Headers(init?.headers).get(HEADER_EVENT_ID)
+        return new Response('{}', { status: 200 })
+      })
+      try {
+        await httpPlugin.resume(origin, payload)
+      } finally {
+        mock.restoreAll()
+      }
+      return { posted, headerId }
+    }
+
+    it('two resumes for the same approval (decide + retryResume) reuse the event id', async () => {
+      const origin = baseOrigin('https://hooks.example/resume') // approvalId apr_1
+      const first = await captureResume(origin, { decision: 'accept' })
+      const second = await captureResume(origin, { decision: 'accept' })
+      assert.match(first.posted.event_id, /^evt_[0-9a-f]{32}$/)
+      assert.equal(second.posted.event_id, first.posted.event_id, 'retryResume must reuse the event id')
+      assert.equal(first.headerId, first.posted.event_id)
+      assert.equal(second.headerId, first.posted.event_id, 'header and body dedupe key agree')
+    })
+
+    it('answered and decided are distinct logical deliveries, each stable', async () => {
+      const origin = baseOrigin('https://hooks.example/resume')
+      const decided = await captureResume(origin, { decision: 'accept' })
+      const answered = await captureResume(origin, { decision: 'respond', answer: { value: 'yes' } } as DecisionPayload)
+      const answeredAgain = await captureResume(
+        origin,
+        { decision: 'respond', answer: { value: 'yes' } } as DecisionPayload,
+      )
+      assert.notEqual(answered.posted.event_id, decided.posted.event_id)
+      assert.equal(answered.posted.event_id, answeredAgain.posted.event_id)
+    })
+
+    it('a stored deliveryEventIds entry wins over derivation', async () => {
+      const origin = baseOrigin('https://hooks.example/resume', {
+        deliveryEventIds: { decided: 'evt_persisted_by_host' },
+      })
+      const first = await captureResume(origin, { decision: 'accept' })
+      assert.equal(first.posted.event_id, 'evt_persisted_by_host')
+    })
+
+    it('deterministicEventId is stable per approval+key and differs across them', () => {
+      const a = deterministicEventId('apr_1', 'decided')
+      assert.equal(a, deterministicEventId('apr_1', 'decided'))
+      assert.equal(a, 'evt_' + createHash('sha256').update('hitly:http:v1:apr_1:decided', 'utf8').digest('hex').slice(0, 32))
+      assert.notEqual(a, deterministicEventId('apr_2', 'decided'))
+      assert.notEqual(a, deterministicEventId('apr_1', 'presented'))
+    })
+  })
+
+  describe('retry policy: transient codes retried, 4xx never, attempts capped', () => {
+    it('retries transient connect/timeout failures to the end of the schedule', async () => {
+      const codes = ['connect', 'timeout'] as const
+      let calls = 0
+      setDestinationCheckTestHooks({
+        resolve: async () => [{ address: '203.0.113.10' }],
+        transport: async () => {
+          const code = codes[calls % codes.length]!
+          calls++
+          throw new DestinationCheckError(code, `Destination check: simulated ${code} (host "hooks.example").`, 'hooks.example')
+        },
+      })
+      try {
+        const result = await deliverHttpCallback({
+          resumeUrl: 'https://hooks.example/resume',
+          rawBody: '{"decision":"accept"}',
+          eventId: 'evt_transient',
+          backoffMs: [0, 1, 1],
+          sleep: async () => {},
+        })
+        assert.equal(calls, 3, 'connect/timeout are transient: all attempts run (S3/MU08 shape)')
+        assert.equal(result.attempts, 3)
+        assert.equal(result.response.status, 0)
+        assert.equal(result.response.body, null)
+        assert.ok(result.response.error?.includes('simulated'))
+      } finally {
+        setDestinationCheckTestHooks({
+          resolve: async () => [{ address: '203.0.113.10' }],
+          transport: globalFetchTransport,
+        })
+      }
+    })
+
+    for (const retryable of [408, 425, 429]) {
+      it(`retries ${retryable} up to the attempt cap`, async () => {
+        let calls = 0
+        setDestinationCheckTestHooks({
+          resolve: async () => [{ address: '203.0.113.10' }],
+          transport: async () => {
+            calls++
+            return { status: retryable, statusText: 'Retry', headers: new Headers(), body: new TextEncoder().encode('nope') }
+          },
+        })
+        try {
+          const result = await deliverHttpCallback({
+            resumeUrl: 'https://hooks.example/resume',
+            rawBody: '{"decision":"accept"}',
+            eventId: 'evt_retryable',
+            backoffMs: [0, 1, 1],
+            sleep: async () => {},
+          })
+          assert.equal(calls, 3)
+          assert.equal(result.attempts, 3)
+          assert.equal(result.response.status, retryable)
+          assert.equal(result.response.body, null)
+        } finally {
+          setDestinationCheckTestHooks({
+            resolve: async () => [{ address: '203.0.113.10' }],
+            transport: globalFetchTransport,
+          })
+        }
+      })
+    }
+
+    for (const refusal of [400, 401, 403, 404]) {
+      it(`never retries ${refusal}: exactly one attempt, no body (MU12)`, async () => {
+        let calls = 0
+        setDestinationCheckTestHooks({
+          resolve: async () => [{ address: '203.0.113.10' }],
+          transport: async () => {
+            calls++
+            return {
+              status: refusal,
+              statusText: 'Denied',
+              headers: new Headers(),
+              body: new TextEncoder().encode('canary-mu12-body'),
+            }
+          },
+        })
+        try {
+          const result = await deliverHttpCallback({
+            resumeUrl: 'https://hooks.example/resume',
+            rawBody: '{"decision":"accept"}',
+            eventId: 'evt_no_retry_4xx',
+            backoffMs: [0, 1, 1],
+            sleep: async () => {},
+          })
+          assert.equal(calls, 1, '4xx must not be retried')
+          assert.equal(result.attempts, 1)
+          assert.equal(result.response.status, refusal)
+          assert.equal(result.response.body, null)
+          assert.ok(!JSON.stringify(result.response).includes('canary-mu12-body'))
+        } finally {
+          setDestinationCheckTestHooks({
+            resolve: async () => [{ address: '203.0.113.10' }],
+            transport: globalFetchTransport,
+          })
+        }
+      })
+    }
+
+    it('attempts are capped at the schedule length (MU08)', async () => {
+      assert.ok(Array.isArray(DEFAULT_BACKOFF_MS) && DEFAULT_BACKOFF_MS.length === 3, 'default schedule is bounded')
+      assert.ok(DEFAULT_BACKOFF_MS.every((ms) => Number.isFinite(ms) && ms >= 0))
+      let calls = 0
+      setDestinationCheckTestHooks({
+        resolve: async () => [{ address: '203.0.113.10' }],
+        transport: async () => {
+          calls++
+          return { status: 503, statusText: 'Unavailable', headers: new Headers(), body: new Uint8Array(0) }
+        },
+      })
+      try {
+        const result = await deliverHttpCallback({
+          resumeUrl: 'https://hooks.example/resume',
+          rawBody: '{"decision":"accept"}',
+          eventId: 'evt_cap',
+          backoffMs: [0, 1, 1, 1, 1],
+          sleep: async () => {},
+        })
+        assert.equal(calls, 5, 'loop must stop at backoffMs.length')
+        assert.equal(result.attempts, 5)
+        assert.equal(result.response.status, 503)
+      } finally {
+        setDestinationCheckTestHooks({
+          resolve: async () => [{ address: '203.0.113.10' }],
+          transport: globalFetchTransport,
+        })
+      }
     })
   })
 })

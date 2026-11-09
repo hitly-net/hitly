@@ -4,6 +4,7 @@ import {
   destinationHost,
   destinationStatusMessage,
   DestinationCheckError,
+  type DestinationCheckCode,
 } from '@hitly/core/destination-check'
 import type { ResumeResponse } from '@hitly/core'
 import { buildSignatureHeaders } from './sign.ts'
@@ -11,6 +12,20 @@ import { readCbAuthToken, redactSecrets } from './secrets.ts'
 
 /** Default in-process backoff schedule (ms). Full ~24h fan-out uses host failed_resume retries. */
 export const DEFAULT_BACKOFF_MS = [0, 200, 800] as const
+
+/**
+ * Destination-check failures that look like transient network trouble rather
+ * than a policy refusal: retry them on the next attempt (which re-resolves and
+ * re-pins DNS). Refusals, redirects, size and malformed URLs stay fail-closed.
+ */
+const TRANSIENT_CHECK_CODES: ReadonlySet<DestinationCheckCode> = new Set(['timeout', 'connect'])
+
+/** Fraction of the base delay added as uniform random jitter (spreads retry storms). */
+const JITTER_RATIO = 0.25
+
+function jitteredDelay(ms: number): number {
+  return ms + Math.floor(Math.random() * Math.ceil(ms * JITTER_RATIO))
+}
 
 export interface DeliverHttpArgs {
   resumeUrl: string
@@ -48,7 +63,7 @@ export async function deliverHttpCallback(args: DeliverHttpArgs): Promise<Delive
   let attempts = 0
 
   for (let i = 0; i < backoff.length; i++) {
-    if (backoff[i]! > 0) await sleep(backoff[i]!)
+    if (backoff[i]! > 0) await sleep(jitteredDelay(backoff[i]!))
     attempts++
 
     const headers: Record<string, string> = {
@@ -113,7 +128,9 @@ export async function deliverHttpCallback(args: DeliverHttpArgs): Promise<Delive
       lastError = new Error(destinationStatusMessage('HTTP resume', response.status, host))
     } catch (error) {
       lastError = error
-      if (error instanceof DestinationCheckError) {
+      // Fail-closed refusals (SSRF, redirects, size, malformed URL) throw at once;
+      // transient connect/timeout failures fall through to the next attempt.
+      if (error instanceof DestinationCheckError && !TRANSIENT_CHECK_CODES.has(error.code)) {
         throw error
       }
     }

@@ -22,7 +22,7 @@ import {
 } from '@hitly/core'
 import { approvals, decisionRecords, projectApiKeys, projectRules, projects, users } from '@hitly/db/schema'
 import { getPlugin } from './plugins'
-import { envelopeMetadata } from './origin'
+import { envelopeMetadata, stripOriginSecrets } from './origin'
 import { hashApiKey } from './keys'
 import { logProjectEvent } from './events'
 import { notifyAssignee } from './notify'
@@ -400,7 +400,13 @@ export async function ingestApproval(args: {
     plugin: pluginId,
     status: 'pending',
     actionName: ingested.action.name,
-    envelope: await encodeTenantJson(project.workspaceId, ingested as unknown as Record<string, unknown>),
+    // M0h: the create-once envelope column must never carry origin credentials
+    // (cb_auth_token). They live only on the origin column, which the reviewer
+    // read projections redact and resume() reads. See lib/origin.ts.
+    envelope: await encodeTenantJson(project.workspaceId, {
+      ...ingested,
+      origin: stripOriginSecrets(ingested.origin),
+    } as unknown as Record<string, unknown>),
     origin: await encodeTenantJson(project.workspaceId, ingested.origin as unknown as Record<string, unknown>),
     idempotencyKey: args.idempotencyKey ?? null,
     expiresAt: routed.expiresAt,

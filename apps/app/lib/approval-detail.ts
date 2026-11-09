@@ -3,7 +3,7 @@ import { isOpenApprovalStatus, type ApprovalEnvelope, type OriginRef, type Plugi
 import { approvals, decisionRecords, projects } from '@hitly/db/schema'
 import { approvalHasExpired } from './approval-expiry'
 import { canDecide, getProjectAccess } from './rbac'
-import { originFields, envelopeMetadata } from './origin'
+import { originFields, envelopeMetadata, stripOriginSecrets } from './origin'
 import { loadOpenedContextRefs } from './context-opens'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
@@ -92,11 +92,19 @@ export async function getApprovalDetail(args: {
       expiresAt: approval.expiresAt,
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
-      envelope: {
-        ...envelope,
-        metadata: envelopeMetadata(envelope, origin),
-      },
-      origin,
+      envelope: (() => {
+        // The stored row may embed origin (the ingest return is
+        // `ApprovalEnvelope & { origin }`); strip credentials from that copy too.
+        const embedded = (envelope as ApprovalEnvelope & { origin?: unknown }).origin
+        return {
+          ...envelope,
+          ...(embedded !== undefined ? { origin: stripOriginSecrets(embedded) } : {}),
+          metadata: envelopeMetadata(envelope, origin),
+        }
+      })(),
+      // The approvals.origin column legitimately holds the callback token for
+      // resume(); reviewer projections must never carry it (spec: "never echo in reads").
+      origin: stripOriginSecrets(origin),
       originFields: originFields(origin),
       canAct,
       canCancel,

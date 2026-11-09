@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import type { DecisionPayload } from '@hitly/core'
 import { redactSecrets } from './secrets.ts'
 
@@ -32,6 +32,18 @@ export function readLifecycleEvents(resumeHandle: Record<string, unknown>): Life
 /** Event id: evt_ + 32 hex chars. */
 export function newEventId(): string {
   return `evt_${randomBytes(16).toString('hex')}`
+}
+
+/**
+ * Stable event id for one logical delivery of an approval. Same approval +
+ * same logical event (decided|answered|presented|etc.) always yields the same id,
+ * so a host-side retry (retryResume, the ~24 h failed_resume tail) re-sends
+ * the SAME X-HITLy-Event-Id and a receiver that processed a 5xx'd delivery can
+ * dedupe on it (spec (e): "event_id-deduped").
+ */
+export function deterministicEventId(approvalId: string, logicalKey: string): string {
+  const digest = createHash('sha256').update(`hitly:http:v1:${approvalId}:${logicalKey}`, 'utf8').digest('hex')
+  return `evt_${digest.slice(0, 32)}`
 }
 
 export interface HttpCallbackBody {
@@ -148,12 +160,18 @@ export function buildLifecycleBody(args: BuildLifecycleBodyArgs): HttpCallbackBo
   }
 }
 
-/** Stable event id for a logical delivery: reuse stored id on retries. */
+/**
+ * Stable event id for a logical delivery: reuse a stored id when the host has
+ * persisted one; otherwise derive it deterministically from the approval so
+ * host retries (retryResume) reuse the same id. Random only without an approvalId.
+ */
 export function eventIdFor(handle: Record<string, unknown>, logicalKey: string): string {
   const bag = handle.deliveryEventIds
   if (bag && typeof bag === 'object' && !Array.isArray(bag)) {
     const existing = (bag as Record<string, unknown>)[logicalKey]
     if (typeof existing === 'string' && existing.trim()) return existing.trim()
   }
+  const approvalId = typeof handle.approvalId === 'string' ? handle.approvalId.trim() : ''
+  if (approvalId) return deterministicEventId(approvalId, logicalKey)
   return newEventId()
 }
