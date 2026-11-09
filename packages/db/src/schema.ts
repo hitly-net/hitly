@@ -94,6 +94,30 @@ export const verifications = pgTable('verifications', {
   updatedAt: updatedAt(),
 })
 
+/**
+ * A signed-in email change that has not been confirmed yet. The live
+ * `users.email` is left alone until the token in the new inbox is used;
+ * only the SHA-256 of that token is stored here.
+ */
+export const pendingEmailChanges = pgTable(
+  'pending_email_changes',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    pendingEmail: varchar('pending_email', { length: 255 }).notNull(),
+    // SHA-256 (hex) of the one-time confirmation token emailed to pendingEmail.
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex('pending_email_changes_user_id_idx').on(table.userId),
+    uniqueIndex('pending_email_changes_token_hash_idx').on(table.tokenHash),
+  ],
+)
+
 export const workspaces = pgTable('workspaces', {
   id: id().primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
