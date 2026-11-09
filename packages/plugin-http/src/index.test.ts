@@ -17,7 +17,9 @@ import {
   HEADER_TIMESTAMP,
   httpPlugin,
   parseLifecycleEvents,
+  pickActiveSigningKey,
   redactSecrets,
+  resolveSigningKey,
   signBody,
   verifyHttpSignature,
   webhookKeyId,
@@ -31,6 +33,17 @@ setDestinationCheckTestHooks({
 
 const SECRET = 'whsec_test_signing_secret_m0h'
 const TOKEN = 'cb_tok_super_secret_do_not_echo'
+
+/**
+ * The webhook signing registry as stored on a project (item 9): callbacks are
+ * signed with a DEDICATED per-project webhook secret + key id, never with the
+ * resume secret (HITLY_RESUME_SECRET on the origin side).
+ */
+function webhookCredentials(secret = SECRET, keyId = 'whk_m0h_active'): Record<string, unknown> {
+  return {
+    webhookSigningSecrets: [{ keyId, secret, createdAt: 1_735_000_000, validUntil: null }],
+  }
+}
 
 function baseOrigin(resumeUrl: string, extra: Record<string, unknown> = {}): OriginRef {
   return {
@@ -168,7 +181,7 @@ describe('@hitly/plugin-http M0h', () => {
       const result = await httpPlugin.resume(
         origin,
         { decision: 'accept' },
-        { plugin: 'http', resumeSecret: SECRET },
+        { plugin: 'http', ...webhookCredentials() },
       )
       assert.equal(result.status, 200)
       assert.equal(containsSecretValue(result.resumeData, TOKEN), false)
@@ -237,7 +250,7 @@ describe('@hitly/plugin-http M0h', () => {
       const out = await deliverHttpLifecycleEvent({
         origin: baseOrigin('https://hooks.example/resume', { lifecycleEvents: ['presented', 'expired'] }),
         type: 'presented',
-        credentials: { plugin: 'http', resumeSecret: SECRET },
+        credentials: { plugin: 'http', ...webhookCredentials() },
       })
       assert.ok(out)
       assert.equal(out!.status, 200)
@@ -431,7 +444,9 @@ describe('@hitly/plugin-http M0h', () => {
         await httpPlugin.resume(
           baseOrigin('https://hooks.example/resume'),
           { decision: 'accept' },
-          { plugin: 'http', resumeSecret: SECRET },
+          // Legacy single-string shape: no stored key id, so the derived
+          // hk_<sha8> id must be advertised.
+          { plugin: 'http', webhookSigningSecret: SECRET },
         )
         assert.equal(sent.length, 1)
         const { body, headers } = sent[0]!
@@ -464,7 +479,7 @@ describe('@hitly/plugin-http M0h', () => {
         await deliverHttpLifecycleEvent({
           origin: baseOrigin('https://hooks.example/resume', { lifecycleEvents: ['presented'] }),
           type: 'presented',
-          credentials: { plugin: 'http', resumeSecret: SECRET },
+          credentials: { plugin: 'http', ...webhookCredentials() },
         })
         assert.equal(sent.length, 1)
         const { body, headers } = sent[0]!
@@ -540,7 +555,7 @@ describe('@hitly/plugin-http M0h', () => {
             deliverHttpLifecycleEvent({
               origin: baseOrigin('https://metadata.example/resume', { lifecycleEvents: ['presented'] }),
               type: 'presented',
-              credentials: { plugin: 'http', resumeSecret: SECRET },
+              credentials: { plugin: 'http', ...webhookCredentials() },
             }),
           (err: unknown) => err instanceof DestinationCheckError && (err as DestinationCheckError).code === 'refused',
         )
@@ -734,6 +749,150 @@ describe('@hitly/plugin-http M0h', () => {
           transport: globalFetchTransport,
         })
       }
+    })
+  })
+
+  describe('M6: per-project webhook signing secret (not the resume secret) with rotation overlap', () => {
+    const RESUME_SECRET = 'hitly_resume_NEVER_sign_callbacks_with_me'
+    const OLD_SECRET = 'whsec_old_before_rotation'
+    const NEW_SECRET = 'whsec_new_after_rotation'
+
+    it('resolveSigningKey uses the webhook registry and never the resume secret', () => {
+      const now = 1_800_000_000
+      const creds = {
+        resumeSecret: RESUME_SECRET,
+        webhookSigningSecrets: [
+          { keyId: 'whk_old', secret: OLD_SECRET, createdAt: 100, validUntil: null },
+          { keyId: 'whk_new', secret: NEW_SECRET, createdAt: 200, validUntil: null },
+        ],
+      }
+      const key = resolveSigningKey(creds, now)
+      assert.equal(key?.secret, NEW_SECRET, 'newest usable webhook key signs')
+      assert.equal(key?.keyId, 'whk_new')
+      // A project with only a resume secret signs NOTHING: the resume secret
+      // authenticates origin->HITLy polls, never HITLy->origin callbacks.
+      assert.equal(resolveSigningKey({ resumeSecret: RESUME_SECRET }, now), undefined)
+      assert.equal(resolveSigningKey(undefined, now), undefined)
+      // All webhook keys rotated out => sign nothing; never fall through to resumeSecret.
+      assert.equal(
+        resolveSigningKey(
+          {
+            resumeSecret: RESUME_SECRET,
+            webhookSigningSecrets: [{ keyId: 'whk_gone', secret: OLD_SECRET, createdAt: 1, validUntil: now - 1 }],
+          },
+          now,
+        ),
+        undefined,
+        'expired registry must not sign, and must not fall back to the resume secret',
+      )
+      assert.equal(pickActiveSigningKey([], now), null)
+    })
+
+    it('the wire signature uses the webhook secret + stored key id, not the resume secret', async () => {
+      const sent: Array<{ body: string; headers: Headers }> = []
+      mock.method(globalThis, 'fetch', async (_u: any, init?: any) => {
+        sent.push({ body: String(init?.body ?? ''), headers: new Headers(init?.headers) })
+        return new Response('{}', { status: 200 })
+      })
+      try {
+        await httpPlugin.resume(
+          baseOrigin('https://hooks.example/resume'),
+          { decision: 'accept' },
+          { plugin: 'http', resumeSecret: RESUME_SECRET, ...webhookCredentials(SECRET, 'whk_project_1') },
+        )
+        assert.equal(sent.length, 1)
+        const { body, headers } = sent[0]!
+        const ts = headers.get(HEADER_TIMESTAMP)!
+        const sig = headers.get(HEADER_SIGNATURE)!
+        assert.equal(headers.get(HEADER_KEY_ID), 'whk_project_1', 'stored key id is advertised')
+        const webhookHmac = createHmac('sha256', SECRET).update(`${ts}.${body}`, 'utf8').digest('hex')
+        assert.equal(sig, webhookHmac, 'signature is HMAC over "<ts>.<body>" with the WEBHOOK secret')
+        const resumeHmac = createHmac('sha256', RESUME_SECRET).update(`${ts}.${body}`, 'utf8').digest('hex')
+        assert.notEqual(sig, resumeHmac, 'must NOT be signed with the resume secret (HITLY_RESUME_SECRET)')
+      } finally {
+        mock.restoreAll()
+      }
+    })
+
+    it('verify accepts a rotated-out key inside the overlap window and refuses it after', () => {
+      const now = 1_800_000_000
+      const rawBody = '{"decision":"accept"}'
+      const keys = [
+        { keyId: 'whk_old', secret: OLD_SECRET, createdAt: 100, validUntil: now + 3600 },
+        { keyId: 'whk_new', secret: NEW_SECRET, createdAt: 200, validUntil: null },
+      ]
+      const oldSig = signBody(OLD_SECRET, now, rawBody)
+
+      const inOverlap = verifyHttpSignature({
+        keys,
+        rawBody,
+        timestampHeader: String(now),
+        signatureHeader: oldSig,
+        keyIdHeader: 'whk_old',
+        nowSeconds: now,
+      })
+      assert.equal(inOverlap.ok, true, 'the rotated-out key still verifies during the overlap window')
+      assert.ok(inOverlap.ok && inOverlap.keyId === 'whk_old')
+
+      // Past validUntil the old key is refused; the new key keeps working.
+      const later = now + 7200
+      assert.equal(
+        verifyHttpSignature({
+          keys,
+          rawBody,
+          timestampHeader: String(later),
+          signatureHeader: signBody(OLD_SECRET, later, rawBody),
+          keyIdHeader: 'whk_old',
+          nowSeconds: later,
+          maxSkewSeconds: 86_400,
+        }).reason,
+        'expired_key',
+        'overlap window closed: the old key must be refused',
+      )
+      const okNew = verifyHttpSignature({
+        keys,
+        rawBody,
+        timestampHeader: String(later),
+        signatureHeader: signBody(NEW_SECRET, later, rawBody),
+        keyIdHeader: 'whk_new',
+        nowSeconds: later,
+        maxSkewSeconds: 86_400,
+      })
+      assert.equal(okNew.ok, true)
+
+      assert.equal(
+        verifyHttpSignature({
+          keys,
+          rawBody,
+          timestampHeader: String(now),
+          signatureHeader: oldSig,
+          keyIdHeader: 'whk_unknown',
+          nowSeconds: now,
+        }).reason,
+        'key_mismatch',
+      )
+
+      // Legacy senders without a key id: any usable key verifies; a match only
+      // on an expired key reports expired_key, not a bare bad_signature.
+      const noKeyId = verifyHttpSignature({
+        keys,
+        rawBody,
+        timestampHeader: String(now),
+        signatureHeader: oldSig,
+        nowSeconds: now,
+      })
+      assert.equal(noKeyId.ok, true)
+      assert.ok(noKeyId.ok && noKeyId.keyId === 'whk_old')
+      assert.equal(
+        verifyHttpSignature({
+          keys: [{ keyId: 'whk_old', secret: OLD_SECRET, createdAt: 100, validUntil: now - 1 }],
+          rawBody,
+          timestampHeader: String(now),
+          signatureHeader: oldSig,
+          nowSeconds: now,
+        }).reason,
+        'expired_key',
+      )
     })
   })
 })

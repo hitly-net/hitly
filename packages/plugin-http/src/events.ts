@@ -144,6 +144,8 @@ export interface BuildLifecycleBodyArgs {
   approvalId?: string
   occurredAt?: string
   metadata?: Record<string, unknown>
+  /** Extra delivery context merged over the handle metadata (e.g. {ref, url} for `opened`). */
+  extraMetadata?: Record<string, unknown>
   state?: string
 }
 
@@ -155,7 +157,7 @@ export function buildLifecycleBody(args: BuildLifecycleBodyArgs): HttpCallbackBo
     id: args.approvalId,
     occurred_at: args.occurredAt ?? new Date().toISOString(),
     state: args.state ?? args.type,
-    metadata: redactSecrets(args.metadata ?? {}),
+    metadata: redactSecrets({ ...(args.metadata ?? {}), ...(args.extraMetadata ?? {}) }),
     answer: null,
   }
 }

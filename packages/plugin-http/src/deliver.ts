@@ -7,7 +7,7 @@ import {
   type DestinationCheckCode,
 } from '@hitly/core/destination-check'
 import type { ResumeResponse } from '@hitly/core'
-import { buildSignatureHeaders } from './sign.ts'
+import { buildSignatureHeaders, pickActiveSigningKey, type SigningKeyEntry } from './sign.ts'
 import { readCbAuthToken, redactSecrets } from './secrets.ts'
 
 /** Default in-process backoff schedule (ms). Full ~24h fan-out uses host failed_resume retries. */
@@ -34,8 +34,14 @@ export interface DeliverHttpArgs {
   eventId: string
   /** Optional per-request Bearer token (never logged). */
   cbAuthToken?: string
-  /** Per-project signing secret (credentials.resumeSecret). */
+  /**
+   * Per-project WEBHOOK signing secret (credentials.webhookSigningSecrets —
+   * never HITLY_RESUME_SECRET / credentials.resumeSecret, which authenticates
+   * origin→HITLy polls, not HITLy→origin callbacks).
+   */
   signingSecret?: string
+  /** Stored key id advertised in X-HITLy-Key-Id (defaults to the derived hk_ id). */
+  signingKeyId?: string
   backoffMs?: readonly number[]
   /** Inject sleep for tests. */
   sleep?: (ms: number) => Promise<void>
@@ -79,6 +85,7 @@ export async function deliverHttpCallback(args: DeliverHttpArgs): Promise<Delive
           secret: args.signingSecret,
           eventId: args.eventId,
           rawBody: args.rawBody,
+          keyId: args.signingKeyId,
         }),
       )
     } else {
@@ -164,10 +171,64 @@ function safeParse(raw: string): Record<string, unknown> {
   return {}
 }
 
-export function resolveSigningSecret(credentials: Record<string, unknown> | undefined): string | undefined {
+/**
+ * Resolve the per-project WEBHOOK signing key from project credentials.
+ *
+ * Callbacks are signed with a DEDICATED webhook secret, never with the resume
+ * secret (HITLY_RESUME_SECRET on the origin side): one credential authenticates
+ * origin→HITLy polls, the other authenticates HITLy→origin callbacks. A project
+ * may carry several keys during a rotation; the newest usable one signs, and
+ * rotated-out keys stay verifiable until their `validUntil` (overlap window).
+ *
+ * Accepted shapes:
+ * - `webhookSigningSecrets`: array of { keyId, secret, validUntil?, createdAt? }
+ * - `webhookSigningSecret`: legacy single string (key id derived via webhookKeyId)
+ * - `credentials.webhookSigningSecret` may also be a single entry object.
+ */
+export function resolveSigningKey(
+  credentials: Record<string, unknown> | undefined,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): { secret: string; keyId?: string } | undefined {
   if (!credentials) return undefined
-  const secret = credentials.resumeSecret ?? credentials.webhookSigningSecret
-  return typeof secret === 'string' && secret.trim() ? secret.trim() : undefined
+  const bag = credentials.webhookSigningSecrets
+  if (Array.isArray(bag)) {
+    const entries: SigningKeyEntry[] = []
+    for (const item of bag) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+      const record = item as Record<string, unknown>
+      if (typeof record.keyId !== 'string' || typeof record.secret !== 'string') continue
+      const validUntil =
+        typeof record.validUntil === 'number' && Number.isFinite(record.validUntil) ? record.validUntil : null
+      const createdAt = typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : 0
+      entries.push({ keyId: record.keyId.trim(), secret: record.secret.trim(), validUntil, createdAt })
+    }
+    const active = pickActiveSigningKey(entries, nowSeconds)
+    if (active) return { secret: active.secret, keyId: active.keyId }
+    // An empty/expired registry means "sign nothing" — never fall through to
+    // the resume secret: the two credentials must not be conflated.
+    return undefined
+  }
+  const single = credentials.webhookSigningSecret
+  if (typeof single === 'string' && single.trim()) return { secret: single.trim() }
+  if (single && typeof single === 'object' && !Array.isArray(single)) {
+    const record = single as Record<string, unknown>
+    if (typeof record.secret === 'string' && record.secret.trim()) {
+      const validUntil =
+        typeof record.validUntil === 'number' && Number.isFinite(record.validUntil) ? record.validUntil : null
+      if (validUntil === null || validUntil > nowSeconds) {
+        return {
+          secret: record.secret.trim(),
+          keyId: typeof record.keyId === 'string' && record.keyId.trim() ? record.keyId.trim() : undefined,
+        }
+      }
+    }
+  }
+  return undefined
+}
+
+/** Secret-only convenience wrapper around `resolveSigningKey` (kept for API compat). */
+export function resolveSigningSecret(credentials: Record<string, unknown> | undefined): string | undefined {
+  return resolveSigningKey(credentials)?.secret
 }
 
 export { readCbAuthToken }

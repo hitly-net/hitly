@@ -9,7 +9,7 @@ import {
   type OriginRef,
   type ResumeResponse,
 } from '@hitly/core'
-import { deliverHttpCallback, resolveSigningSecret } from './deliver.ts'
+import { deliverHttpCallback, resolveSigningKey } from './deliver.ts'
 import {
   buildDecidedBody,
   buildLifecycleBody,
@@ -27,7 +27,10 @@ export {
   HEADER_KEY_ID,
   HEADER_SIGNATURE,
   HEADER_TIMESTAMP,
+  isSigningKeyUsable,
+  pickActiveSigningKey,
   signBody,
+  type SigningKeyEntry,
   TIMESTAMP_MAX_SKEW_SECONDS,
   verifyHttpSignature,
   webhookKeyId,
@@ -43,7 +46,7 @@ export {
   type HttpCallbackEventType,
   type LifecycleEventType,
 } from './events.ts'
-export { deliverHttpCallback, DEFAULT_BACKOFF_MS, resolveSigningSecret } from './deliver.ts'
+export { deliverHttpCallback, DEFAULT_BACKOFF_MS, resolveSigningKey, resolveSigningSecret } from './deliver.ts'
 export { CB_AUTH_TOKEN_KEY, containsSecretValue, readCbAuthToken, redactSecrets, SECRET_HANDLE_KEYS } from './secrets.ts'
 
 function optionalString(value: unknown): string | undefined {
@@ -152,7 +155,9 @@ export const httpPlugin: HitlyPlugin = {
     const workflowId = optionalString(body.workflowId)
     const workflowName = optionalString(body.workflowName)
     const args = asRecord(body.args)
-    const metadata = asRecord(body.metadata)
+    // The metadata bag is caller-supplied: strip any credential-shaped keys so
+    // a cb_auth_token smuggled inside metadata can never be stored or projected.
+    const metadata = redactSecrets(asRecord(body.metadata))
     const pageId = optionalString(metadata.pageId) ?? optionalString(args.pageId)
 
     const allowedActionsPartial =
@@ -224,12 +229,14 @@ export const httpPlugin: HitlyPlugin = {
       approvalId,
     })
     const rawBody = JSON.stringify(body)
+    const signing = resolveSigningKey(credentials as Record<string, unknown> | undefined)
     const result = await deliverHttpCallback({
       resumeUrl,
       rawBody,
       eventId,
       cbAuthToken: readCbAuthToken(handle),
-      signingSecret: resolveSigningSecret(credentials as Record<string, unknown> | undefined),
+      signingSecret: signing?.secret,
+      signingKeyId: signing?.keyId,
     })
     result.response.resumeData = redactSecrets(result.response.resumeData)
     return result.response
@@ -250,6 +257,8 @@ export async function deliverHttpLifecycleEvent(args: {
   approvalId?: string
   occurredAt?: string
   state?: string
+  /** Extra delivery context merged over the handle metadata for this event. */
+  extraMetadata?: Record<string, unknown>
 }): Promise<ResumeResponse | null> {
   if (!isLifecycleEventType(args.type)) return null
   const enabled = readLifecycleEvents(args.origin.resumeHandle)
@@ -266,15 +275,18 @@ export async function deliverHttpLifecycleEvent(args: {
     approvalId,
     occurredAt: args.occurredAt,
     metadata,
+    extraMetadata: args.extraMetadata,
     state: args.state,
   })
   const rawBody = JSON.stringify(body)
+  const signing = resolveSigningKey(args.credentials as Record<string, unknown> | undefined)
   const result = await deliverHttpCallback({
     resumeUrl,
     rawBody,
     eventId,
     cbAuthToken: readCbAuthToken(args.origin.resumeHandle),
-    signingSecret: resolveSigningSecret(args.credentials as Record<string, unknown> | undefined),
+    signingSecret: signing?.secret,
+    signingKeyId: signing?.keyId,
   })
   result.response.resumeData = redactSecrets(result.response.resumeData)
   return result.response
