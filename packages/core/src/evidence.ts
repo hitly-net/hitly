@@ -56,6 +56,10 @@ export interface EvidenceActor {
  * `hitly.evidence.v1` (our evidence format): SPEC 5.3 says device data appears
  * only where an evidence format explicitly defines it, so it never goes into a
  * `hitl/event/v0` object. No IP address is recorded (privacy; minimal device data).
+ *
+ * `channel` is a self-reported session hint (cookie → web; bearer + mobile
+ * headers → mobile; bare bearer → api), not host-verified device identity.
+ * `x-hitly-client` is honoured only on bearer sessions.
  */
 export interface EvidenceClient {
   channel: 'web' | 'mobile' | 'api'

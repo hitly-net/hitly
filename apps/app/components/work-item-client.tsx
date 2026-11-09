@@ -31,6 +31,18 @@ export function MarkPresented({ approvalId }: { approvalId: string }) {
   return null
 }
 
+/** Defence-in-depth UI gate: never POST /presented unless the reviewer can act. */
+export function MarkPresentedIfCanAct({
+  canAct,
+  approvalId,
+}: {
+  canAct: boolean
+  approvalId: string
+}) {
+  if (!canAct) return null
+  return <MarkPresented approvalId={approvalId} />
+}
+
 export function RefreshOnFocus() {
   const router = useRouter()
   useEffect(() => {
