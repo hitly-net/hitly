@@ -1,8 +1,9 @@
 /**
  * Original create-once request view (hitly#98) — real Postgres, not mocked.
- * Covers: authorized view of the STORED create-once record as canonical JSON,
- * evidence hash binding (hitly#97 chain), cross-tenant / no-access denial,
- * unredacted view + log-safe summary, and non-canonical ingest normalisation.
+ * Covers: authorized view of the STORED create-once record (hashes of original,
+ * redacted JSON), evidence hash binding (hitly#97 chain), cross-tenant / no-access
+ * denial, secret redaction + log-safe summary, editedArgs never served as the
+ * request, and non-canonical ingest normalisation.
  *
  * Run with: DATABASE_URL=... HITLY_ENCRYPTION_KEK=... yarn workspace @hitly/app test
  */
@@ -13,7 +14,7 @@ import http from 'node:http'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
 import pg from 'pg'
-import { canonicalJson, sha256Hex } from '@hitly/core'
+import { argsHash, canonicalJson, jcsHash, sha256Hex } from '@hitly/core'
 import {
   users,
   workspaces,
@@ -25,6 +26,7 @@ import {
 } from '@hitly/db/schema'
 import { ingestApproval, decideApproval, parseDecisionBody } from './approvals'
 import { getOriginalRequest, summarizeForLog } from './original-request'
+import { REDACTED, redactRequestPayload } from './redact-request-payload'
 import { generateApiKey } from './keys'
 import { newId } from './ids'
 
@@ -188,7 +190,7 @@ async function ingestInto(body?: Record<string, unknown>) {
   return result.approval
 }
 
-test('authorized reviewer gets the canonical JSON of the stored create-once record', async () => {
+test('authorized reviewer gets hashes of the stored create-once record and a redacted JSON copy', async () => {
   const approval = await ingestInto()
 
   const result = await getOriginalRequest({
@@ -200,17 +202,19 @@ test('authorized reviewer gets the canonical JSON of the stored create-once reco
   assert.ok(result.ok, `expected ok, got ${JSON.stringify(result)}`)
   assert.equal(result.requestId, approval.id)
 
-  // Against the STORED record: decode the row straight from the DB and
-  // canonicalize independently — the copy is that record, not a UI re-render.
+  // Against the STORED record: hashes bind the original; the served JSON is redacted.
   const stored = await db
     .select({ envelope: approvals.envelope })
     .from(approvals)
     .where(eq(approvals.id, approval.id))
     .limit(1)
-  const storedCanonical = canonicalJson(stored[0]!.envelope)
-  assert.equal(result.canonicalPayload, storedCanonical, 'copy must equal canonicalJson of the stored envelope')
+  const storedEnvelope = stored[0]!.envelope
+  const storedCanonical = canonicalJson(storedEnvelope)
   assert.equal(result.payloadSha256, await sha256Hex(storedCanonical))
-  assert.deepEqual(JSON.parse(result.canonicalPayload), stored[0]!.envelope)
+  assert.equal(result.payloadHash, await jcsHash(storedEnvelope))
+  assert.equal(result.argsHash, await argsHash((storedEnvelope as { action: { args: Record<string, unknown> } }).action.args))
+  assert.equal(result.canonicalPayload, canonicalJson(redactRequestPayload(storedEnvelope)))
+  assert.notEqual(result.canonicalPayload, storedCanonical, 'served JSON must not be the unredacted stored record')
 })
 
 test('args hash and evidence anchor bind to the requested event of the chain', async () => {
@@ -313,9 +317,11 @@ test('workspace member without project access is denied with 404', async () => {
   assert.ok(!('canonicalPayload' in result), 'no payload bytes may leak to non-members')
 })
 
-test('view stays unredacted (canonical JSON); logs carry only ids/hashes', async () => {
-  const secretArg = 'sk_liv…a1b2'
-  const approval = await ingestInto({ action: { name: 'leaky.call', args: { apiKey: secretArg } } })
+test('served JSON redacts secrets and resume handles; hashes bind the stored original; logs stay id/hash only', async () => {
+  const secretArg = 'cb-auth-fixture-value'
+  const approval = await ingestInto({
+    action: { name: 'leaky.call', args: { amount: 7, cb_auth_token: secretArg, apiKey: secretArg } },
+  })
 
   const result = await getOriginalRequest({
     approvalId: approval.id,
@@ -325,15 +331,33 @@ test('view stays unredacted (canonical JSON); logs carry only ids/hashes', async
   })
   assert.ok(result.ok)
 
-  // Access control is the control: the canonical JSON stays unredacted so an
-  // off-host verifier can reproduce the hash. A redacted view would silently break that.
-  assert.ok(result.canonicalPayload.includes(secretArg), 'view stays unredacted — pinned deliberately')
+  const stored = await db
+    .select({ envelope: approvals.envelope })
+    .from(approvals)
+    .where(eq(approvals.id, approval.id))
+    .limit(1)
+  const storedEnvelope = stored[0]!.envelope
+  const storedCanonical = canonicalJson(storedEnvelope)
+  assert.ok(storedCanonical.includes(secretArg), 'stored original still has the secret')
+  assert.equal(result.payloadHash, await jcsHash(storedEnvelope))
+  assert.equal(result.argsHash, await argsHash((storedEnvelope as { action: { args: Record<string, unknown> } }).action.args))
+  assert.equal(result.payloadSha256, await sha256Hex(storedCanonical))
+
+  assert.equal(result.canonicalPayload.includes(secretArg), false, 'source must strip secrets from the served JSON')
+  assert.ok(result.canonicalPayload.includes(REDACTED))
+  const served = JSON.parse(result.canonicalPayload) as {
+    action?: { args?: Record<string, unknown> }
+    origin?: { resumeHandle?: unknown }
+  }
+  assert.equal(served.action?.args?.amount, 7)
+  assert.equal(served.action?.args?.cb_auth_token, REDACTED)
+  assert.equal(served.action?.args?.apiKey, REDACTED)
+  assert.equal(served.origin?.resumeHandle, REDACTED)
   assert.equal(result.canonicalPayload, canonicalJson(JSON.parse(result.canonicalPayload)))
 
-  // Secret-redaction policy on the LOG path: summaries carry only ids and hashes.
   const summary = summarizeForLog(result)
   const logLine = JSON.stringify(summary)
-  assert.ok(!logLine.includes(secretArg), 'logs must never carry payload bytes')
+  assert.equal(logLine.includes(secretArg), false, 'logs must never carry payload bytes')
   assert.equal(summary.requestId, approval.id)
   assert.equal(summary.payloadSha256, result.payloadSha256)
 })
@@ -360,12 +384,55 @@ test('non-canonical ingest is served as pinned canonical JSON (key order, escape
   })
   assert.ok(result.ok)
 
+  const stored = await db
+    .select({ envelope: approvals.envelope })
+    .from(approvals)
+    .where(eq(approvals.id, approval.id))
+    .limit(1)
+  const storedEnvelope = stored[0]!.envelope
   const served = JSON.parse(result.canonicalPayload) as { action?: { args?: unknown } }
   assert.deepEqual(served.action?.args, parsedArgs)
   assert.equal(canonicalJson(served.action?.args), expectedArgsCanonical)
   assert.equal(result.argsSha256, await sha256Hex(expectedArgsCanonical))
   assert.equal(result.canonicalPayload, canonicalJson(JSON.parse(result.canonicalPayload)))
-  assert.equal(result.payloadSha256, await sha256Hex(result.canonicalPayload))
+  assert.equal(result.payloadSha256, await sha256Hex(canonicalJson(storedEnvelope)))
+  assert.equal(result.payloadHash, await jcsHash(storedEnvelope))
   assert.match(result.canonicalPayload, /"big":12345678901234567000/)
   assert.ok(!result.canonicalPayload.includes('12345678901234567890'))
+})
+
+test('editedArgs never appear as the original request after an edit decision', async () => {
+  const approval = await ingestInto({
+    allowedActions: { accept: true, reject: true, edit: true },
+    editableFields: { amount: { type: 'int', min: 0, max: 1000 } },
+    action: { name: 'test-action', args: { amount: 100, currency: 'EUR' } },
+  })
+
+  const payload = parseDecisionBody({
+    decision: 'edit',
+    editedArgs: { amount: 55 },
+    editReason: 'pricing_correction',
+  })
+  assert.ok(payload)
+  const decided = await decideApproval({
+    approvalId: approval.id,
+    actorUserId: userReviewerA.id,
+    payload,
+    workspaceId: workspaceA.id,
+  })
+  assert.ok(!('error' in decided), `decide must succeed: ${JSON.stringify(decided)}`)
+
+  const result = await getOriginalRequest({
+    approvalId: approval.id,
+    workspaceId: workspaceA.id,
+    userId: userReviewerA.id,
+    workspaceRole: 'member',
+  })
+  assert.ok(result.ok)
+  const served = JSON.parse(result.canonicalPayload) as { action?: { args?: Record<string, unknown> }; editedArgs?: unknown }
+  assert.equal(served.action?.args?.amount, 100)
+  assert.equal(served.action?.args?.currency, 'EUR')
+  assert.equal('editedArgs' in served, false)
+  assert.equal(result.canonicalPayload.includes('"amount":55'), false)
+  assert.equal(result.argsHash, await argsHash({ amount: 100, currency: 'EUR' }))
 })

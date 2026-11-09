@@ -2,25 +2,21 @@ import { and, eq } from 'drizzle-orm'
 import { argsHash as jcsArgsHash, canonicalJson, jcsHash, sha256Hex, type ApprovalEnvelope, type WorkspaceRole } from '@hitly/core'
 import { approvals, evidenceReceipts } from '@hitly/db/schema'
 import { getProjectAccess } from './rbac'
+import { redactRequestPayload } from './redact-request-payload'
 import { requireDb, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
 
 /**
  * Original create-once request view (hitly#98).
  *
- * Returns the canonical JSON of the stored create-once request (`hitl/request/v0`):
- * the `approvals.envelope` row written once at ingest (see `ingestApproval`; nothing
- * updates this column), tenant-decoded, then serialized with `@hitly/core`'s
- * `canonicalJson` (sorted keys, `JSON.stringify` number formatting). That is the
- * host-normalised stored record — not the requester's raw wire bytes (key order,
- * whitespace, `\u` escapes and number forms are normalised at ingest/`JSON.parse`).
- * Never re-derived from rendered/mutable UI fields. A reviewer can paste the copy
- * into a known-good verifier and check the screen against what was stored
- * (hitl-spec discussion #5: `argsHash` alone only binds action args).
+ * Reads the stored create-once request (`hitl/request/v0`) from `approvals.envelope`
+ * — the row written once at ingest (see `ingestApproval`; nothing updates this
+ * column). Tenant-decoded, then hashed over that stored original. The JSON served
+ * for display/copy/download is the same record after secret redaction (`cb_auth_token`,
+ * resume handles, secret-like fields). Never re-derived from rendered/mutable UI
+ * fields, and never from `editedArgs` (those live only on the decide/read path).
  *
- * Unredacted on purpose: redacting any character would break the hash check, and the
- * same payload is already shown to anyone who can open the approval. Access is the
- * control — identical to the approval detail: session → success for project members;
+ * Access is identical to the approval detail: session → success for project members;
  * unauthenticated → 401; no workspace / unknown id / foreign workspace / no access →
  * 404. Logs carry only ids and hashes via `summarizeForLog` (payload contents are
  * never logged). Known limitation: integers above `Number.MAX_SAFE_INTEGER` lose
@@ -28,20 +24,19 @@ import { decodeTenantJson } from './tenant-crypto'
  * as `12345678901234567000`); that is not repaired here.
  *
  * Hash forms: `payloadHash` / `argsHash` are the hitl-spec 3.8 / 5 wire form,
- * `b64url(SHA-256(JCS(...)))`; `argsHash` equals the request's `argsHash` on
- * ingest and in hitl/response/v0 reads. `payloadSha256` / `argsSha256` stay hex
- * SHA-256 over Hitly `canonicalJson` because they anchor the hitly.evidence.v1
- * chain (`proposed_sha256`); changing them would rewrite every evidence hash on
- * existing data.
+ * `b64url(SHA-256(JCS(...)))` over the **stored original** (pre-redaction) so a
+ * reviewer can verify off-host. `payloadSha256` / `argsSha256` stay hex SHA-256
+ * over Hitly `canonicalJson` of that original because they anchor the
+ * hitly.evidence.v1 chain (`proposed_sha256`).
  */
 
 export type OriginalRequestOk = {
   ok: true
   /** The approval id (== create-once requestId of the stored request). */
   requestId: string
-  /** The stored payload, canonical JSON (sorted keys, no insignificant whitespace). */
+  /** Stored payload after secret redaction, canonical JSON (sorted keys, no insignificant whitespace). */
   canonicalPayload: string
-  /** sha256 hex of `canonicalPayload` — what a verifier recomputes over the copy. */
+  /** sha256 hex of the stored original (pre-redaction) canonical JSON. */
   payloadSha256: string
   /** sha256 of the canonical action args; equals the requested event's `proposed_sha256`. */
   argsSha256: string
@@ -81,11 +76,13 @@ export async function getOriginalRequest(args: {
     })
     if (!access) return { ok: false, error: 'Not found', status: 404 }
 
-    // The create-once record itself — decode in place, never rebuild from UI fields.
+    // The create-once record itself — decode in place, never rebuild from UI fields
+    // or from editedArgs. Hash the stored original, then redact for the served JSON.
     const payload = (await decodeTenantJson(args.workspaceId, approval.envelope)) as unknown as ApprovalEnvelope
-    const canonicalPayload = canonicalJson(payload)
-    const payloadSha256 = await sha256Hex(canonicalPayload)
+    const originalCanonical = canonicalJson(payload)
+    const payloadSha256 = await sha256Hex(originalCanonical)
     const argsSha256 = await sha256Hex(canonicalJson(payload.action?.args ?? {}))
+    const canonicalPayload = canonicalJson(redactRequestPayload(payload))
 
     // Evidence anchor from the #97 chain: the requested event's stored content hash.
     const receiptRows = await database
