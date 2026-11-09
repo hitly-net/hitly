@@ -62,7 +62,7 @@ describe('isSecretRequestKey', () => {
     assert.equal(isSecretRequestKey('x-hitly-signature'), true)
   })
 
-  it('folds NFKC fullwidth, zero-width, and common Cyrillic/Greek homoglyphs', () => {
+  it('folds fullwidth, zero-width, and common Cyrillic/Greek homoglyphs', () => {
     assert.equal(isSecretRequestKey('ｓｅｃｒｅｔ'), true, 'fullwidth NFKC')
     assert.equal(isSecretRequestKey('sec\u200Bret'), true, 'zero-width joiner stripped')
     assert.equal(isSecretRequestKey('se\u0441ret'), true, 'Cyrillic s/c lookalike')
@@ -73,6 +73,56 @@ describe('isSecretRequestKey', () => {
     for (const key of ['amount', 'currency', 'action', 'args', 'name', 'runId', 'stepId', 'toolCallId', 'contextMarkdown']) {
       assert.equal(isSecretRequestKey(key), false, key)
     }
+  })
+
+  it('does not redact tokenCount, signatureRequired, tokenType, secretly (dropping SAFE_SUFFIXES or segment match must go red)', () => {
+    for (const key of ['tokenCount', 'signatureRequired', 'tokenType', 'secretly']) {
+      assert.equal(isSecretRequestKey(key), false, key)
+    }
+    assert.equal(isSecretRequestKey('token_count'), false)
+    assert.equal(isSecretRequestKey('TOKEN_COUNT'), false)
+    assert.equal(isSecretRequestKey('signature-required'), false)
+    assert.equal(isSecretRequestKey('token-type'), false)
+  })
+
+  it('keeps the #113 true positives redacted after segment matching', () => {
+    for (const key of [
+      'secret',
+      'secretKey',
+      'AWS_SECRET_ACCESS_KEY',
+      'FOO_SECRET_BAR',
+      'token',
+      'fooTokenValue',
+      'accessToken',
+      'cookie',
+      'cookieHeader',
+      'set-cookie',
+      'signature',
+      'x-hitly-signature',
+      'password',
+      'authorization',
+      'apiKey',
+      'cb_auth_token',
+      'resumeHandle',
+      'resumeUrl',
+      'resumeToken',
+      'reviewToken',
+      'callback_secret',
+    ]) {
+      assert.equal(isSecretRequestKey(key), true, key)
+    }
+  })
+
+  it('folds Armenian lookalikes, schwa, and accented Latin (dropping NFKD+marks or those map entries must go red)', () => {
+    assert.equal(isSecretRequestKey('t\u0585ken'), true, 'Armenian OH o in token')
+    assert.equal(isSecretRequestKey('\u057Decret'), true, 'Armenian SE s in secret')
+    assert.equal(isSecretRequestKey('s\u0259cret'), true, 'Latin schwa in secret')
+    assert.equal(isSecretRequestKey('s\u018Fcret'), true, 'Latin capital schwa in secret')
+    assert.equal(isSecretRequestKey('s\u04D9cret'), true, 'Cyrillic schwa in secret')
+    assert.equal(isSecretRequestKey('s\u00E9cret'), true, 'Latin é in secret (NFKD + strip marks)')
+    assert.equal(isSecretRequestKey('t\u00F2ken'), true, 'Latin ò in token')
+    assert.equal(isSecretRequestKey('s\u0301ecret'), true, 'combining acute on s')
+    assert.equal(isSecretRequestKey('fooT\u0585kenValue'), true, 'Armenian o inside fooTokenValue')
   })
 })
 
@@ -154,6 +204,29 @@ describe('redactRequestPayload', () => {
   it('is idempotent', () => {
     const once = redactRequestPayload({ cb_auth_token: 'x', amount: 1 })
     assert.deepEqual(redactRequestPayload(once), once)
+  })
+
+  it('leaves false-positive keys visible while redacting true positives in the same object', () => {
+    const redacted = redactRequestPayload({
+      tokenCount: 9,
+      signatureRequired: true,
+      tokenType: 'Bearer',
+      secretly: 'visible-not-a-secret-key',
+      amount: 4,
+      token: 'canary-token',
+      secret: 'canary-secret',
+      cookie: 'canary-cookie',
+      signature: 'canary-signature',
+    }) as Record<string, unknown>
+    assert.equal(redacted.tokenCount, 9)
+    assert.equal(redacted.signatureRequired, true)
+    assert.equal(redacted.tokenType, 'Bearer')
+    assert.equal(redacted.secretly, 'visible-not-a-secret-key')
+    assert.equal(redacted.amount, 4)
+    assert.equal(redacted.token, REDACTED)
+    assert.equal(redacted.secret, REDACTED)
+    assert.equal(redacted.cookie, REDACTED)
+    assert.equal(redacted.signature, REDACTED)
   })
 })
 

@@ -4,20 +4,25 @@
  *
  * Applied in `getOriginalRequest` (source) and `getApprovalDetail` (origin /
  * envelope.origin and other envelope fields that can carry callback/resume
- * secrets), and again in the approval-detail UI (display, copy, download) as a
- * second line of defence. Hashes (`payloadHash`, `argsHash`) are computed over
- * the stored original *before* this runs. This module never writes back to the
- * database.
+ * secrets, plus `decisions[].payload` and `resumeResponse`), and again in the
+ * approval-detail UI (display, copy, download) as a second line of defence.
+ * Hashes (`payloadHash`, `argsHash`) are computed over the stored original
+ * *before* this runs. This module never writes back to the database.
  *
  * Strips `cb_auth_token`, resume handles, and secret-like fields. Does not
  * touch account/password logging (`lib/auth-logging.ts`).
+ *
+ * Key matching is segment-aware (camelCase, snake, kebab, SCREAMING) so
+ * `tokenCount` / `signatureRequired` / `tokenType` / `secretly` stay visible.
+ * Folding is NFKD + strip combining marks (é → e), then a small Cyrillic /
+ * Greek / Armenian / schwa homoglyph map. Not the full Unicode TR39 list.
  */
 
 export const REDACTED = '[redacted]'
 
 /**
- * Common Latin lookalikes (Cyrillic / Greek). NFKC already folds fullwidth
- * A–Z. Not the Unicode TR39 confusable list — remaining scripts are a known gap.
+ * Latin lookalikes used against the keys we match. NFKD already folds
+ * fullwidth A–Z and decomposes accents. Remaining scripts are a known gap.
  */
 const HOMOGLYPHS: Record<string, string> = {
   а: 'a',
@@ -58,15 +63,51 @@ const HOMOGLYPHS: Record<string, string> = {
   ι: 'i',
   η: 'n',
   ε: 'e',
+  // Armenian lookalikes (skeleton subset for secret / token / cookie / …).
+  '\u0585': 'o', // օ OH
+  '\u0555': 'o', // Օ
+  '\u057D': 's', // ս SE
+  '\u054D': 's', // Ս
+  '\u0570': 'h', // հ HO
+  '\u0540': 'h', // Հ
+  '\u0582': 'i', // ւ YIWN
+  '\u0584': 'p', // ք KEH
+  '\u0581': 'g', // ց CO
+  '\u056D': 'x', // խ XEH
+  // Schwa (Latin and Cyrillic).
+  '\u0259': 'e', // ə
+  '\u018F': 'e', // Ə
+  '\u04D9': 'e', // ә
+  '\u04D8': 'e', // Ә
+}
+
+/** NFKD + strip marks, then homoglyph map. Keeps separators and case for segmentation. */
+function mappedKey(key: string): string {
+  const stripped = key.normalize('NFKD').replace(/\p{M}/gu, '')
+  let mapped = ''
+  for (const ch of stripped) {
+    mapped += HOMOGLYPHS[ch] ?? ch
+  }
+  return mapped
 }
 
 function foldKey(key: string): string {
-  const nfkc = key.normalize('NFKC')
-  let mapped = ''
-  for (const ch of nfkc) {
-    mapped += HOMOGLYPHS[ch] ?? ch
+  return mappedKey(key).replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+}
+
+/** camelCase / PascalCase / snake / kebab / SCREAMING segments, after folding. */
+function keySegments(key: string): string[] {
+  const parts = mappedKey(key).split(/[^a-zA-Z0-9]+/).filter(Boolean)
+  const segs: string[] = []
+  for (const part of parts) {
+    const split = part
+      .replace(/([a-z0-9])([A-Z])/g, '$1\0$2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1\0$2')
+    for (const piece of split.split('\0')) {
+      if (piece) segs.push(piece.toLowerCase())
+    }
   }
-  return mapped.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+  return segs
 }
 
 const EXACT_SECRET_KEYS = new Set([
@@ -98,20 +139,35 @@ const EXACT_SECRET_KEYS = new Set([
   'signature',
 ])
 
+const SECRET_SEGMENTS = new Set([
+  'token',
+  'secret',
+  'password',
+  'passwd',
+  'cookie',
+  'signature',
+  'apikey',
+  'credential',
+  'credentials',
+  'authorization',
+  'bearer',
+  'privatekey',
+])
+
+/** Last-segment allow-list: tokenCount, signatureRequired, tokenType stay visible. */
+const SAFE_SUFFIXES = new Set(['count', 'required', 'type'])
+
 /** True when this JSON key must never appear with its real value in the reviewer view. */
 export function isSecretRequestKey(key: string): boolean {
   const folded = foldKey(key)
   if (!folded) return false
   if (EXACT_SECRET_KEYS.has(folded)) return true
   if (folded.includes('resumehandle')) return true
-  // tokenValue, *token; secretKey, AWS_SECRET_ACCESS_KEY, *_SECRET_*; cookie / set-cookie; signature
-  if (folded.includes('token')) return true
-  if (folded.includes('secret')) return true
-  if (folded.includes('password') || folded.includes('passwd')) return true
-  if (folded.includes('cookie')) return true
-  if (folded.includes('signature')) return true
-  if (folded.includes('apikey') || folded.includes('privatekey') || folded.includes('credential')) return true
-  return false
+  const segs = keySegments(key)
+  if (segs.length === 0) return false
+  const last = segs[segs.length - 1]!
+  if (SAFE_SUFFIXES.has(last)) return false
+  return segs.some((seg) => SECRET_SEGMENTS.has(seg))
 }
 
 /** Deep-clone `value`, replacing secret-like fields with `[redacted]`. Idempotent. */

@@ -10,7 +10,7 @@ import { decodeTenantJson } from './tenant-crypto'
 import { loadEvidenceReceiptForDisplay } from './evidence'
 import { isSecretRequestKey, redactRequestPayload } from './redact-request-payload'
 
-/** Session GET /api/v1/approvals/:id. Origin/envelope secrets are redacted in the response only. */
+/** Session GET /api/v1/approvals/:id. Origin, envelope, and decision secrets are redacted in the response only. */
 export async function getApprovalDetail(args: {
   approvalId: string
   userId: string
@@ -60,9 +60,10 @@ export async function getApprovalDetail(args: {
     const decodedDecisions = await Promise.all(
       decisions.map(async (row) => ({
         ...row,
-        payload: await decodeTenantJson(args.workspaceId, row.payload),
+        // Response-only: stored decision JSONB is not rewritten.
+        payload: redactRequestPayload(await decodeTenantJson(args.workspaceId, row.payload)),
         resumeResponse: row.resumeResponse
-          ? await decodeTenantJson(args.workspaceId, row.resumeResponse)
+          ? redactRequestPayload(await decodeTenantJson(args.workspaceId, row.resumeResponse))
           : row.resumeResponse,
       })),
     )
