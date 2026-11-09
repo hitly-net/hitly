@@ -11,6 +11,7 @@ import { AnswerForm } from '@/components/answer-form'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
 import { MarkPresented, RefreshOnFocus } from '@/components/work-item-client'
+import { OriginalRequestPanel } from '@/components/original-request-panel'
 import { withAppTenant } from '@/lib/context'
 import { loadOpenedContextRefs } from '@/lib/context-opens'
 import { originFields, envelopeMetadata } from '@/lib/origin'
@@ -273,6 +274,7 @@ export async function WorkItemDetail({
           origin: approval.origin,
         }}
       />
+      <OriginalRequestPanel approvalId={approval.id} />
       {latestDecision ? (
         <section className="mt-8 max-w-2xl">
           <h2 className="text-sm font-semibold">Decision</h2>

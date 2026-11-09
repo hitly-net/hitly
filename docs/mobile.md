@@ -153,6 +153,7 @@ Reviewer routes authenticate with Better Auth: session cookie (web) or `Authoriz
 | `GET` | `/api/v1/inbox` | Session | List items. Query: `scope=all\|open\|closed`, `q`, `projectId` |
 | `GET` | `/api/v1/inbox/summary` | Session | `{ pending, failedResume, decidedToday, projectCount }` |
 | `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct` |
+| `GET` | `/api/v1/approvals/:id/original-request` | Session | Canonical JSON of the stored create-once request (see below) |
 | `POST` | `/api/v1/approvals/:id/decide` | Session | Decide JSON (see *Decide & answer gating*) |
 | `POST` | `/api/v1/approvals/:id/opens` | Session | `{ "ref" }` — record that THIS reviewer opened a context item |
 | `POST` | `/api/v1/approvals/:id/retry-resume` | Session | Existing retry |
@@ -225,6 +226,16 @@ Hosted URL validation: GET this path; require `ok === true` and `product === "hi
   "decisions": []
 }
 ```
+
+### Original request (view / copy)
+
+`GET /api/v1/approvals/:id/original-request` (session auth) returns the **canonical JSON of the stored create-once** `hitl/request/v0` record (host-normalised envelope), its sha256, the canonical args hash and the requested-event evidence anchor. It is **not** the requester's raw wire bytes: key order, whitespace, `\u` escapes and number forms are normalised at ingest. The web detail page shows it under "View original request" with a Copy button that hands out that canonical string without re-serializing.
+
+- **Canonical JSON, unredacted.** The copy is the deterministic `canonicalJson` of the stored record. No secret redaction is applied in the view — changing any character would break off-host verification against the hash. Treat the copy as sensitive.
+- **Same viewers as the approval detail.** A signed-in workspace member with project access can read it. **Unauthenticated requests get `401`** (independent of the id). A session with no workspace, unknown ids, other workspaces and members without project access all get `404`. Project API keys cannot read it (a bare bearer key with no session is refused as `401`). Responses are `Cache-Control: no-store`.
+- **Never logged.** Payload contents are never written to logs. Logs carry only ids and hashes.
+- **Known limitation (ingest precision).** Integers above `Number.MAX_SAFE_INTEGER` lose precision at ingest `JSON.parse` (for example `12345678901234567890` is stored and served as `12345678901234567000`). That is a property of the stored record; this view does not attempt to repair it.
+- **Hash form.** The sha256 shown is hex over Hitly `canonicalJson`, not hitl-spec §5 `b64url(SHA-256(JCS(...)))`. Aligning those is a follow-up.
 
 `openedRefs` lists the gating keys (hitl-spec 3.7) this reviewer has recorded opens
 for; reviewer clients hydrate the must-open checklist from it so re-entering an
