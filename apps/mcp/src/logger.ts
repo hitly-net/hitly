@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
  * reason, answer, response, callback URLs, tokens or host error text.
  */
 export interface LogEntry {
-  event: 'tool' | 'http' | 'listen' | 'auth'
+  event: 'tool' | 'http' | 'listen' | 'auth' | 'rate_limit'
   tool?: string
   requestId?: string
   status?: string | number

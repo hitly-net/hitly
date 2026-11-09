@@ -4,6 +4,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { MAX_BODY_BYTES, MCP_PATH, type McpConfig } from './config.ts'
 import { HttpHostClient, type FetchLike, type HostClient } from './host-client.ts'
 import { clientIdFor, createLogger, type Logger } from './logger.ts'
+import { createRateLimiter } from './rate-limit.ts'
+import { hostHeaderAllowed, isLoopbackBind, originAllowed } from './security.ts'
 import { registerTools } from './tools.ts'
 
 export const SERVER_NAME = 'hitly'
@@ -15,6 +17,8 @@ export interface ServerDeps {
   hostFor?: (apiKey: string) => HostClient
   fetchImpl?: FetchLike
   now?: () => number
+  /** Clock for the rate limiter (tests); defaults to wall time. */
+  rateNow?: () => number
 }
 
 /** Project API keys look like `hitly_<base64url>`; resume tokens (`hitly_resume_…`) are not API keys. */
@@ -73,9 +77,20 @@ export function buildMcpServer(config: McpConfig, apiKey: string, deps: ServerDe
  * Streamable HTTP MCP endpoint at /mcp, stateless (no MCP session state; every POST
  * carries its own API key), so a restart never loses anything: create-once lives on
  * the host. Also serves GET /healthz and the no-op callback sink.
+ *
+ * Musts (MCP spec) enforced here: Origin validation with an operator allowlist, Host
+ * validation while bound to loopback (DNS-rebinding defence), and a per-API-key rate
+ * limit answering 429 with Retry-After.
  */
 export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): Server {
   const logger = deps.logger ?? createLogger()
+  const loopbackBound = isLoopbackBind(config.listenHost)
+  const originPolicy = {
+    allowedOrigins: new Set(config.allowedOrigins),
+    publicUrlOrigin: config.publicUrlOrigin,
+    loopbackBound,
+  }
+  const rateLimiter = createRateLimiter(config.rateLimit, config.rateWindowMs, deps.rateNow ?? Date.now)
   return createServer(async (req, res) => {
     const started = Date.now()
     res.on('finish', () => {
@@ -102,6 +117,19 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         jsonRpcError(res, 405, -32000, 'Method not allowed', { allow: 'POST' })
         return
       }
+      // DNS-rebinding defences run before any credential is handled.
+      if (loopbackBound && !hostHeaderAllowed(req.headers.host)) {
+        req.resume()
+        logger.log({ event: 'auth', status: 'host_denied' })
+        jsonRpcError(res, 403, -32003, 'Forbidden: Host not allowed')
+        return
+      }
+      if (!originAllowed(req.headers.origin, originPolicy)) {
+        req.resume()
+        logger.log({ event: 'auth', status: 'origin_denied' })
+        jsonRpcError(res, 403, -32003, 'Forbidden: Origin not allowed')
+        return
+      }
       const auth = extractApiKey(req.headers.authorization)
       if ('error' in auth) {
         req.resume()
@@ -109,6 +137,14 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         jsonRpcError(res, 401, -32001, auth.error === 'missing' ? 'Missing API key' : 'Invalid API key', {
           'www-authenticate': 'Bearer realm="hitly-mcp"',
         })
+        return
+      }
+      const budget = rateLimiter.tryConsume(clientIdFor(auth.key))
+      if (!budget.ok) {
+        req.resume()
+        const retryAfterSec = Math.max(1, Math.ceil(budget.retryAfterMs / 1000))
+        logger.log({ event: 'rate_limit', clientId: clientIdFor(auth.key), status: 'rate_limited' })
+        jsonRpcError(res, 429, -32005, 'Rate limit exceeded; retry later', { 'retry-after': String(retryAfterSec) })
         return
       }
       const parsed = await readBody(req)
