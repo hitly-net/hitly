@@ -232,4 +232,16 @@ test('hashEvidenceContent is stable with the optional presented/decidedBy/client
     },
   }
   assert.notEqual(await hashEvidenceContent(withDecidedBy), hashBaseline)
+
+  // S2 (hitly#96): the typed reviewer `reason` is oversight content — setting it
+  // changes the hash, staying absent keeps old bytes.
+  const withReason: EvidenceEvent = {
+    ...base,
+    oversight: { ...base.oversight, reason: 'Refund agreed with customer' },
+  }
+  assert.notEqual(await hashEvidenceContent(withReason), hashBaseline)
+  assert.equal(
+    await hashEvidenceContent({ ...base, oversight: { ...base.oversight, reason: undefined } }),
+    hashBaseline,
+  )
 })

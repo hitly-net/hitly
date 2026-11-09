@@ -17,14 +17,27 @@ export interface GateItem {
 }
 
 /**
+ * Draft reasons kept in client memory, keyed by approval, for one mount cycle.
+ * A host refusal (400) bounces through a redirect that remounts the form; the
+ * reviewer's typed reason survives here instead of being lost (hitly#96 S5).
+ */
+const reasonDrafts = new Map<string, string>()
+
+function takeReasonDraft(approvalId: string): string {
+  const draft = reasonDrafts.get(approvalId) ?? ''
+  reasonDrafts.delete(approvalId)
+  return draft
+}
+
+/**
  * Answer form for one work item: the reason prompt (spec 3.6), the must-open
- * checklist (spec 3.7) and the decision buttons. Ported UX patterns from
- * Tourbillon WID-2 (approval-card): reason required for the chosen answer, and
- * answer controls locked while mustOpen items are unopened.
+ * checklist (spec 3.7) and the decision buttons. Ported UX patterns from the
+ * approval-card design: reason required for the chosen answer, and acting answer
+ * controls locked while mustOpen items are unopened (Ignore/dismiss is exempt).
  *
  * The client refuses invalid submits before they leave the form (reason missing,
- * mustOpen skipped). That is presentation only — the host re-validates every
- * submission (see `validateAnswerSubmission` in @hitly/core).
+ * mustOpen skipped on acting answers). That is presentation only — the host
+ * re-validates every submission (see `validateAnswerSubmission` in @hitly/core).
  */
 export function AnswerForm({
   approvalId,
@@ -53,6 +66,9 @@ export function AnswerForm({
   const [opened, setOpened] = useState<Set<string>>(
     () => new Set(gateItems.filter((item) => item.opened).map((item) => item.ref)),
   )
+  // Controlled so a remount after a failed submit can restore the reviewer's
+  // typed reason (S5): seeded from the draft stashed at the last submit attempt.
+  const [reason, setReason] = useState<string>(() => takeReasonDraft(approvalId))
   const [notice, setNotice] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
   const reasonRef = useRef<HTMLTextAreaElement>(null)
@@ -71,9 +87,15 @@ export function AnswerForm({
       if (response.ok && !opened.has(item.ref)) {
         setOpened((current) => new Set(current).add(item.ref))
         router.refresh()
+        return
+      }
+      if (!response.ok) {
+        setNotice(`Could not record the open of "${item.label}" (HTTP ${response.status}). Open it again to retry.`)
       }
     } catch {
-      // Opening still happened locally; the host records the audit trail on submit.
+      // This endpoint is the only place the host records the open; a failed report
+      // leaves the item gated, so ask the reviewer to retry rather than swallow it.
+      setNotice(`Could not record the open of "${item.label}". Open it again to retry.`)
     }
   }
 
@@ -82,19 +104,23 @@ export function AnswerForm({
     const decision = submitter?.getAttribute('value') ?? lastClickedDecision.current
     lastClickedDecision.current = null
     if (!decision) return
-    if (blockedByMustOpen) {
+    // mustOpen gates acting answers only; Ignore/dismiss is exempt (spec 3.7).
+    if (blockedByMustOpen && decision !== 'ignore') {
       event.preventDefault()
       setNotice('Open the required context items before you answer.')
       return
     }
     if (reasonRequired.includes(decision)) {
-      const reason = formRef.current ? String(new FormData(formRef.current).get('reason') ?? '').trim() : ''
-      if (!reason) {
+      if (!reason.trim()) {
         event.preventDefault()
         setNotice(`A reason is required for "${decision}". Add one before submitting.`)
         reasonRef.current?.focus()
+        return
       }
     }
+    // The submit is going to the host: keep the typed reason so a refusal that
+    // bounces back through a redirect remount still shows what was typed (S5).
+    reasonDrafts.set(approvalId, reason)
   }
 
   return (
@@ -116,6 +142,10 @@ export function AnswerForm({
                     rel="noopener noreferrer"
                     className="break-all underline"
                     onClick={() => void recordOpen(item)}
+                    onAuxClick={(event) => {
+                      // Middle-click opens in a new tab without firing onClick; record that too.
+                      if (event.button === 1) void recordOpen(item)
+                    }}
                   >
                     {item.label}
                   </a>
@@ -127,8 +157,8 @@ export function AnswerForm({
             ))}
           </ul>
           <p className="mt-2 text-xs text-zinc-500">
-            Your opens are recorded (item and time) for the audit trail. The answer buttons unlock once every
-            must-open item has been opened.
+            Your opens are recorded (item and time) for the audit trail. Acting answer buttons unlock once every
+            must-open item has been opened; Ignore stays available.
           </p>
         </div>
       ) : null}
@@ -137,6 +167,8 @@ export function AnswerForm({
           name="reason"
           ref={reasonRef}
           rows={3}
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
           placeholder={`Reason (required for: ${reasonRequired.join(', ')})`}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
         />
@@ -183,7 +215,7 @@ function DecisionButtons({
             key={decision}
             name="decision"
             value={decision}
-            disabled={pending || locked}
+            disabled={pending || (locked && decision !== 'ignore')}
             onClick={() => onDecisionClick(decision)}
             className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium capitalize text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
           >

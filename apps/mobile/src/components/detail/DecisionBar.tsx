@@ -30,9 +30,10 @@ export type DecideExtra = {
  *
  * - A decision that lists `reasonRequired` (or the binary default) opens the
  *   reason sheet first; the submit is refused until a non-blank reason is typed.
- * - `mustOpen` context items stay locked until the reviewer opens them. A tap
- *   opens the URL and reports the open via `onOpen` (the opens API) so the
- *   host records the audit trail and the buttons unlock.
+ * - `mustOpen` context items lock acting answers until the reviewer opens them;
+ *   Ignore/dismiss is exempt. A tap opens the URL and reports the open via
+ *   `onOpen` (the opens API) so the host records the audit trail and the
+ *   acting buttons unlock.
  */
 export function DecisionBar({
   allowed,
@@ -85,7 +86,8 @@ export function DecisionBar({
 
   /** Gate one submit the same way the host would: opens first, then a required reason. */
   function gate(decision: Decision, extra?: DecideExtra) {
-    if (locked) {
+    // mustOpen gates acting answers only; Ignore/dismiss is exempt.
+    if (locked && decision !== 'ignore') {
       setError('Open the required context items before you answer.')
       return
     }
@@ -110,7 +112,7 @@ export function DecisionBar({
           ))}
           <Text style={styles.hint}>
             {locked
-              ? 'The answer buttons unlock once every must-open item has been opened. Your opens are recorded (item and time) for the audit trail.'
+              ? 'Acting answer buttons unlock once every must-open item has been opened; Ignore stays available. Your opens are recorded (item and time) for the audit trail.'
               : 'All required context items have been opened.'}
           </Text>
         </View>
@@ -119,7 +121,7 @@ export function DecisionBar({
         {actions.map(([decision]) => (
           <Pressable
             key={decision}
-            disabled={disabled || pending || locked}
+            disabled={disabled || pending || (locked && decision !== 'ignore')}
             onPress={() => {
               if (decision === 'edit') {
                 setEditOpen(true)
@@ -131,7 +133,7 @@ export function DecisionBar({
               }
               gate(decision)
             }}
-            style={[styles.button, (disabled || pending || locked) && styles.disabled]}
+            style={[styles.button, (disabled || pending || (locked && decision !== 'ignore')) && styles.disabled]}
           >
             <Text style={styles.label}>{decision}</Text>
           </Pressable>
@@ -160,10 +162,10 @@ export function DecisionBar({
           onChange={(text) => setReasonFlow((flow) => (flow ? { ...flow, reason: text } : flow))}
           onSubmit={() => {
             if (!reasonFlow) return
-            const reason = reasonFlow.reason.trim()
-            if (!reason) return
-            const { decision, extra } = reasonFlow
-            setReasonFlow(null)
+            if (!reasonFlow.reason.trim()) return
+            const { decision, extra, reason } = reasonFlow
+            // Do NOT clear the flow before deciding: run() clears it on success, and
+            // a refused/failed submit keeps the sheet open with the typed reason (S11).
             void run(decision, { ...extra, reason })
           }}
           onClose={() => setReasonFlow(null)}
