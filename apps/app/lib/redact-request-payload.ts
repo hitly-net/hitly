@@ -2,10 +2,11 @@
  * Reviewer-facing redaction for the create-once request payload (hitly#98)
  * and GET /api/v1/approvals/:id (`getApprovalDetail`).
  *
- * Applied in `getOriginalRequest` (source) and `getApprovalDetail` (origin /
- * envelope.origin and other envelope fields that can carry callback/resume
- * secrets, plus `decisions[].payload` and `resumeResponse`), and again in the
- * approval-detail UI (display, copy, download) as a second line of defence.
+ * Applied in `getOriginalRequest` (source), `getApprovalDetail`, and
+ * `loadWorkItemPage` (origin / envelope.origin and other envelope fields that
+ * can carry callback/resume secrets, plus `decisions[].payload` and
+ * `resumeResponse`), and again in the approval-detail UI (display, copy,
+ * download) as a second line of defence.
  * Hashes (`payloadHash`, `argsHash`) are computed over the stored original
  * *before* this runs. This module never writes back to the database.
  *
@@ -117,6 +118,7 @@ function keySegments(key: string): string[] {
 
 const EXACT_SECRET_KEYS = new Set([
   'cbauthtoken',
+  'callbacksecret',
   'resumehandle',
   'resumeurl',
   'resumetoken',
@@ -124,6 +126,7 @@ const EXACT_SECRET_KEYS = new Set([
   'authorization',
   'password',
   'passwd',
+  'passwordtype',
   'secret',
   'token',
   'apikey',

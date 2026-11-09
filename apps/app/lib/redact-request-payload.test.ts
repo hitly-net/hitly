@@ -28,6 +28,12 @@ describe('isSecretRequestKey', () => {
     }
   })
 
+  it('flags inbox-page leak keys: cb_auth_token, callback_secret, secretKey, password_type', () => {
+    for (const key of ['cb_auth_token', 'callback_secret', 'secretKey', 'password_type']) {
+      assert.equal(isSecretRequestKey(key), true, key)
+    }
+  })
+
   it('flags secretKey (dropping includes("secret") must go red)', () => {
     assert.equal(isSecretRequestKey('secretKey'), true)
     assert.equal(isSecretRequestKey('secret_key'), true)
