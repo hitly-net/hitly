@@ -1,7 +1,8 @@
 /**
  * GET /api/v1/approvals/:id (session path → getApprovalDetail) must not return
  * secrets in origin / envelope.origin (or other envelope fields that can carry
- * callback/resume secrets). Real Postgres, not mocked.
+ * callback/resume secrets), nor in decisions[].payload / resumeResponse.
+ * Real Postgres, not mocked.
  *
  * Dropping the redactRequestPayload calls in getApprovalDetail must go red.
  *
@@ -25,6 +26,7 @@ import {
   projectMemberships,
   projectApiKeys,
   approvals,
+  decisionRecords,
 } from '@hitly/db/schema'
 import { ingestApproval } from './approvals'
 import { getApprovalDetail } from './approval-detail'
@@ -69,9 +71,29 @@ const CANARY = {
   setCookie: ['detail', 'canary', 'set-cookie'].join('-'),
   signature: ['detail', 'canary', 'signature'].join('-'),
   resumeUrl: 'https://origin.example/resume?token=detail-canary-url',
+  passwordType: ['detail', 'canary', 'password-type'].join('-'),
+  secretCount: ['detail', 'canary', 'secret-count'].join('-'),
+  apiKeyRequired: ['detail', 'canary', 'apikey-required'].join('-'),
+  authTokenType: ['detail', 'canary', 'auth-token-type'].join('-'),
+  accessTokenType: ['detail', 'canary', 'access-token-type'].join('-'),
+  clientSecretType: ['detail', 'canary', 'client-secret-type'].join('-'),
+  cookieRequired: ['detail', 'canary', 'cookie-required'].join('-'),
+}
+
+const DECISION_CANARY = {
+  payloadAuth: ['detail', 'canary', 'decision-payload'].join('-'),
+  payloadNested: ['detail', 'canary', 'decision-nested'].join('-'),
+  resumeToken: ['detail', 'canary', 'resume-response-token'].join('-'),
+  resumeCookie: ['detail', 'canary', 'resume-response-cookie'].join('-'),
+  passwordType: ['detail', 'canary', 'decision-password-type'].join('-'),
+  secretCount: ['detail', 'canary', 'decision-secret-count'].join('-'),
+  accessTokenType: ['detail', 'canary', 'decision-access-token-type'].join('-'),
+  cookieRequired: ['detail', 'canary', 'decision-cookie-required'].join('-'),
+  authTokenType: ['detail', 'canary', 'decision-auth-token-type'].join('-'),
 }
 
 const ALL_CANARIES = Object.values(CANARY)
+const ALL_DECISION_CANARIES = Object.values(DECISION_CANARY)
 
 function buildPayload(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -185,6 +207,13 @@ async function plantCanaries(approvalId: string) {
     'set-cookie': CANARY.setCookie,
     signature: CANARY.signature,
     nested: { callback_secret: CANARY.nested },
+    password_type: CANARY.passwordType,
+    secret_count: CANARY.secretCount,
+    apiKey_required: CANARY.apiKeyRequired,
+    authTokenType: CANARY.authTokenType,
+    access_token_type: CANARY.accessTokenType,
+    clientSecretType: CANARY.clientSecretType,
+    cookie_required: CANARY.cookieRequired,
   }
 
   const plantedEnvelope = {
@@ -212,8 +241,13 @@ async function plantCanaries(approvalId: string) {
       cb_auth_token: CANARY.cbAuth,
       _meta: { tokenValue: CANARY.tokenValue },
     },
-    _meta: { secretKey: CANARY.secretKey },
-    details: { ...(asRecord(origin.details) as Record<string, string>), cb_auth_token: CANARY.cbAuth },
+    _meta: { secretKey: CANARY.secretKey, cookie_required: CANARY.cookieRequired },
+    details: {
+      ...(asRecord(origin.details) as Record<string, string>),
+      cb_auth_token: CANARY.cbAuth,
+      password_type: CANARY.passwordType,
+      access_token_type: CANARY.accessTokenType,
+    },
   }
 
   await db
@@ -249,8 +283,19 @@ test('GET /api/v1/approvals/:id source: session path uses getApprovalDetail; loa
   assert.match(detailSrc, /redactRequestPayload/, 'getApprovalDetail must reuse the shared helper (not a copy)')
   assert.match(code(detailSrc), /redactRequestPayload\(\{/, 'must redact the envelope view')
   assert.match(code(detailSrc), /redactRequestPayload\(origin\)/, 'must redact origin (dropping this call must go red)')
+  assert.match(
+    code(detailSrc),
+    /payload:\s*redactRequestPayload\(/,
+    'must redact decisions[].payload (dropping this call must go red)',
+  )
+  assert.match(
+    code(detailSrc),
+    /row\.resumeResponse\s*\?\s*redactRequestPayload\(/,
+    'must redact resumeResponse (dropping this call must go red)',
+  )
   assert.doesNotMatch(code(detailSrc), /encodeTenantJson/, 'redaction must not write envelope/origin back')
   assert.doesNotMatch(code(detailSrc), /\.update\(approvals\)/, 'getApprovalDetail must not update the stored row')
+  assert.doesNotMatch(code(detailSrc), /\.update\(decisionRecords\)/, 'getApprovalDetail must not update decision rows')
 })
 
 test('getApprovalDetail redacts origin, envelope.origin, args, _meta; stored bytes and hashes stay put', async () => {
@@ -299,6 +344,13 @@ test('getApprovalDetail redacts origin, envelope.origin, args, _meta; stored byt
   assert.equal(served.envelope.action?.args?.cookie, REDACTED)
   assert.equal(served.envelope.action?.args?.['set-cookie'], REDACTED)
   assert.equal(served.envelope.action?.args?.signature, REDACTED)
+  assert.equal(served.envelope.action?.args?.password_type, REDACTED)
+  assert.equal(served.envelope.action?.args?.secret_count, REDACTED)
+  assert.equal(served.envelope.action?.args?.apiKey_required, REDACTED)
+  assert.equal(served.envelope.action?.args?.authTokenType, REDACTED)
+  assert.equal(served.envelope.action?.args?.access_token_type, REDACTED)
+  assert.equal(served.envelope.action?.args?.clientSecretType, REDACTED)
+  assert.equal(served.envelope.action?.args?.cookie_required, REDACTED)
   assert.equal(served.envelope.origin?.resumeHandle, REDACTED)
   assert.equal(served.origin.resumeHandle, REDACTED)
   assert.equal(served.origin.plugin, 'mastra')
@@ -324,4 +376,94 @@ test('getApprovalDetail redacts origin, envelope.origin, args, _meta; stored byt
   assert.equal(original.payloadHash, payloadHashBefore)
   assert.equal(original.canonicalPayload, canonicalJson(redactRequestPayload(storedEnvelope)))
   assertNoCanary('original-request canonicalPayload', original.canonicalPayload)
+})
+
+async function plantDecisionCanaries(approvalId: string) {
+  const plantedPayload = {
+    decision: 'accept',
+    amount: 3,
+    cb_auth_token: DECISION_CANARY.payloadAuth,
+    secretKey: DECISION_CANARY.payloadNested,
+    nested: { accessToken: DECISION_CANARY.payloadNested },
+    password_type: DECISION_CANARY.passwordType,
+    access_token_type: DECISION_CANARY.accessTokenType,
+    cookie_required: DECISION_CANARY.cookieRequired,
+  }
+  const plantedResume = {
+    ok: true,
+    accessToken: DECISION_CANARY.resumeToken,
+    cookie: DECISION_CANARY.resumeCookie,
+    signature: DECISION_CANARY.resumeCookie,
+    secret_count: DECISION_CANARY.secretCount,
+    authTokenType: DECISION_CANARY.authTokenType,
+  }
+  await db.insert(decisionRecords).values({
+    id: newId('dec').slice(0, 36),
+    workspaceId: workspaceA.id,
+    approvalId,
+    actorUserId: userReviewerA.id,
+    decision: 'accept',
+    payload: await encodeTenantJson(workspaceA.id, plantedPayload),
+    resumeError: null,
+    resumeResponse: await encodeTenantJson(workspaceA.id, plantedResume),
+  })
+}
+
+async function storedDecisionBytes(approvalId: string) {
+  const result = await client.query<{ payload: string; resume_response: string }>(
+    'select payload::text as payload, resume_response::text as resume_response from decision_records where approval_id = $1',
+    [approvalId],
+  )
+  return result.rows[0]!
+}
+
+test('getApprovalDetail redacts decisions[].payload and resumeResponse; stored decision bytes stay put', async () => {
+  const approval = await ingest()
+  await plantDecisionCanaries(approval.id)
+
+  const before = await storedDecisionBytes(approval.id)
+  for (const canary of ALL_DECISION_CANARIES) {
+    assert.ok(
+      before.payload.includes(canary) || before.resume_response.includes(canary),
+      `planted canary ${canary} must be in stored decision payload or resume_response`,
+    )
+  }
+
+  const detail = await getApprovalDetail({
+    approvalId: approval.id,
+    userId: userReviewerA.id,
+    workspaceId: workspaceA.id,
+    workspaceRole: 'admin',
+  })
+  assert.ok(detail.ok, `expected ok, got ${JSON.stringify(detail)}`)
+
+  const body = JSON.stringify(detail)
+  for (const canary of ALL_DECISION_CANARIES) {
+    assert.equal(body.includes(canary), false, `getApprovalDetail JSON must not contain ${canary}`)
+  }
+  assert.ok(body.includes(REDACTED), 'redacted view should mark secrets')
+
+  const served = detail as {
+    decisions: Array<{
+      payload: Record<string, unknown>
+      resumeResponse: Record<string, unknown> | null
+    }>
+  }
+  assert.equal(served.decisions.length, 1)
+  assert.equal(served.decisions[0]?.payload.amount, 3)
+  assert.equal(served.decisions[0]?.payload.decision, 'accept')
+  assert.equal(served.decisions[0]?.payload.cb_auth_token, REDACTED)
+  assert.equal(served.decisions[0]?.payload.secretKey, REDACTED)
+  assert.equal(served.decisions[0]?.payload.password_type, REDACTED)
+  assert.equal(served.decisions[0]?.payload.access_token_type, REDACTED)
+  assert.equal(served.decisions[0]?.payload.cookie_required, REDACTED)
+  assert.equal(served.decisions[0]?.resumeResponse?.ok, true)
+  assert.equal(served.decisions[0]?.resumeResponse?.accessToken, REDACTED)
+  assert.equal(served.decisions[0]?.resumeResponse?.cookie, REDACTED)
+  assert.equal(served.decisions[0]?.resumeResponse?.secret_count, REDACTED)
+  assert.equal(served.decisions[0]?.resumeResponse?.authTokenType, REDACTED)
+
+  const after = await storedDecisionBytes(approval.id)
+  assert.equal(after.payload, before.payload, 'stored decision payload must be unchanged')
+  assert.equal(after.resume_response, before.resume_response, 'stored resume_response must be unchanged')
 })

@@ -107,9 +107,15 @@ function asOrigin(value: Record<string, unknown>): OriginRef {
 export const EVIDENCE_INCLUDE_ACTOR_DISPLAY = true
 
 /** Resolve the deciding human into the hitl-spec `{kind,id,display?}` actor shape (spec 4.1/4.2). */
-async function resolveReviewerActor(database: ReturnType<typeof requireDb>, actorUserId: string): Promise<EvidenceActor> {
+async function resolveReviewerActor(
+  database: ReturnType<typeof requireDb>,
+  actorUserId: string,
+): Promise<EvidenceActor | undefined> {
+  // S97-S4: never emit `decidedBy.id: ''` after the reviewer row is gone
+  // (`decision_records.actor_user_id` is ON DELETE SET NULL).
+  if (!actorUserId) return undefined
   let display: string | undefined
-  if (EVIDENCE_INCLUDE_ACTOR_DISPLAY && actorUserId) {
+  if (EVIDENCE_INCLUDE_ACTOR_DISPLAY) {
     const rows = await database
       .select({ name: users.name, email: users.email })
       .from(users)
@@ -119,6 +125,51 @@ async function resolveReviewerActor(database: ReturnType<typeof requireDb>, acto
     display = person?.name || person?.email || undefined
   }
   return { kind: 'human', id: actorUserId, ...(display ? { display } : {}) }
+}
+
+const EVIDENCE_CHANNELS = new Set<EvidenceClient['channel']>(['web', 'mobile', 'api'])
+const EVIDENCE_ACTOR_KINDS = new Set<EvidenceActor['kind']>(['human', 'group', 'service'])
+
+/** Snapshot stored on `decision_records.client` (tenant-encrypted) so retry reuses actor + device. */
+type StoredDecisionContext = {
+  client?: EvidenceClient
+  actor?: EvidenceActor
+}
+
+function asEvidenceClient(value: unknown): EvidenceClient | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (!EVIDENCE_CHANNELS.has(raw.channel as EvidenceClient['channel'])) return undefined
+  const client: EvidenceClient = { channel: raw.channel as EvidenceClient['channel'] }
+  if (raw.platform === 'ios' || raw.platform === 'android') client.platform = raw.platform
+  if (typeof raw.appVersion === 'string' && raw.appVersion) client.appVersion = raw.appVersion
+  if (typeof raw.userAgent === 'string' && raw.userAgent) client.userAgent = raw.userAgent
+  return client
+}
+
+function asEvidenceActor(value: unknown): EvidenceActor | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (!EVIDENCE_ACTOR_KINDS.has(raw.kind as EvidenceActor['kind'])) return undefined
+  if (typeof raw.id !== 'string' || !raw.id) return undefined
+  return {
+    kind: raw.kind as EvidenceActor['kind'],
+    id: raw.id,
+    ...(typeof raw.display === 'string' && raw.display ? { display: raw.display } : {}),
+  }
+}
+
+function decodeStoredDecisionContext(raw: unknown): StoredDecisionContext {
+  if (!raw || typeof raw !== 'object') return {}
+  const obj = raw as Record<string, unknown>
+  // Pre-S4 rows stored a bare EvidenceClient (`{channel, platform?, ...}`).
+  if (typeof obj.channel === 'string' && !('client' in obj) && !('actor' in obj)) {
+    return { client: asEvidenceClient(obj) }
+  }
+  return {
+    client: asEvidenceClient(obj.client),
+    actor: asEvidenceActor(obj.actor),
+  }
 }
 
 /**
@@ -216,6 +267,7 @@ export async function markApprovalPresented(args: {
     try {
       const latest = await loadLatestReceipt(approval.id, workspaceId)
       const actor = await resolveReviewerActor(database, args.actorUserId)
+      if (!actor) return { presentedAt: presentedAt.toISOString() }
       const presentedEvent = await buildPresentedEvent({
         approvalId: approval.id,
         envelope,
@@ -605,6 +657,8 @@ export async function decideApproval(args: {
   client?: EvidenceClient
   /** Set by retryResume: marks the audit event only, never the evidence oversight. */
   retry?: boolean
+  /** Set by retryResume: reuse the snapshotted actor (frozen display, no empty id). */
+  decidedBy?: EvidenceActor
 }) {
   const workspaceId = args.workspaceId ?? requireTenantWorkspaceId()
   return withTenant(workspaceId, async () => {
@@ -697,7 +751,7 @@ export async function decideApproval(args: {
     }
 
     let latest = await loadLatestReceipt(approval.id, workspaceId)
-    const reviewerActor = await resolveReviewerActor(database, args.actorUserId)
+    const reviewerActor = args.decidedBy ?? (await resolveReviewerActor(database, args.actorUserId))
 
     // Implicit `presented` on decide (hitl-spec 5.2): an API-only decide, an old
     // mobile build, or a submit that beats the mark-presented effect still records
@@ -709,6 +763,7 @@ export async function decideApproval(args: {
     if (
       !args.retry &&
       !approval.presentedAt &&
+      reviewerActor &&
       (await mayRecordPresented(database, approval.id, approval.status, workspaceId))
     ) {
       const implicitPresentedAt = new Date()
@@ -926,16 +981,21 @@ export async function decideApproval(args: {
       }
     }
 
+    const storedContext: StoredDecisionContext = {
+      ...(args.client ? { client: args.client } : {}),
+      ...(reviewerActor ? { actor: reviewerActor } : {}),
+    }
     await database.insert(decisionRecords).values({
       id: newId('dec').slice(0, 36),
       workspaceId,
       approvalId: approval.id,
-      actorUserId: args.actorUserId,
+      actorUserId: args.actorUserId || null,
       decision: args.payload.decision,
       payload: await encodeTenantJson(workspaceId, args.payload as unknown as Record<string, unknown>),
-      client: args.client
-        ? await encodeTenantJson(workspaceId, args.client as unknown as Record<string, unknown>)
-        : null,
+      client:
+        storedContext.client || storedContext.actor
+          ? await encodeTenantJson(workspaceId, storedContext as unknown as Record<string, unknown>)
+          : null,
       resumeError,
       resumeResponse: resumeResponse
         ? await encodeTenantJson(workspaceId, resumeResponse as unknown as Record<string, unknown>)
@@ -1136,18 +1196,19 @@ export async function retryResume(args: { approvalId: string; workspaceId?: stri
       return { error: 'No decision to retry', status: 409 as const }
     }
     const payload = (await decodeTenantJson(workspaceId, record.payload)) as unknown as DecisionPayload
-    // A retry must not relabel the original decider's device: reuse the STORED
-    // client and actor. The retry itself is marked in the project event only
-    // (payload.retry), never in oversight.client.
-    const storedClient = record.client
-      ? ((await decodeTenantJson(workspaceId, record.client)) as unknown as EvidenceClient)
-      : undefined
+    // A retry must not relabel the original decider's device or display: reuse
+    // the STORED client and actor. The retry itself is marked in the project
+    // event only (payload.retry), never in oversight.client.
+    const stored = record.client
+      ? decodeStoredDecisionContext(await decodeTenantJson(workspaceId, record.client))
+      : {}
     return decideApproval({
       approvalId: approval.id,
       actorUserId: record.actorUserId ?? '',
       payload,
       workspaceId,
-      client: storedClient,
+      client: stored.client,
+      ...(stored.actor ? { decidedBy: stored.actor } : {}),
       retry: true,
     })
   })

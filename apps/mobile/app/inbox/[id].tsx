@@ -18,6 +18,7 @@ import {
   mergeOpenedRefs,
   shouldRecordOpen,
 } from '../../src/components/detail/open-helpers'
+import { shouldRecordPresented } from '../../src/components/detail/presented-trigger'
 import { useAttention } from '../../src/providers/AttentionProvider'
 import type { ApprovalDetail } from '../../src/types'
 
@@ -69,8 +70,7 @@ export default function WorkItemDetailScreen() {
   // lost request here cannot leave the evidence chain without a `presented`.
   const presentedForRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!client || !detail || !detail.canAct) return
-    if (presentedForRef.current === detail.id) return
+    if (!client || !detail || !shouldRecordPresented(detail, presentedForRef.current)) return
     presentedForRef.current = detail.id
     void client.presented(detail.id).catch(() => {
       // best-effort only

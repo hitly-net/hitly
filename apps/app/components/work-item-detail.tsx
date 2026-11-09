@@ -10,7 +10,7 @@ import { ContextMarkdown } from '@/components/context-markdown'
 import { AnswerForm } from '@/components/answer-form'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
-import { MarkPresented, RefreshOnFocus } from '@/components/work-item-client'
+import { MarkPresentedIfCanAct, RefreshOnFocus } from '@/components/work-item-client'
 import { EditedArgsPanel, editedArgsFromPayload, omitEditedArgs } from '@/components/edited-args-panel'
 import { OriginalRequestPanel } from '@/components/original-request-panel'
 import { withAppTenant } from '@/lib/context'
@@ -142,7 +142,7 @@ export async function WorkItemDetail({
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
       <RefreshOnFocus />
-      {canAct ? <MarkPresented approvalId={approval.id} /> : null}
+      <MarkPresentedIfCanAct canAct={canAct} approvalId={approval.id} />
       <div className="flex flex-wrap items-center gap-2">
         <PluginMark plugin={approval.plugin as PluginId} size="md" className="h-8 w-8" />
         <Badge
