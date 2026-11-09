@@ -22,6 +22,8 @@ const okResult: OriginalRequestOk = {
   canonicalPayload: PAYLOAD,
   payloadSha256: 'abc123',
   argsSha256: 'def456',
+  payloadHash: 'ghi789',
+  argsHash: 'jkl012',
 }
 
 function ctx(): ApiTenantOk {

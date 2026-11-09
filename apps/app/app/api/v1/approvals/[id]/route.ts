@@ -9,13 +9,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (apiKey) {
     const origin = await getApprovalForOrigin({ apiKey, approvalId: id })
     if (origin.ok) {
-      return NextResponse.json({
-        id: origin.id,
-        status: origin.status,
-        decision: origin.decision,
-        response: origin.response,
-        presentedAt: origin.presentedAt,
-      })
+      const { ok: _ok, ...body } = origin
+      void _ok
+      return NextResponse.json(body)
     }
     if (origin.status !== 401) {
       return NextResponse.json({ error: origin.error }, { status: origin.status })

@@ -1,13 +1,35 @@
 import { NextResponse } from 'next/server'
 import { and, eq } from 'drizzle-orm'
 import { approvals } from '@hitly/db/schema'
-import { cancelApproval } from '@/lib/approvals'
+import { cancelApproval, cancelApprovalAsRequester } from '@/lib/approvals'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { withApiTenant } from '@/lib/api-session'
 import { requireDb } from '@/lib/tenant'
 
-export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
+async function readReason(request: Request): Promise<string | undefined> {
+  const text = await request.text().catch(() => '')
+  if (!text.trim()) return undefined
+  try {
+    const body = JSON.parse(text) as { reason?: unknown }
+    return typeof body?.reason === 'string' ? body.reason : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params
+
+  // Requester cancel with the project API key that created the request.
+  // A Bearer value that is not an API key falls through to the session path
+  // (reviewer Bearer session tokens on mobile).
+  const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+  if (apiKey) {
+    const result = await cancelApprovalAsRequester({ apiKey, approvalId: id, reason: await readReason(request) })
+    if (result.ok) return NextResponse.json({ id, status: result.status, decision: 'cancel', by: 'requester' })
+    if (result.status !== 401) return NextResponse.json({ error: result.error }, { status: result.status })
+  }
+
   return withApiTenant(async (ctx) => {
     const database = requireDb()
     const rows = await database
