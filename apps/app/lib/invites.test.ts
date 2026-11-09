@@ -12,7 +12,7 @@ process.env.HITLY_SIGNUP_ENABLED = '0'
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { after, before, beforeEach, describe, it } from 'node:test'
+import { after, before, beforeEach, describe, it, mock } from 'node:test'
 import { and, eq, inArray, like } from 'drizzle-orm'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -30,7 +30,11 @@ import {
   INVITE_TTL_DAYS,
   INVITE_TTL_MS,
   acceptInviteAsUser,
+  acceptInviteWithNewAccount,
   buildInviteUrl,
+  claimInvite,
+  lookupInvite,
+  releaseInvite,
   createAndSendWorkspaceInvite,
   generateInviteToken,
   hashInviteToken,
@@ -553,6 +557,80 @@ describe('migration', () => {
     const migration = fs.readFileSync(path.join(dir, `${entry.tag}.sql`), 'utf8')
     assert.match(migration, /ADD COLUMN "token_hash" varchar\(64\)/)
     assert.match(migration, /CREATE UNIQUE INDEX "invites_token_hash_idx"/)
+  })
+})
+
+describe('release after the hook consumed the token', () => {
+  it('puts the invite back when the user insert fails after the hook claimed it, and the same link then works', async () => {
+    const address = email('dbfail')
+    const token = await invite(address)
+    let claimedInHook = false
+    // A 5000-character name passes Better Auth's own checks and the
+    // user.create.before hook (which consumes the token), then fails the
+    // users insert (varchar(255)): a real DB error after the claim.
+    await assert.rejects(() =>
+      acceptInviteWithNewAccount(token, async (invited) => {
+        try {
+          await authApi.signUpEmail({ body: { email: invited, name: 'n'.repeat(5000), password: 'a-strong-password' } })
+        } finally {
+          // Observed from inside the failing attempt: the hook had consumed the invite.
+          claimedInHook = Boolean((await inviteRow(token))?.acceptedAt)
+        }
+        return { userId: 'unreachable', result: null }
+      }),
+    )
+    assert.equal(claimedInHook, true, 'the failure happened after the hook claimed the token')
+    const row = await inviteRow(token)
+    assert.equal(row?.acceptedAt, null, 'accepted_at is NULL again')
+    assert.equal(await userByEmail(address), null, 'no user was created')
+
+    const retry = await accept({ token, name: 'Retry After DB Error', password: 'a-strong-password' })
+    assert.equal(retry.status, 200)
+    const user = await userByEmail(address)
+    assert.ok(user)
+    assert.ok(await membership(user.id))
+    assert.ok((await inviteRow(token))?.acceptedAt)
+  })
+
+  it('release is compare-and-set: a stale claim cannot reopen an invite that a later accept owns', async () => {
+    const address = email('cas')
+    const token = await invite(address)
+    const stale = await claimInvite(database, token, address)
+    assert.ok(stale?.acceptedAt)
+    // A different, later claim now owns the invite.
+    const later = new Date(stale.acceptedAt.getTime() + 5_000)
+    await database.update(invites).set({ acceptedAt: later }).where(eq(invites.id, stale.id))
+    await releaseInvite(database, stale)
+    assert.equal((await inviteRow(token))?.acceptedAt?.getTime(), later.getTime(), 'later owner untouched')
+
+    // The owner's own release does reopen it.
+    await releaseInvite(database, { ...stale, acceptedAt: later })
+    assert.equal((await inviteRow(token))?.acceptedAt, null)
+  })
+})
+
+describe('expiry boundary', () => {
+  it('an invite is expired at exactly its expiry instant, valid 1 ms before', async () => {
+    const address = email('boundary')
+    const token = await invite(address)
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000)
+    await database.update(invites).set({ expiresAt }).where(eq(invites.tokenHash, hashInviteToken(token)))
+    const at = (ms: number) => mock.method(Date, 'now', () => ms)
+
+    const before = at(expiresAt.getTime() - 1)
+    try {
+      assert.equal((await lookupInvite(token)).ok, true)
+    } finally {
+      before.mock.restore()
+    }
+    const exact = at(expiresAt.getTime())
+    try {
+      const result = await lookupInvite(token)
+      assert.equal(result.ok, false)
+      assert.equal(!result.ok && result.reason, 'expired')
+    } finally {
+      exact.mock.restore()
+    }
   })
 })
 
