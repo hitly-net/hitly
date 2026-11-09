@@ -846,6 +846,40 @@ describe('pinned gRPC targets', () => {
   })
 })
 
+/** Deterministic clock for connectInOrder remaining-budget tests. No wall time. */
+function fakeConnectClock(start = 0) {
+  let now = start
+  const timers = new Map<number, { at: number; fn: () => void }>()
+  let nextId = 1
+  async function drainMicrotasks() {
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+  }
+  return {
+    now: () => now,
+    scheduleTimeout: (fn: () => void, ms: number) => {
+      const id = nextId++
+      timers.set(id, { at: now + ms, fn })
+      return () => {
+        timers.delete(id)
+      }
+    },
+    async runUntilIdle() {
+      await drainMicrotasks()
+      for (;;) {
+        if (timers.size === 0) {
+          await drainMicrotasks()
+          if (timers.size === 0) return
+        }
+        const next = [...timers.entries()].sort((a, b) => a[1].at - b[1].at)[0]!
+        timers.delete(next[0])
+        now = next[1].at
+        next[1].fn()
+        await drainMicrotasks()
+      }
+    },
+  }
+}
+
 describe('connectInOrder', () => {
   it('tries addresses in order and stops at the first that opens', async () => {
     const tried: string[] = []
@@ -878,23 +912,27 @@ describe('connectInOrder', () => {
 
   it('gives each attempt no more than the time left', async () => {
     const timeouts: number[] = []
-    const started = Date.now()
+    const clock = fakeConnectClock()
+    const pending = connectInOrder(
+      ['192.0.2.1', '192.0.2.2', '192.0.2.3'],
+      (_address, timeoutMs) => {
+        timeouts.push(timeoutMs)
+        return new Promise<never>(() => {})
+      },
+      {
+        connectTimeoutMs: 300,
+        totalTimeoutMs: 450,
+        host: 'multi.example',
+        now: clock.now,
+        scheduleTimeout: clock.scheduleTimeout,
+      },
+    )
+    await clock.runUntilIdle()
     await assert.rejects(
-      connectInOrder(
-        ['192.0.2.1', '192.0.2.2', '192.0.2.3'],
-        (_address, timeoutMs) => {
-          timeouts.push(timeoutMs)
-          return new Promise<never>(() => {})
-        },
-        { connectTimeoutMs: 300, totalTimeoutMs: 450, host: 'multi.example' },
-      ),
+      pending,
       (e: DestinationCheckError) => e.code === 'timeout' && e.message.includes('multi.example'),
     )
-    assert.ok(Date.now() - started < 800)
-    // A third attempt can start when only a millisecond or so of budget is left.
-    assert.ok(timeouts.length === 2 || (timeouts.length === 3 && timeouts[2] <= 5), `attempts: ${timeouts.join(', ')}`)
-    assert.equal(timeouts[0], 300)
-    assert.ok(timeouts[1] <= 150)
+    assert.deepEqual(timeouts, [300, 150])
   })
 
   it('reports the last error when no address opens', async () => {
