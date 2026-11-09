@@ -155,6 +155,8 @@ export function envelopeMetadata(
   origin: OriginRef,
 ): Record<string, unknown> {
   const fromEnvelope = asRecord(envelope.metadata)
-  if (Object.keys(fromEnvelope).length > 0) return fromEnvelope
-  return asRecord(origin.resumeHandle?.metadata)
+  // Credential-shaped keys (cb_auth_token et al.) must never reach a reviewer
+  // projection through the metadata bag, whatever path it was stored through.
+  if (Object.keys(fromEnvelope).length > 0) return stripOriginSecrets(fromEnvelope)
+  return stripOriginSecrets(asRecord(origin.resumeHandle?.metadata))
 }

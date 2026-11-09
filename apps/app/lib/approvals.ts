@@ -8,6 +8,7 @@ import {
   originResumeError,
   validateAnswerSubmission,
   validateRequestGating,
+  validateTypedAnswer,
   type ApprovalEnvelope,
   type ChannelType,
   type Decision,
@@ -28,6 +29,8 @@ import { logProjectEvent } from './events'
 import { notifyAssignee } from './notify'
 import { parseRuleActions, parseRuleMatch, ruleMatches } from './rules'
 import { ensureProjectResumeSecret } from './resume-secret'
+import { ensureProjectWebhookSecret } from './webhook-secret'
+import { deliverApprovalLifecycleEvent } from './lifecycle-delivery'
 import { newId } from './ids'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
@@ -242,6 +245,19 @@ export async function markApprovalPresented(args: {
         message: `Evidence sink append failed (presented): ${error instanceof Error ? error.message : 'unknown'}`,
       })
     }
+
+    // Opt-in HTTP lifecycle callback (item 6): no-op unless the request opted
+    // in via lifecycleEvents at ingest; the default stays a single final POST.
+    await deliverApprovalLifecycleEvent({
+      approval: {
+        id: approval.id,
+        projectId: approval.projectId,
+        plugin: approval.plugin,
+        origin: approval.origin,
+      },
+      workspaceId,
+      type: 'presented',
+    })
 
     return { presentedAt: presentedAt.toISOString() }
   })
@@ -667,6 +683,17 @@ export async function decideApproval(args: {
           message: `Evidence sink append failed (presented): ${error instanceof Error ? error.message : 'unknown'}`,
         })
       }
+      // Opt-in HTTP lifecycle callback for the implicit first-show (item 6).
+      await deliverApprovalLifecycleEvent({
+        approval: {
+          id: approval.id,
+          projectId: approval.projectId,
+          plugin: approval.plugin,
+          origin: approval.origin,
+        },
+        workspaceId,
+        type: 'presented',
+      })
     }
 
     let decidedEventId: string | undefined
@@ -727,6 +754,9 @@ export async function decideApproval(args: {
     if (args.payload.decision !== 'ignore') {
       try {
         const secured = project ? await ensureProjectResumeSecret(project) : null
+        // Callbacks sign with the DEDICATED webhook key (item 9), provisioned
+        // on demand; the resume secret stays reserved for origin polls.
+        const webhooked = secured ? await ensureProjectWebhookSecret(secured.project) : null
         const originResponse = await getPlugin(approval.plugin).resume(
           {
             ...origin,
@@ -740,7 +770,9 @@ export async function decideApproval(args: {
             ...args.payload,
             editedArgs: mergedArgs !== envelope.action.args ? mergedArgs : undefined, // Send merged args to origin
           },
-          secured ? { plugin: approval.plugin, ...secured.project.credentials } : undefined,
+          secured
+            ? { plugin: approval.plugin, ...(webhooked ? webhooked.project.credentials : secured.project.credentials) }
+            : undefined,
         )
         if (originResponse) resumeResponse = originResponse
         const failed = originResumeError(originResponse)
@@ -891,6 +923,17 @@ export async function cancelApproval(args: { approvalId: string; actorUserId: st
       type: 'cancelled',
       message: 'Force cancelled without resuming the origin',
       payload: { decision: 'cancel', previousStatus: approval.status },
+    })
+    // Opt-in HTTP lifecycle callback (item 6): no-op unless the request opted in.
+    await deliverApprovalLifecycleEvent({
+      approval: {
+        id: approval.id,
+        projectId: approval.projectId,
+        plugin: approval.plugin,
+        origin: approval.origin,
+      },
+      workspaceId,
+      type: 'cancelled',
     })
     const updated = await loadApproval(approval.id, workspaceId)
     return { approval: updated ?? approval, status: 'cancelled' as const }
@@ -1102,7 +1145,14 @@ export function parseDecisionBody(body: Record<string, unknown>): DecisionPayloa
     const hasEditedArgs = body.editedArgs && typeof body.editedArgs === 'object'
     if (!hasEditedArgs) return null
   }
-  
+
+  // Typed answer (ask_user, hitl-spec 7): carried verbatim into the decision
+  // payload and the origin callback (`type: 'answered'`). A present-but-malformed
+  // answer is refused as an invalid decision (400) - it must NEVER be silently
+  // dropped, or the reviewer's answer would vanish from the audit trail.
+  const answerError = validateTypedAnswer(body.answer)
+  if (answerError) return null
+
   return {
     decision,
     editedArgs:
@@ -1111,6 +1161,7 @@ export function parseDecisionBody(body: Record<string, unknown>): DecisionPayloa
     reason: typeof body.reason === 'string' ? body.reason : undefined,
     editReason: typeof body.editReason === 'string' ? body.editReason : undefined,
     editReasonText: typeof body.editReasonText === 'string' ? body.editReasonText : undefined,
+    ...(body.answer !== undefined ? { answer: body.answer } : {}),
   }
 }
 

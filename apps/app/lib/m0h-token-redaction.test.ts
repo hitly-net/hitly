@@ -184,7 +184,8 @@ test('GET /approvals/:id/original-request never echoes the token and keeps byte-
 
 test('legacy rows with the token embedded in the envelope are redacted by both readers', async () => {
   // Simulate a row written before strip-at-ingest existed: the create-once
-  // envelope embeds origin WITH the credential.
+  // envelope embeds origin WITH the credential, and the envelope metadata bag
+  // itself carries a smuggled cb_auth_token.
   const approvalId = newId('apr').slice(0, 36)
   const origin = {
     plugin: 'http',
@@ -195,6 +196,7 @@ test('legacy rows with the token embedded in the envelope are redacted by both r
   const envelope = {
     action: { name: 'm0h-refund', args: { amount: 7 } },
     allowedActions: { accept: true, reject: true },
+    metadata: { pageId: 'p9', cb_auth_token: CANARY },
     origin,
   }
   await db.insert(approvals).values({
@@ -229,4 +231,43 @@ test('legacy rows with the token embedded in the envelope are redacted by both r
   })
   assert.ok(original.ok)
   assert.ok(!original.canonicalPayload.includes(CANARY), 'original-request must redact a dirty stored envelope')
+})
+
+test('a cb_auth_token smuggled inside the caller metadata bag is stripped at rest and on every read', async () => {
+  const result = await ingestApproval({
+    apiKey: apiKeyARaw,
+    body: {
+      resumeUrl: 'http://127.0.0.1:19991/resume',
+      runId: newId('run'),
+      actionName: 'm0h-refund',
+      args: { amount: 1 },
+      metadata: { pageId: 'p1', cb_auth_token: CANARY, nested: { cbAuthToken: CANARY } },
+    },
+  })
+  assert.ok(result.ok, `ingest should succeed: ${result.ok ? '' : result.error}`)
+  const row = await storedRow(result.approval.id)
+
+  // At rest: neither stored column may carry a metadata-smuggled token.
+  assert.ok(!JSON.stringify(row.envelope).includes(CANARY), 'envelope must not carry a metadata-smuggled token')
+  assert.ok(!JSON.stringify(row.origin).includes(CANARY), 'origin must not carry a metadata-smuggled token')
+
+  // Served: both reader projections strip it, and legit metadata survives.
+  const detail = await getApprovalDetail({
+    approvalId: result.approval.id,
+    userId: userReviewerA.id,
+    workspaceId: workspaceA.id,
+    workspaceRole: 'member',
+  })
+  assert.ok(detail.ok)
+  assert.ok(!JSON.stringify(detail).includes(CANARY), 'detail must strip the metadata-smuggled token')
+  assert.equal((detail.envelope as Record<string, unknown>).metadata ? (detail.envelope as { metadata?: Record<string, unknown> }).metadata?.pageId : undefined, 'p1')
+
+  const original = await getOriginalRequest({
+    approvalId: result.approval.id,
+    workspaceId: workspaceA.id,
+    userId: userReviewerA.id,
+    workspaceRole: 'member',
+  })
+  assert.ok(original.ok)
+  assert.ok(!original.canonicalPayload.includes(CANARY), 'original-request must strip the metadata-smuggled token')
 })

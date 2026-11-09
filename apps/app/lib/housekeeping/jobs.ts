@@ -3,6 +3,7 @@ import { edition } from '@hitly/cloud'
 import { CLOSED_APPROVAL_STATUSES } from '@hitly/core'
 import { approvals, projectEvents, projects, workspaces } from '@hitly/db/schema'
 import { requireDb, withTenant } from '../tenant'
+import { deliverApprovalLifecycleEvent } from '../lifecycle-delivery'
 import { affectedRows } from './result'
 import { registerHousekeepingJob } from './scheduler'
 
@@ -14,8 +15,23 @@ export async function expireOverdueApprovals() {
   const spaces = await database.select({ id: workspaces.id }).from(workspaces)
   let expired = 0
   for (const space of spaces) {
-    const result = await withTenant(space.id, async () =>
-      requireDb()
+    expired += await withTenant(space.id, async () => {
+      const tenantDb = requireDb()
+      // Load the rows first: an opted-in HTTP request wants an `expired`
+      // lifecycle callback per approval (item 6), which needs its origin.
+      const rows = await tenantDb
+        .select({ id: approvals.id, projectId: approvals.projectId, plugin: approvals.plugin, origin: approvals.origin })
+        .from(approvals)
+        .where(
+          and(
+            eq(approvals.workspaceId, space.id),
+            eq(approvals.status, 'pending'),
+            isNotNull(approvals.expiresAt),
+            lt(approvals.expiresAt, now),
+          ),
+        )
+      if (rows.length === 0) return 0
+      const result = await tenantDb
         .update(approvals)
         .set({ status: 'expired', updatedAt: now })
         .where(
@@ -25,9 +41,17 @@ export async function expireOverdueApprovals() {
             isNotNull(approvals.expiresAt),
             lt(approvals.expiresAt, now),
           ),
-        ),
-    )
-    expired += affectedRows(result)
+        )
+      for (const row of rows) {
+        // Best-effort, per item: no-op unless the request opted in.
+        await deliverApprovalLifecycleEvent({
+          approval: { id: row.id, projectId: row.projectId, plugin: row.plugin, origin: row.origin },
+          workspaceId: space.id,
+          type: 'expired',
+        })
+      }
+      return affectedRows(result)
+    })
   }
   return { expired }
 }
