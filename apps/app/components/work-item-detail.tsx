@@ -1,8 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { and, desc, eq } from 'drizzle-orm'
-import { isOpenApprovalStatus, mustOpenItems, resolveReasonRequired, type ApprovalEnvelope, type OriginRef, type PluginId } from '@hitly/core'
-import { approvals, decisionRecords, projectMemberships, users } from '@hitly/db/schema'
+import type { PluginId } from '@hitly/core'
 import { Badge, PluginBadge, PluginMark } from '@hitly/ui'
 import { decideWorkItem, delegateWorkItem, retryWorkItem } from '@/actions/projects'
 import { AppShell } from '@/components/app-shell'
@@ -11,18 +9,17 @@ import { AnswerForm } from '@/components/answer-form'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { JsonDisclosure } from '@/components/json-disclosure'
 import { MarkPresentedIfCanAct, RefreshOnFocus } from '@/components/work-item-client'
-import { EditedArgsPanel, editedArgsFromPayload, omitEditedArgs } from '@/components/edited-args-panel'
+import { EditedArgsPanel } from '@/components/edited-args-panel'
 import { OriginalRequestPanel } from '@/components/original-request-panel'
 import { withAppTenant } from '@/lib/context'
-import { loadOpenedContextRefs } from '@/lib/context-opens'
-import { originFields, envelopeMetadata } from '@/lib/origin'
-import { canDecide, getProjectAccess } from '@/lib/rbac'
-import { requireDb } from '@/lib/tenant'
-import { decodeTenantJson } from '@/lib/tenant-crypto'
-import { approvalHasExpired } from '@/lib/approval-expiry'
-import { loadEvidenceReceiptForDisplay } from '@/lib/evidence'
 import { formatStatusLabel } from '@/lib/status-label'
-import { redactRequestPayload, redactedRequestJson } from '@/lib/redact-request-payload'
+import { redactedRequestJson } from '@/lib/redact-request-payload'
+import {
+  loadWorkItemPage,
+  workItemClientFlightProps,
+  type WorkItemPageDto,
+  type WorkItemPerson,
+} from '@/lib/work-item-page'
 
 function personLabel(person: { name: string | null; email: string }) {
   return person.name ? `${person.name} (${person.email})` : person.email
@@ -38,130 +35,45 @@ export async function WorkItemDetail({
   errorMessage?: string
 }) {
   return withAppTenant(async ({ user, role, workspace }) => {
-  const database = requireDb()
-  const rows = await database
-    .select()
-    .from(approvals)
-    .where(and(eq(approvals.id, approvalId), eq(approvals.workspaceId, workspace.id)))
-    .limit(1)
-  const approvalRow = rows[0]
-  if (!approvalRow) notFound()
-  if (projectId && approvalRow.projectId !== projectId) notFound()
-  const approval = {
-    ...approvalRow,
-    envelope: await decodeTenantJson(workspace.id, approvalRow.envelope),
-    origin: await decodeTenantJson(workspace.id, approvalRow.origin),
-  }
-
-  const access = await getProjectAccess({
-    projectId: approval.projectId,
-    userId: user.id,
-    workspaceRole: role,
-  })
-  if (!access) notFound()
-
-  const project = access.project
-  const people = await database
-    .select({
-      userId: users.id,
-      name: users.name,
-      email: users.email,
-      role: projectMemberships.role,
+    const page = await loadWorkItemPage({
+      approvalId,
+      projectId,
+      userId: user.id,
+      workspaceId: workspace.id,
+      workspaceRole: role,
     })
-    .from(projectMemberships)
-    .innerJoin(users, eq(projectMemberships.userId, users.id))
-    .where(and(eq(projectMemberships.projectId, approval.projectId), eq(projectMemberships.workspaceId, workspace.id)))
+    if (!page.ok) notFound()
+    return <WorkItemDetailView page={page} errorMessage={errorMessage} />
+  })
+}
 
-  const assignedRows = approval.assignedUserId
-    ? await database
-        .select({ id: users.id, name: users.name, email: users.email })
-        .from(users)
-        .where(eq(users.id, approval.assignedUserId))
-        .limit(1)
-    : []
-  const assigned = assignedRows[0]
-  const defaultAssignee = people.find((person) => person.userId === project.defaultAssigneeUserId)
-
-  const decisions = await database
-    .select()
-    .from(decisionRecords)
-    .where(and(eq(decisionRecords.approvalId, approval.id), eq(decisionRecords.workspaceId, workspace.id)))
-    .orderBy(desc(decisionRecords.createdAt))
-  const decodedDecisions = await Promise.all(
-    decisions.map(async (row) => ({
-      ...row,
-      payload: await decodeTenantJson(workspace.id, row.payload),
-      resumeResponse: row.resumeResponse
-        ? await decodeTenantJson(workspace.id, row.resumeResponse)
-        : row.resumeResponse,
-    })),
-  )
-  const latestDecision = decodedDecisions[0]
-  const editedArgs = latestDecision ? editedArgsFromPayload(latestDecision.payload) : null
-
-  const evidenceReceipt = await loadEvidenceReceiptForDisplay(approval.id, workspace.id)
-  const showEvidenceLink = evidenceReceipt && (evidenceReceipt.storeUri.startsWith('http://') || evidenceReceipt.storeUri.startsWith('https://'))
-
-  const envelope = approval.envelope as unknown as ApprovalEnvelope
-  const origin = approval.origin as unknown as OriginRef
-  const originRows = originFields(origin)
-  const metadata = envelopeMetadata(envelope, origin)
-  const allowed = envelope.allowedActions
-  const hasEditableFields = Boolean(envelope.editableFields && Object.keys(envelope.editableFields).length > 0)
-  const showEditControl = allowed.edit && hasEditableFields
-  const canAct = canDecide(access) && isOpenApprovalStatus(approval.status)
-  const expired = approvalHasExpired(approval)
-  // Answer gating (hitl-spec 3.6/3.7): reason prompt per answer value + per-reviewer
-  // mustOpen state. The host re-validates on submit; this drives the UI only.
-  const reasonRequired = resolveReasonRequired(envelope)
-  const gatedItems = canAct && !expired ? mustOpenItems(envelope) : []
-  const openedRefs =
-    gatedItems.length > 0
-      ? await loadOpenedContextRefs({
-          approvalId: approval.id,
-          workspaceId: workspace.id,
-          actorUserId: user.id,
-        })
-      : []
-  const gateItems = gatedItems.map((item) => ({
-    ref: item.ref,
-    label: item.label,
-    url: item.url,
-    opened: openedRefs.includes(item.ref),
-  }))
-  const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status)
-  const delegateTargets = people.filter(
-    (person) => person.role !== 'reader' && person.userId !== approval.assignedUserId,
-  )
-  const canDelegate = canAct && !expired && people.length > 1 && delegateTargets.length > 0
-  const inProject = Boolean(projectId)
-  const returnTo = inProject
-    ? `/projects/${approval.projectId}/item/${approval.id}`
-    : `/inbox/${approval.id}`
+function WorkItemDetailView({ page, errorMessage }: { page: WorkItemPageDto; errorMessage?: string }) {
+  const flight = workItemClientFlightProps(page)
+  const latestDecision = page.latestDecision
 
   return (
-    <AppShell project={{ id: project.id, name: project.name }}>
+    <AppShell project={{ id: page.project.id, name: page.project.name }}>
       <RefreshOnFocus />
-      <MarkPresentedIfCanAct canAct={canAct} approvalId={approval.id} />
+      <MarkPresentedIfCanAct canAct={flight.canAct} approvalId={flight.approvalId} />
       <div className="flex flex-wrap items-center gap-2">
-        <PluginMark plugin={approval.plugin as PluginId} size="md" className="h-8 w-8" />
+        <PluginMark plugin={page.plugin} size="md" className="h-8 w-8" />
         <Badge
           variant={
-            approval.status === 'pending'
+            page.status === 'pending'
               ? 'warning'
-              : approval.status === 'failed_resume'
+              : page.status === 'failed_resume'
                 ? 'warning'
-                : approval.status === 'decided'
+                : page.status === 'decided'
                   ? 'success'
                   : 'secondary'
           }
         >
-          {formatStatusLabel(approval.status, latestDecision?.decision)}
+          {formatStatusLabel(page.status, latestDecision?.decision)}
         </Badge>
       </div>
       <div className="mt-4 flex max-w-2xl items-start justify-between gap-3">
-        <h1 className="text-2xl font-semibold">{approval.actionName}</h1>
-        {canCancel ? <ForceCancelButton approvalId={approval.id} /> : null}
+        <h1 className="text-2xl font-semibold">{page.actionName}</h1>
+        {page.canCancel ? <ForceCancelButton approvalId={page.id} /> : null}
       </div>
       {errorMessage ? (
         <div className="mt-4 max-w-2xl rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950">
@@ -170,11 +82,11 @@ export async function WorkItemDetail({
           <p className="mt-2 text-sm text-red-600 dark:text-red-400">The work item is still pending. Please try again or contact support.</p>
         </div>
       ) : null}
-      {originRows.length > 0 ? (
+      {page.originFields.length > 0 ? (
         <section className="mt-6 max-w-2xl rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
           <h2 className="text-sm font-semibold">Origin</h2>
           <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-            {originRows.map((row) => (
+            {page.originFields.map((row) => (
               <p key={row.key} className={row.key === 'runId' || row.key === 'toolCallId' ? 'sm:col-span-2' : undefined}>
                 <span className="text-zinc-500">{row.label}</span>
                 <br />
@@ -186,60 +98,60 @@ export async function WorkItemDetail({
       ) : null}
       <details className="mt-6 max-w-2xl rounded-md border border-zinc-200 dark:border-zinc-800">
         <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold">
-          Project · {project.name}
+          Project · {page.project.name}
         </summary>
         <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
           <div className="grid gap-3 text-sm sm:grid-cols-2">
             <p>
               <span className="text-zinc-500">Name</span>
               <br />
-              <Link href={`/projects/${project.id}`} className="underline">
-                {project.name}
+              <Link href={`/projects/${page.project.id}`} className="underline">
+                {page.project.name}
               </Link>
             </p>
             <div>
               <span className="text-zinc-500">Plugin</span>
               <br />
-              <PluginBadge plugin={project.plugin as PluginId} />
+              <PluginBadge plugin={page.project.plugin as PluginId} />
             </div>
             <p className="sm:col-span-2">
               <span className="text-zinc-500">Description</span>
               <br />
-              {project.description || 'No description.'}
+              {page.project.description || 'No description.'}
             </p>
             <p>
               <span className="text-zinc-500">Default SLA</span>
               <br />
-              {project.defaultSlaMinutes} minutes
+              {page.project.defaultSlaMinutes} minutes
             </p>
             <p>
               <span className="text-zinc-500">Assigned to</span>
               <br />
-              {assigned ? personLabel(assigned) : 'Unassigned'}
+              {page.assigned ? personLabel(page.assigned) : 'Unassigned'}
             </p>
             <p>
               <span className="text-zinc-500">Default assignee</span>
               <br />
-              {defaultAssignee ? personLabel(defaultAssignee) : 'None'}
+              {page.defaultAssignee ? personLabel(page.defaultAssignee) : 'None'}
             </p>
             <p className="sm:col-span-2">
               <span className="text-zinc-500">People</span>
               <br />
-              {people.length === 0
+              {page.people.length === 0
                 ? 'No project members.'
-                : people.map((person) => `${personLabel(person)} · ${person.role}`).join(', ')}
+                : page.people.map((person: WorkItemPerson) => `${personLabel(person)} · ${person.role}`).join(', ')}
             </p>
           </div>
-          {canDelegate ? (
-            <form action={delegateWorkItem.bind(null, approval.id)} className="mt-4 flex max-w-xl gap-2">
-              <input type="hidden" name="returnTo" value={returnTo} />
+          {page.canDelegate ? (
+            <form action={delegateWorkItem.bind(null, page.id)} className="mt-4 flex max-w-xl gap-2">
+              <input type="hidden" name="returnTo" value={page.returnTo} />
               <select
                 name="userId"
                 required
                 className="h-10 flex-1 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
               >
                 <option value="">Delegate to…</option>
-                {delegateTargets.map((person) => (
+                {page.delegateTargets.map((person) => (
                   <option key={person.userId} value={person.userId}>
                     {personLabel(person)}
                   </option>
@@ -256,31 +168,18 @@ export async function WorkItemDetail({
         </div>
       </details>
       <ContextMarkdown
-        value={envelope.contextMarkdown}
-        externalUrls={envelope.externalUrls}
-        attachments={envelope.attachments}
+        value={flight.contextMarkdown}
+        externalUrls={flight.externalUrls}
+        attachments={flight.attachments}
       />
       <h2 className="mt-4 max-w-2xl text-sm font-semibold">Action arguments</h2>
       <p className="mt-1 max-w-2xl text-xs text-zinc-500">Original request args from the stored create-once record.</p>
       <pre className="mt-2 max-w-2xl overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-        {redactedRequestJson(envelope.action.args ?? {})}
+        {redactedRequestJson(page.originalArgs)}
       </pre>
-      <JsonDisclosure
-        value={redactRequestPayload({
-          action: envelope.action,
-          allowedActions: envelope.allowedActions,
-          contextMarkdown: envelope.contextMarkdown,
-          reasonRequired: envelope.reasonRequired,
-          metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-          externalUrls: envelope.externalUrls,
-          attachments: envelope.attachments,
-          resumeSchema: envelope.resumeSchema,
-          expiresAt: envelope.expiresAt,
-          origin: approval.origin,
-        })}
-      />
-      <OriginalRequestPanel approvalId={approval.id} />
-      <EditedArgsPanel editedArgs={editedArgs} />
+      <JsonDisclosure value={page.jsonDisclosure} />
+      <OriginalRequestPanel approvalId={page.id} />
+      <EditedArgsPanel editedArgs={page.editedArgs} />
       {latestDecision ? (
         <section className="mt-8 max-w-2xl">
           <h2 className="text-sm font-semibold">Decision</h2>
@@ -294,17 +193,17 @@ export async function WorkItemDetail({
           <h2 className="mt-6 text-sm font-semibold">Origin response</h2>
           <p className="mt-1 text-xs text-zinc-500">Full payload returned to the origin after this decision.</p>
           <pre className="mt-2 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-            {redactedRequestJson(latestDecision.resumeResponse ?? omitEditedArgs(latestDecision.payload))}
+            {redactedRequestJson(page.originResponseJson)}
           </pre>
         </section>
       ) : null}
-      {showEvidenceLink ? (
+      {page.evidenceStoreUri ? (
         <section className="mt-8 max-w-2xl">
           <h2 className="text-sm font-semibold">Evidence</h2>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            <a 
-              href={evidenceReceipt.storeUri} 
-              target="_blank" 
+            <a
+              href={page.evidenceStoreUri}
+              target="_blank"
               rel="noreferrer"
               className="underline"
             >
@@ -313,25 +212,25 @@ export async function WorkItemDetail({
           </p>
         </section>
       ) : null}
-      {expired && approval.status === 'pending' ? (
+      {page.expired && page.status === 'pending' ? (
         <p className="mt-4 text-sm text-amber-700">This work item has expired.</p>
       ) : null}
-      {canAct && !expired ? (
+      {page.canAct && !page.expired ? (
         <AnswerForm
-          approvalId={approval.id}
-          allowed={{ ...allowed, edit: showEditControl }}
-          editableFields={showEditControl ? envelope.editableFields! : undefined}
-          originalArgs={envelope.action.args}
-          editReasonConfig={envelope.editReason}
-          respondAllowed={allowed.respond}
-          reasonRequired={reasonRequired}
-          gateItems={gateItems}
-          returnTo={returnTo}
-          decide={decideWorkItem.bind(null, approval.id)}
+          approvalId={flight.approvalId}
+          allowed={flight.allowed}
+          editableFields={flight.editableFields}
+          originalArgs={flight.originalArgs}
+          editReasonConfig={flight.editReasonConfig}
+          respondAllowed={flight.respondAllowed}
+          reasonRequired={flight.reasonRequired}
+          gateItems={flight.gateItems}
+          returnTo={flight.returnTo}
+          decide={decideWorkItem.bind(null, page.id)}
         />
       ) : null}
-      {approval.status === 'failed_resume' && canDecide(access) ? (
-        <form action={retryWorkItem.bind(null, approval.id)} className="mt-4">
+      {page.canRetry ? (
+        <form action={retryWorkItem.bind(null, page.id)} className="mt-4">
           <button type="submit" className="text-sm underline">
             Retry resume
           </button>
@@ -339,5 +238,4 @@ export async function WorkItemDetail({
       ) : null}
     </AppShell>
   )
-  })
 }
