@@ -137,11 +137,20 @@ export const invites = pgTable(
     email: varchar('email', { length: 255 }).notNull(),
     role: workspaceRoleEnum('role').notNull().default('member'),
     invitedByUserId: id('invited_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    // SHA-256 (hex) of the one-time accept token sent in the invite email.
+    // The token itself is never stored. Null only for invites created before
+    // tokenised invites existed; those cannot be redeemed (re-invite instead).
+    tokenHash: varchar('token_hash', { length: 64 }),
+    // Set once, atomically, when the invite is redeemed (the "used" marker).
     acceptedAt: timestamp('accepted_at', { precision: 3, withTimezone: true }),
     expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
-  (table) => [index('invites_workspace_idx').on(table.workspaceId), index('invites_email_idx').on(table.email)],
+  (table) => [
+    index('invites_workspace_idx').on(table.workspaceId),
+    index('invites_email_idx').on(table.email),
+    uniqueIndex('invites_token_hash_idx').on(table.tokenHash),
+  ],
 )
 
 export const projects = pgTable(

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { isSignupEnabled } from './signup'
+import { inviteAcceptPathFromSignup, isSignupEnabled } from './signup'
 
 test('isSignupEnabled returns true when HITLY_SIGNUP_ENABLED is unset', () => {
   delete process.env.HITLY_SIGNUP_ENABLED
@@ -35,4 +35,14 @@ test('isSignupEnabled returns false when HITLY_SIGNUP_ENABLED is "off"', () => {
 test('isSignupEnabled returns true for unknown values', () => {
   process.env.HITLY_SIGNUP_ENABLED = 'unknown'
   assert.equal(isSignupEnabled(), true)
+})
+
+test('inviteAcceptPathFromSignup maps /signup?invite=<token> to the accept page', () => {
+  const token = 'A'.repeat(43)
+  assert.equal(inviteAcceptPathFromSignup(token), `/invite/${token}`)
+  assert.equal(inviteAcceptPathFromSignup(undefined), null)
+  assert.equal(inviteAcceptPathFromSignup(''), null)
+  assert.equal(inviteAcceptPathFromSignup(['x']), null)
+  assert.equal(inviteAcceptPathFromSignup('../../evil'), null)
+  assert.equal(inviteAcceptPathFromSignup('//evil.example'), null)
 })

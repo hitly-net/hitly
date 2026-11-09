@@ -67,6 +67,8 @@ Production refuses to start (the process exits with a message naming the variabl
 
 At start the server logs the effective setting: the proxy count, or how many trusted proxy entries are configured (never the addresses).
 
+**Signup and workspace invites.** `HITLY_SIGNUP_ENABLED=0` makes the instance invite-only: `/signup` shows the early-access form and no one can create an account without an invite. Workspace admins invite people from Settings → Team. The invite email links to `<BETTER_AUTH_URL>/invite/<token>` (`/signup?invite=<token>` also works), so set `BETTER_AUTH_URL` to the public app URL. The link lets that one email address create an account, or sign in to an existing account and join. The token is random, stored only as a hash, works once, expires after 14 days, and stops working when the invite is cancelled or resent. Use **Resend** on a pending invite to email a fresh link; invites sent before tokenised links existed need a resend.
+
 Generate the secret with `openssl rand -hex 32`. `NEXT_PUBLIC_*` is inlined at `yarn build`; changing those URLs later requires a rebuild.
 
 7. `cd ~/hitly && docker compose up -d --wait`

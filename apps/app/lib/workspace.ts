@@ -1,7 +1,7 @@
-import { and, eq, isNull } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { defaultWorkspacePlan } from '@hitly/cloud/auth/providers'
 import { edition } from '@hitly/cloud'
-import { invites, memberships, users, workspaces } from '@hitly/db/schema'
+import { memberships, users, workspaces } from '@hitly/db/schema'
 import { newId, slugify } from './ids'
 import { requireDb } from './tenant'
 
@@ -29,28 +29,10 @@ export async function bootstrapUserWorkspaces(user: { id: string; name: string; 
     await edition.onWorkspaceCreated?.(workspaceId)
   }
 
-  const pending = await database
-    .select()
-    .from(invites)
-    .where(and(eq(invites.email, user.email.toLowerCase()), isNull(invites.acceptedAt)))
-
-  for (const invite of pending) {
-    if (invite.expiresAt.getTime() < Date.now()) continue
-    const already = await database
-      .select({ id: memberships.id })
-      .from(memberships)
-      .where(and(eq(memberships.workspaceId, invite.workspaceId), eq(memberships.userId, user.id)))
-      .limit(1)
-    if (already.length === 0 && invite.role !== 'owner') {
-      await database.insert(memberships).values({
-        id: newId('mem').slice(0, 36),
-        workspaceId: invite.workspaceId,
-        userId: user.id,
-        role: invite.role === 'admin' ? 'admin' : 'member',
-      })
-    }
-    await database.update(invites).set({ acceptedAt: new Date() }).where(eq(invites.id, invite.id))
-  }
+  // Workspace invites are accepted only through the tokenised link in the
+  // invite email (lib/invites.ts). They are no longer applied by matching the
+  // account email here: that let anyone who signed up with an address (no
+  // proof of ownership) join the workspaces it had been invited to.
 }
 
 export async function listUserWorkspaces(userId: string) {

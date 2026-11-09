@@ -1,6 +1,6 @@
-import { and, eq, gt, isNull } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { invites, memberships, users } from '@hitly/db/schema'
-import { cancelInvite, inviteToWorkspace, removeWorkspaceMember } from '@/actions/team'
+import { cancelInvite, inviteToWorkspace, removeWorkspaceMember, resendInvite } from '@/actions/team'
 import { AppShell } from '@/components/app-shell'
 import { getAppContext } from '@/lib/context'
 import { canManageWorkspace } from '@/lib/rbac'
@@ -29,13 +29,14 @@ export default async function TeamPage() {
       email: invites.email,
       role: invites.role,
       expiresAt: invites.expiresAt,
+      expired: sql<boolean>`${invites.expiresAt} <= now()`,
     })
     .from(invites)
     .where(
       and(
         eq(invites.workspaceId, workspace.id),
-        isNull(invites.acceptedAt),
-        gt(invites.expiresAt, new Date())
+        // Expired invites stay listed so they can be resent.
+        isNull(invites.acceptedAt)
       )
     )
   
@@ -93,7 +94,8 @@ export default async function TeamPage() {
         <>
           <h2 className="mt-8 text-lg font-semibold">Pending invites</h2>
           <p className="mt-2 text-sm text-zinc-500">
-            These people have been invited but haven&apos;t signed up yet.
+            These people have been invited but haven&apos;t accepted yet. Resend emails a fresh link and
+            the old one stops working.
           </p>
           <ul className="mt-4 max-w-md divide-y divide-zinc-200 dark:divide-zinc-800">
             {pendingInvites.map((invite) => (
@@ -101,14 +103,24 @@ export default async function TeamPage() {
                 <div>
                   <p className="font-medium">{invite.email}</p>
                   <p className="text-xs text-zinc-500">
-                    {invite.role} · expires {new Date(invite.expiresAt).toLocaleDateString()}
+                    {invite.role} ·{' '}
+                    {invite.expired
+                      ? 'expired'
+                      : `expires ${new Date(invite.expiresAt).toLocaleDateString()}`}
                   </p>
                 </div>
-                <form action={cancelInvite.bind(null, invite.id)}>
-                  <button type="submit" className="text-xs text-zinc-500 hover:text-red-600">
-                    Cancel
-                  </button>
-                </form>
+                <div className="flex gap-3">
+                  <form action={resendInvite.bind(null, invite.id)}>
+                    <button type="submit" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+                      Resend
+                    </button>
+                  </form>
+                  <form action={cancelInvite.bind(null, invite.id)}>
+                    <button type="submit" className="text-xs text-zinc-500 hover:text-red-600">
+                      Cancel
+                    </button>
+                  </form>
+                </div>
               </li>
             ))}
           </ul>
