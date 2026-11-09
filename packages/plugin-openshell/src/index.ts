@@ -411,8 +411,8 @@ export const openshellPlugin: HitlyPlugin = {
           )
         })
       } else if (payload.decision === 'reject' || payload.decision === 'cancel') {
-        // RejectDraftChunk
-        const reason = payload.response || 'Rejected by reviewer'
+        // RejectDraftChunk — prefer the typed reviewer reason, else the free response text.
+        const reason = payload.reason || payload.response || 'Rejected by reviewer'
         return await new Promise((resolve) => {
           client.RejectDraftChunk(
             {

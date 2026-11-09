@@ -154,7 +154,8 @@ Reviewer routes authenticate with Better Auth: session cookie (web) or `Authoriz
 | `GET` | `/api/v1/inbox/summary` | Session | `{ pending, failedResume, decidedToday, projectCount }` |
 | `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct` |
 | `GET` | `/api/v1/approvals/:id/original-request` | Session | Original create-once payload, unredacted, byte-exact (see below) |
-| `POST` | `/api/v1/approvals/:id/decide` | Session | Existing decide JSON |
+| `POST` | `/api/v1/approvals/:id/decide` | Session | Decide JSON (see *Decide & answer gating*) |
+| `POST` | `/api/v1/approvals/:id/opens` | Session | `{ "ref" }` — record that THIS reviewer opened a context item |
 | `POST` | `/api/v1/approvals/:id/retry-resume` | Session | Existing retry |
 | `POST` | `/api/v1/approvals/:id/cancel` | Session | Force-close without origin resume |
 | `GET` | `/api/v1/workspaces` | Session | Memberships for the user |
@@ -221,6 +222,7 @@ Hosted URL validation: GET this path; require `ok === true` and `product === "hi
   "origin": { "plugin": "mastra", "projectId": "prj_…", "runId": "run_…", "resumeHandle": {} },
   "originFields": [{ "key": "runId", "label": "Run", "value": "run_…" }],
   "canAct": true,
+  "openedRefs": [],
   "decisions": []
 }
 ```
@@ -232,6 +234,60 @@ Hosted URL validation: GET this path; require `ok === true` and `product === "hi
 - **Unredacted and byte-exact.** The payload is served exactly as stored and copied verbatim. No secret redaction is applied, because changing any byte would break off-host verification against the hash. Treat the copy as sensitive.
 - **Same viewers as the approval detail.** Only a signed-in workspace member with access to the project can read it. Unknown ids, other workspaces and members without project access all get `404`. Project API keys cannot read it. Responses are `Cache-Control: no-store`.
 - **Never logged.** Payload contents are never written to logs. Logs carry only ids and hashes, and pass through the secret-redaction policy.
+
+`openedRefs` lists the gating keys (hitl-spec 3.7) this reviewer has recorded opens
+for; reviewer clients hydrate the must-open checklist from it so re-entering an
+approval does not force opening every item again. Absent when the item is not actionable.
+
+### Decide & answer gating
+
+`POST /api/v1/approvals/:id/decide` body (JSON):
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `decision` | string | **Required.** `accept` \| `reject` \| `edit` \| `respond` \| `ignore` \| `cancel`; must be allowed by the envelope's `allowedActions` |
+| `reason` | string | Reviewer's typed reason (spec 3.6). Stored, audited (evidence `oversight.reason`) and forwarded to the origin **verbatim** — trimming is only used for the emptiness check |
+| `response` | string | Free response text for the answer |
+| `editedArgs` | object | Required for `edit`; keys limited to the envelope's `editableFields` |
+| `editReason` / `editReasonText` | string | Edit dropdown pick + free text, per the envelope's `editReason` config |
+
+Answer rules come from the envelope (spec 3.6/3.7):
+
+- `reasonRequired`: answer values that need a non-empty `reason`. Absent, binary-shaped
+  requests (accept+reject only) default to `["reject"]`; an explicit `[]` opts out.
+- `externalUrls[]` / `attachments[]` entries carry an optional `ref` — the gating key
+  (defaults to the url for links, `name:url` for attachments) — and `mustOpen: true`
+  gates the answer on that item being opened.
+
+The host re-validates every decide with the exact rules the clients mirror
+(`validateAnswerSubmission` in `@hitly/core`). A refused answer returns `400` with
+field errors:
+
+```json
+{
+  "error": "reason: A reason is required for this answer.",
+  "fields": [{ "field": "reason", "message": "A reason is required for this answer." }]
+}
+```
+
+`field` is `reason` or `context.items.<ref>`. `mustOpen` gates **acting** answers
+(accept, reject, edit, respond): while a must-open item is unopened for the deciding
+reviewer, web, mobile and the host all refuse those answers. **Ignore/dismiss is
+exempt** — it takes no action, so it stays available without opening context.
+
+### Open a context item
+
+`POST /api/v1/approvals/:id/opens` body `{ "ref": "policy" }` records that **this**
+reviewer opened the item, as an `opened` audit event carrying `openedAt`. `ref` is the
+item's gating key (its raw url is also accepted). Response:
+
+```json
+{ "ok": true, "ref": "policy", "openedAt": "2026-08-13T18:05:00.000Z" }
+```
+
+Opens are per reviewer and repeatable (every open is audited). The host never fetches
+the target itself: the client opens the real URL (new tab / in-app browser) and reports
+the open here.
 
 ### Workspaces
 

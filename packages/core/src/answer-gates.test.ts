@@ -9,6 +9,7 @@ import {
   contextItems,
   findContextItem,
   isBinaryLikeRequest,
+  mustOpenGatesDecision,
   mustOpenItems,
   requiresReason,
   resolveReasonRequired,
@@ -138,6 +139,50 @@ test('findContextItem accepts refs and raw urls', () => {
   assert.ok(findContextItem(env, 'x-ref'))
   assert.ok(findContextItem(env, 'https://example.com/x'))
   assert.equal(findContextItem(env, 'https://other.example.com/x'), undefined)
+})
+
+test('mustOpen gates acting answers; ignore is exempt', () => {
+  const env = envelope({
+    allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: true, cancel: false },
+    externalUrls: [{ url: 'https://example.com/policy', ref: 'policy', label: 'Policy', mustOpen: true }],
+  })
+  // Spec 3.7 gates acting answers. Ignore/dismiss takes no action and is exempt.
+  assert.equal(mustOpenGatesDecision('accept'), true)
+  assert.equal(mustOpenGatesDecision('reject'), true)
+  assert.equal(mustOpenGatesDecision('ignore'), false)
+  assert.deepEqual(validateAnswerSubmission({ envelope: env, decision: 'accept', openedRefs: [] }), [
+    {
+      field: 'context.items.policy',
+      message: '"Policy" must be opened before you can answer.',
+    },
+  ])
+  assert.deepEqual(
+    validateAnswerSubmission({ envelope: env, decision: 'ignore', openedRefs: [] }),
+    [],
+    'ignore is allowed without opening must-open items',
+  )
+  assert.deepEqual(
+    validateAnswerSubmission({ envelope: env, decision: 'reject', reason: 'no', openedRefs: [] }),
+    [
+      {
+        field: 'context.items.policy',
+        message: '"Policy" must be opened before you can answer.',
+      },
+    ],
+    'acting answers still require opens',
+  )
+})
+
+test('ignore honours a declared reasonRequired entry', () => {
+  const env = envelope({
+    allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: true, cancel: false },
+    reasonRequired: ['ignore'],
+  })
+  assert.equal(validateAnswerSubmission({ envelope: env, decision: 'ignore', openedRefs: [] }).length, 1)
+  assert.deepEqual(
+    validateAnswerSubmission({ envelope: env, decision: 'ignore', reason: 'Duplicate run', openedRefs: [] }),
+    [],
+  )
 })
 
 // --- ingest validation (spec 7, at request ingest) ---

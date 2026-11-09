@@ -84,6 +84,8 @@ export interface EvidenceOversight {
   decision?: Decision
   decided_at?: string
   response?: string
+  /** The reviewer's typed reason (hitl-spec 4.1), kept distinct from edit_reason. */
+  reason?: string
   edit_reason?: string
   edit_reason_text?: string
   /** Who decided, in the hitl-spec `decidedBy` shape (SPEC 4.1). Additive; `reviewer_id` stays. */

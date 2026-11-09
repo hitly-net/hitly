@@ -69,8 +69,12 @@ export default function WorkItemDetailScreen() {
   const allowed = allowedActionsFor(detail.envelope.allowedActions)
   const expired = isExpired(detail)
 
-  /** Context refs this reviewer has opened on this screen (per-reviewer gating, hitl-spec 3.7). */
-  const openedContextRefs = openedRefs
+  /**
+   * Context refs this reviewer has opened (per-reviewer gating, hitl-spec 3.7):
+   * the host-recorded opens hydrated with the detail payload (S10) unioned with
+   * taps from this screen, so re-entering does not force opening items again.
+   */
+  const openedContextRefs = Array.from(new Set([...(detail.openedRefs ?? []), ...openedRefs]))
   const approvalId = detail.id
 
   /**

@@ -228,6 +228,8 @@ export async function buildDecidedEvent(args: {
       decision: args.payload.decision,
       decided_at: occurredAt,
       response: args.payload.response,
+      // Typed reviewer reason (spec 4.1) belongs in the audit too, not only edit_reason.
+      reason: args.payload.reason,
       edit_reason: args.payload.editReason,
       edit_reason_text: args.payload.editReasonText,
     },

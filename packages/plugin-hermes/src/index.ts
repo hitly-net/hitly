@@ -181,6 +181,7 @@ export async function resumeHermes(
   if (approvalId) resumeData.id = approvalId
   if (payload.editedArgs) resumeData.editedArgs = payload.editedArgs
   if (payload.response) resumeData.response = payload.response
+  if (payload.reason) resumeData.reason = payload.reason
 
   const response = await checkedFetch(
     resumeUrl,

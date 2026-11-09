@@ -4,6 +4,7 @@ import { approvals, decisionRecords, projects } from '@hitly/db/schema'
 import { approvalHasExpired } from './approval-expiry'
 import { canDecide, getProjectAccess } from './rbac'
 import { originFields, envelopeMetadata } from './origin'
+import { loadOpenedContextRefs } from './context-opens'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
 import { loadEvidenceReceiptForDisplay } from './evidence'
@@ -68,6 +69,16 @@ export async function getApprovalDetail(args: {
         ? { storeUri: evidenceReceipt.storeUri }
         : undefined
 
+    // hitly#96 S10: this reviewer's recorded opens, so reviewer clients can hydrate
+    // the mustOpen checklist instead of forcing every item to be opened again.
+    const openedRefs = canAct
+      ? await loadOpenedContextRefs({
+          approvalId: approval.id,
+          workspaceId: args.workspaceId,
+          actorUserId: args.userId,
+        })
+      : undefined
+
     return {
       ok: true as const,
       id: approval.id,
@@ -89,6 +100,7 @@ export async function getApprovalDetail(args: {
       originFields: originFields(origin),
       canAct,
       canCancel,
+      ...(openedRefs ? { openedRefs } : {}),
       decisions: decodedDecisions,
       evidenceReceipt: evidenceReceiptForApi,
     }
