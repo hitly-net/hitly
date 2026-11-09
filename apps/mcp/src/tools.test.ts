@@ -605,6 +605,47 @@ test('decide-like extras (decision, allowedActions, editedArgs, projectId, plugi
   }
 })
 
+test('replay reports the stored deadline, not a freshly computed one (both tools)', async () => {
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    const first = structured(
+      await client.callTool({
+        name: 'request_approval',
+        arguments: { ...baseApproval, deadline: new Date(FIXED_NOW + 2 * 86_400_000).toISOString() },
+      }),
+    )
+    const replay = structured(
+      await client.callTool({
+        name: 'request_approval',
+        arguments: { ...baseApproval, deadline: new Date(FIXED_NOW + 3 * 86_400_000).toISOString() },
+      }),
+    )
+    assert.equal(replay.replayed, true)
+    assert.equal(replay.requestId, first.requestId)
+    assert.equal(replay.deadline, first.deadline, 'replay must report the deadline stored on create')
+    assert.equal(h.host.ingests.length, 2)
+    assert.equal(h.host.ingests[1].body.expiresAt, new Date(FIXED_NOW + 3 * 86_400_000).toISOString(), 'only the response is corrected; the host keeps its own idempotent behaviour')
+
+    const askFirst = structured(
+      await client.callTool({
+        name: 'ask_user',
+        arguments: { idempotencyKey: 'bot-ask-replay', prompt: 'Which date?', answerSchema: { type: 'free_text' }, callback_url: baseApproval.callback_url, deadline: new Date(FIXED_NOW + 5 * 86_400_000).toISOString() },
+      }),
+    )
+    const askReplay = structured(
+      await client.callTool({
+        name: 'ask_user',
+        arguments: { idempotencyKey: 'bot-ask-replay', prompt: 'Which date?', answerSchema: { type: 'free_text' }, callback_url: baseApproval.callback_url, deadline: new Date(FIXED_NOW + 10 * 86_400_000).toISOString() },
+      }),
+    )
+    assert.equal(askReplay.replayed, true)
+    assert.equal(askReplay.deadline, askFirst.deadline, 'ask_user replay also reports the stored deadline')
+  } finally {
+    await h.close()
+  }
+})
+
 test('an oversize JSON-RPC body is refused with 413 before anything is parsed', async () => {
   const h = await startHarness()
   try {

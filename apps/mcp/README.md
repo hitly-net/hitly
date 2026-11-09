@@ -17,7 +17,7 @@ There is **no decide tool**. Requester credentials can request, read and cancel 
 Rules the server enforces:
 
 - `question` (and the `ask_user` `prompt` headline) is one sentence, at most 160 characters, ending with `?` (hitl-spec 3.1/3.3). Detail goes in `context`, or in `ask_user`'s optional markdown `detail` (at most 8000 characters), which renders under the headline.
-- Deadline is an ISO 8601 date-time, must be in the future, and at most **30 days** out; the default is **24 hours**. A past or over-cap deadline is refused with an `invalid_request` tool error. Expiry, cancel and pending are never approval.
+- Deadline is an ISO 8601 date-time, must be in the future, and at most **30 days** out; the default is **24 hours**. A past or over-cap deadline is refused with an `invalid_request` tool error. Expiry, cancel and pending are never approval. A replay of the same `idempotencyKey` reports the deadline stored on create, never a recomputed one.
 - `requestId` must match `[A-Za-z0-9_-]{1,64}` (no `.`, `..` or `/`).
 - A host read that claims `decision: "edit"` without `editedArgs` fails closed: `get_decision` reports `declined`, never an approval.
 - JSON-RPC bodies over 1 MiB are refused with `413`.

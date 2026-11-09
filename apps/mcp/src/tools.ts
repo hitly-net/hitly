@@ -117,6 +117,17 @@ function resolveDeadline(ctx: ToolContext, deadline?: string): { iso: string } |
   return { iso: new Date(at).toISOString() }
 }
 
+/**
+ * A replay reports the deadline stored on create, not one recomputed now: the retry
+ * may land hours after the original, and the host never moved the real expiry.
+ */
+function reportedDeadline(created: { data: { replayed?: boolean; [key: string]: unknown } }, fallbackIso: string): string {
+  if (created.data.replayed === true && typeof created.data.expiresAt === 'string' && !Number.isNaN(Date.parse(created.data.expiresAt))) {
+    return created.data.expiresAt
+  }
+  return fallbackIso
+}
+
 function resolveResumeUrl(ctx: ToolContext, callbackUrl?: string): { url: string; callback: boolean } | { error: string } {
   if (callbackUrl) return { url: callbackUrl, callback: true }
   if (ctx.config.publicUrl) return { url: `${ctx.config.publicUrl}/callbacks/noop`, callback: false }
@@ -286,7 +297,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
             state: 'pending',
             replayed: created.data.replayed === true,
             argsHash: hash,
-            deadline: deadline.iso,
+            deadline: reportedDeadline(created, deadline.iso),
             callback: resume.callback,
             reviewUrl: reviewUrl(ctx, id),
           }),
@@ -372,7 +383,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
             requestId: id,
             state: 'pending',
             replayed: created.data.replayed === true,
-            deadline: deadline.iso,
+            deadline: reportedDeadline(created, deadline.iso),
             callback: resume.callback,
             reviewUrl: reviewUrl(ctx, id),
           }),

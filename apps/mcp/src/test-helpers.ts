@@ -36,7 +36,7 @@ export class FakeHost {
         auth<IngestResponse>(() => {
           this.ingests.push({ key, idempotencyKey, body })
           const existing = [...this.rows.values()].find((row) => row.key === key && row.idempotencyKey === idempotencyKey)
-          if (existing) return { ok: true, status: 200, data: { id: existing.id, status: existing.read.status, replayed: true } }
+          if (existing) return { ok: true, status: 200, data: { id: existing.id, status: existing.read.status, replayed: true, expiresAt: existing.body.expiresAt } }
           const id = `apr_${String(++this.seq).padStart(4, '0')}`
           this.rows.set(id, { id, key, idempotencyKey, body, read: { id, status: 'pending', presentedAt: null } })
           return { ok: true, status: 200, data: { id, status: 'pending', replayed: false } }
