@@ -308,6 +308,12 @@ export const approvals = pgTable(
     envelope: jsonb('envelope').$type<Record<string, unknown>>().notNull(),
     origin: jsonb('origin').$type<Record<string, unknown>>().notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 255 }),
+    /**
+     * The project API key that created this request (the requester). Scopes
+     * requester cancel and the requester's pending list. Null for requests
+     * created before this column existed, or when the key was deleted.
+     */
+    requesterKeyId: id('requester_key_id').references(() => projectApiKeys.id, { onDelete: 'set null' }),
     expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }),
     /** First shown to a reviewer who can decide (hitl-spec 5.2 `presented`). */
     presentedAt: timestamp('presented_at', { precision: 3, withTimezone: true }),
@@ -321,6 +327,7 @@ export const approvals = pgTable(
     index('approvals_project_status_idx').on(table.projectId, table.status),
     index('approvals_created_at_idx').on(table.createdAt),
     index('approvals_project_idempotency_idx').on(table.projectId, table.idempotencyKey),
+    index('approvals_requester_key_status_idx').on(table.requesterKeyId, table.status),
   ],
 )
 

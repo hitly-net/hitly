@@ -1,17 +1,15 @@
 'use client'
 
 import { useState } from 'react'
+import { redactedRequestJsonFromCanonical } from '@/lib/redact-request-payload'
 
 /**
  * "View original request" panel (hitly#98): opens the create-once
  * `hitl/request/v0` payload lazily (only on explicit open, so the stored record is
- * not shipped on every detail-page render) and offers a Copy of the canonical JSON for
- * off-host verification. Same authentication as the approval detail: the route
- * returns 401 when unauthenticated and 404 when there is no workspace / no access.
- *
- * The copy hands out `canonicalPayload` as received — no redaction, no client
- * re-serialization (JSON.parse/stringify would change the string a verifier hashes).
- * See lib/original-request.ts.
+ * not shipped on every detail-page render). Read-only: Copy and Download (JSON) of
+ * the redacted payload; `payloadHash` / `argsHash` of the stored original for
+ * off-host verification. The UI redacts again as a second line of defence.
+ * `editedArgs` is never rendered here — see EditedArgsPanel.
  */
 
 type OriginalRequestResponse = {
@@ -20,7 +18,24 @@ type OriginalRequestResponse = {
   canonicalPayload: string
   payloadSha256: string
   argsSha256: string
+  payloadHash: string
+  argsHash: string
   evidence?: { eventId: string; contentSha256: string; seq: number }
+}
+
+function downloadJson(filename: string, text: string) {
+  const blob = new Blob([text], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.rel = 'noopener'
+  // preventDefault so jsdom does not treat the blob URL as navigation.
+  anchor.addEventListener('click', (event) => event.preventDefault())
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
 }
 
 export function OriginalRequestPanel({ approvalId }: { approvalId: string }) {
@@ -57,12 +72,18 @@ export function OriginalRequestPanel({ approvalId }: { approvalId: string }) {
     if (next && !data && !loading) void load()
   }
 
+  const displayJson = data ? redactedRequestJsonFromCanonical(data.canonicalPayload) : ''
+
   async function copy() {
     if (!data) return
-    // Hand out the canonical JSON string as received — do not re-serialise.
-    await navigator.clipboard.writeText(data.canonicalPayload)
+    await navigator.clipboard.writeText(displayJson)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1500)
+  }
+
+  function download() {
+    if (!data) return
+    downloadJson(`original-request-${data.requestId}.json`, displayJson)
   }
 
   return (
@@ -78,29 +99,47 @@ export function OriginalRequestPanel({ approvalId }: { approvalId: string }) {
       {open ? (
         <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Canonical JSON of the stored create-once request (not re-rendered from the screen). Paste it
-            into a known-good host or verifier to check what you are approving.
+            Stored create-once request (read-only). JSON is redacted for display, copy and
+            download; <span className="font-mono">payloadHash</span> and{' '}
+            <span className="font-mono">argsHash</span> are of the stored original so you can
+            verify off-host.
           </p>
           {loading ? <p className="mt-2 text-sm text-zinc-500">Loading…</p> : null}
           {error ? <p className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
           {data ? (
             <>
-              <pre className="mt-2 max-h-96 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-                {data.canonicalPayload}
+              <pre
+                data-testid="original-request-json"
+                className="mt-2 max-h-96 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900"
+              >
+                {displayJson}
               </pre>
               <div className="mt-2 flex items-start justify-between gap-3">
                 <dl className="space-y-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                  <div>sha256 {data.payloadSha256}</div>
-                  <div>args {data.argsSha256}</div>
-                  {data.evidence ? <div>evidence #{data.evidence.seq} {data.evidence.contentSha256}</div> : null}
+                  <div>payloadHash {data.payloadHash}</div>
+                  <div>argsHash {data.argsHash}</div>
+                  {data.evidence ? (
+                    <div>
+                      evidence #{data.evidence.seq} {data.evidence.contentSha256}
+                    </div>
+                  ) : null}
                 </dl>
-                <button
-                  type="button"
-                  onClick={() => void copy()}
-                  className="shrink-0 rounded-md border border-zinc-200 px-3 py-1 text-sm dark:border-zinc-700"
-                >
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void copy()}
+                    className="rounded-md border border-zinc-200 px-3 py-1 text-sm dark:border-zinc-700"
+                  >
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={download}
+                    className="rounded-md border border-zinc-200 px-3 py-1 text-sm dark:border-zinc-700"
+                  >
+                    Download (JSON)
+                  </button>
+                </div>
               </div>
             </>
           ) : null}

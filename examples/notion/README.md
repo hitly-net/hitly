@@ -44,7 +44,7 @@ On the requests database:
 - Include page id, title, requester, and a Notion URL
 - Paid-plan automations only send selected properties, not page body
 
-Use the Notion page id as HITLy `runId` and `Idempotency-Key` so retries do not duplicate **open** cards. After reject or cancel, the same page id creates a new item.
+Use the Notion page id as HITLy `runId` and `Idempotency-Key` so retries do not duplicate **open** cards. Note the create-once rule (hitl-spec 3.2): after reject or cancel, POSTing the same page id does **not** create a new item for the published retention window (10 days by default, advertised as `createOnce.retentionSeconds` on every ingest response) — it replays the closed request. Replay is per API key: a different key reusing the id gets `409`, not the other key's card. To deliberately re-ask, send a new `Idempotency-Key` (for example `{pageId}:retry-2`), as in hitl-spec 4.2.
 
 ![Notion Content database with Software licences In review](content-database.png)
 

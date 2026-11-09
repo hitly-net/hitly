@@ -5,7 +5,24 @@ description: Ingest and decide HTTP endpoints.
 
 Authenticate ingest with a **project** API key: `Authorization: Bearer hitly_...`
 
-The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origin may retry the suspend POST. A matching **open** item (`pending` or `failed_resume`) is replayed. After reject, cancel, decide, or expiry, the same key creates a new inbox item.
+The key must belong to `HITLY_PROJECT_ID`. Send `Idempotency-Key` when the origin may retry the suspend POST.
+
+### Create-once
+
+Within a project, a repeat POST with the same `Idempotency-Key` **from the API key that created the request** returns the existing request instead of creating a second ask (`"replayed": true`, same `id`, stored request unchanged) **only when the new body's `payloadHash` matches the stored request**. `payloadHash` is `b64url(SHA-256(JCS(envelope)))` of the ingested create-once record (`plugin.ingest()` output stored on `approvals.envelope`; [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) JSON Canonicalization, unpadded base64url). Replay applies when:
+
+- the existing request is still **open** (`pending` or `failed_resume`), at any age; or
+- it is **closed** (decided, rejected, cancelled or expired) and was created less than the **create-once retention period** ago.
+
+`payloadHash` **includes** every field the plugin wrote onto that record: `action` (name + args), `allowedActions`, gating/context (`reasonRequired`, `contextMarkdown`, `metadata`, `externalUrls`, `attachments`), `resumeSchema`, `expiresAt`, `editableFields`, `editReason`, envelope evidence fields (`traceId`, `spanId`, `agentId`, `systemId`, `inventoryId`, `policyId`, `policyRationale`, `riskTier`, `toolName`, `sensitivity`, `dataCategories`), and the nested `origin` (`plugin`, `projectId`, `runId`, `stepId`, `resumeHandle` including origin URLs merged from the project such as `mastraBaseUrl`, `details`, and origin evidence fields). JSON member order is canonicalised, so shuffled `action.args` keys still match.
+
+`payloadHash` **excludes** HTTP headers (`Authorization`, `Idempotency-Key`, `Content-Type`, `x-hitly-client`), API key material, host-assigned create-once fields (`id`, `status`, timestamps, `requesterKeyId`, `replayed`, `createOnce`, response `argsHash`), project credential secrets (`resumeSecret`, `token`) which are not copied onto the envelope, unmapped extra keys on the raw POST body (dropped at ingest), and `undefined` keys (dropped so ingest/JSONB match the stored row).
+
+If the same key reuses the `Idempotency-Key` with a **different** `payloadHash`, the POST is rejected with `409` and `{ "error": "…", "code": "idempotency_conflict" }`. The stored response is not replayed and no second row is created, so a bot cannot treat a changed body as recorded. The project log line for that conflict includes `approvalId` and does not log the request payload or secrets. To re-ask with a revised payload, send a **new** `Idempotency-Key` (hitl-spec 4.2: a re-submit is a new `requestId`).
+
+Replay is **per API key** (consistent with key-scoped cancel and the pending list): a sibling key on the same project never replays another key's request. While the `Idempotency-Key` is still held by a request the calling key cannot replay (a sibling's, still open or inside the retention window), that POST is rejected with `409` and `{ "error": … }` only - no id, status or payload of the other request is disclosed. During the 10-day idempotency window (the boundary instant is exclusive), a legacy row with no requester key returns `409` for any key. An open legacy row with no requester key returns `409` at any age.
+
+The retention period is **10 days** by default and is published in every create response as `createOnce.retentionSeconds`. Self-hosted operators can change it with `HITLY_CREATE_ONCE_RETENTION_DAYS` (whole days, 1–3650). After the period, a repeat POST of the same `Idempotency-Key` may create a new request. Keep your own record of a spent `requestId` at least that long.
 
 ## Create approval
 
@@ -52,6 +69,8 @@ HTTP origins send `plugin: "http"`, `resumeUrl`, and optional `metadata`. HITL<s
 }
 ```
 
+The create response is `{ id, status, replayed, envelope, argsHash, createOnce }`. `argsHash` is `b64url(SHA-256(JCS(action.args)))` over the original arguments ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) JSON Canonicalization, unpadded base64url), the same value a `hitl/response/v0` carries.
+
 On accept or reject, HITL<sub><i>y</i></sub> POSTs that `metadata` unchanged to `resumeUrl`:
 
 ```json
@@ -80,7 +99,7 @@ The JSON response includes `resumeResponse`: the payload sent to the origin (`re
 
 ## Force cancel
 
-`POST /api/v1/approvals/:id/cancel` (session) when status is `pending` or `failed_resume`. Closes the item as `cancelled` without calling the origin. Use when the origin run is no longer suspended.
+`POST /api/v1/approvals/:id/cancel` (reviewer session) when status is `pending` or `failed_resume`. Closes the item as `cancelled` without calling the origin. Use when the origin run is no longer suspended.
 
 ## Inbox
 
@@ -90,9 +109,41 @@ Query: `scope=all|open|closed`, `q`, `projectId`. `open` is pending + failed res
 
 `GET /api/v1/inbox/summary` returns `{ pending, failedResume, decidedToday, projectCount }`.
 
-`GET /api/v1/approvals/:id` returns envelope, origin, `originFields`, decisions, and `canAct` (session cookie or reviewer Bearer token).
+`GET /api/v1/approvals/:id` (session cookie or reviewer Bearer token) returns envelope, origin, `originFields`, decisions, `canAct`, and — when the item is actionable for this reviewer — `openedRefs`.
 
-A **project** API key on the same route returns a slim origin-poll payload: `{ id, status, decision?, response? }`. Hermes uses this while `present()` waits and while the gateway kanban poller applies comment + unblock.
+`openedRefs` is the gating keys (hitl-spec 3.7) **this** reviewer has already recorded opens for. It is built from `opened` audit events written by `POST /api/v1/approvals/:id/opens`. Reviewer clients hydrate the must-open checklist from it so re-entering an approval does not force opening every item again. The field is omitted when `canAct` is false. The host still re-validates decide against the recorded events, not against this field.
+
+A **project** API key on the same route returns the requester view. It keeps the origin-poll fields `{ id, status, decision?, response?, presentedAt }` that Hermes polls while `present()` waits, and adds:
+
+- `hitl`: the `hitl/response/v0` object once the request is closed (`null` while it is open). `status` is `answered` (accept and edit carry `value: "approve"`, reject `value: "reject"`, respond carries the reply text), `declined` (ignore), `cancelled` or `expired`. `decidedBy` is the reviewer's user id, never their name or email. `signature` is `null` for now. HITL<sub><i>y</i></sub> specifics sit in `_meta` under `net.hitly/…` keys: `net.hitly/decision`, `net.hitly/editedArgs` (edit only), `net.hitly/cancelledBy` (`requester` or `reviewer`).
+- `state`: the current status, with an overdue `pending` request reported as `expired`.
+- `argsHash`: the JCS hash of the original arguments. The stored request is never changed by an edit.
+- `editedArgs`: on an edit, the full arguments the reviewer approved (original merged with the edits). Run these, not the original.
+- `activity`: `{ presentedAt, items: [{ ref, sha256, openedAt[] }] }` for the declared context items.
+
+Any key on the request's project can read it; keys on other projects get 404.
+
+## Requester cancel
+
+`POST /api/v1/approvals/:id/cancel` with the **project API key that created the request** withdraws an unanswered `pending` request. Optional body `{ "reason": "…" }`. The request closes as `cancelled` (`net.hitly/cancelledBy: "requester"`) and the origin is not resumed. Another key, even on the same project, gets 404. An answered, expired or already-closed request returns 409.
+
+## Pending requests
+
+`GET /api/v1/approvals` with a project API key lists the open requests **that key created**: `pending` (not past its deadline) and `failed_resume`, newest first.
+
+Query: `projectId` (optional; must be the key's project), `status=open` (the default and only value), `limit` (1–200, default 50).
+
+```json
+{
+  "projectId": "prj_...",
+  "status": "open",
+  "items": [
+    { "id": "apr_...", "kind": "approval", "status": "pending", "actionName": "send-refund", "idempotencyKey": "run_...:refund", "createdAt": "…", "deadline": "…", "presentedAt": null }
+  ]
+}
+```
+
+Requests created before this release have no recorded requester key, so they are not listed and cannot be cancelled with a key; reviewers can still cancel them.
 
 ## Workspaces and devices
 
@@ -102,7 +153,7 @@ A **project** API key on the same route returns a slim origin-poll payload: `{ i
 
 `GET /api/v1/projects` lists visible projects. `GET /api/v1/projects/:id` is the summary. `GET`/`PATCH /api/v1/projects/:id/config` is project config for admins (name, SLA, assignee, origin URL; token is write-only). Ingest API keys stay on the web app.
 
-`POST /api/v1/devices` registers an Expo push token (`{ "token", "platform": "ios"|"android" }`). `DELETE /api/v1/devices` unregisters `{ "token" }`. Project API keys are ingest-only — never use them from the reviewer app.
+`POST /api/v1/devices` registers an Expo push token (`{ "token", "platform": "ios"|"android" }`). `DELETE /api/v1/devices` unregisters `{ "token" }`. Project API keys are requester credentials (create, read, cancel and list your own requests). Never use them from the reviewer app.
 
 `GET /api/v1/health` is public: `{ "ok": true, "product": "hitly", "edition": "oss"|"cloud" }`.
 

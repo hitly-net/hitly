@@ -5,8 +5,10 @@ import type { EvidenceClient } from '@hitly/core'
  * `client` field (`hitly.evidence.v1` only - hitl-spec 5.3 keeps device data
  * out of the generic event envelope).
  *
- * No IP address is recorded here: device data stays minimal (privacy).
- * TODO(derek): ip? only if a compliance requirement ever asks for it.
+ * `channel` is a self-reported session hint, not a host-verified device
+ * identity: cookie sessions are `web`; `x-hitly-client` is honoured only on
+ * bearer sessions (mobile apps). No IP address is recorded (privacy; device
+ * data stays minimal).
  */
 
 export const CLIENT_HEADER = 'x-hitly-client'
@@ -37,11 +39,13 @@ function sanitizeUserAgent(raw: string | null): string | undefined {
 export function clientFromHeaders(headers: Headers): EvidenceClient {
   const authorization = headers.get('authorization') ?? ''
   const hasBearer = /^Bearer\s+\S+/i.test(authorization)
-  const rawClient = headers.get(CLIENT_HEADER)
-  const hasOriginHeader = Boolean(headers.get(ORIGIN_HEADER))
+  // S97-S1: `x-hitly-client` is client-asserted. Honour it only on bearer
+  // sessions so a cookie (web) session cannot flip `channel` to `mobile`.
+  const rawClient = hasBearer ? headers.get(CLIENT_HEADER) : null
+  const hasOriginHeader = hasBearer && Boolean(headers.get(ORIGIN_HEADER))
 
   let channel: EvidenceClient['channel']
-  if (rawClient || (hasBearer && hasOriginHeader)) {
+  if (hasBearer && (rawClient || hasOriginHeader)) {
     // The mobile app sends `x-hitly-origin` (and now `x-hitly-client`) with its
     // bearer session; a bare bearer without those headers is a raw API client.
     channel = 'mobile'

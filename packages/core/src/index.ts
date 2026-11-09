@@ -303,6 +303,7 @@ export type {
   TenantDocument,
   WorkspacePlan,
 } from './edition.ts'
+export { argsHash, eventHash, jcs, jcsHash, sha256B64url } from './jcs.ts'
 export {
   EVIDENCE_SPEC_VERSION,
   canonicalJson,

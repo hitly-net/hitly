@@ -3,12 +3,14 @@ import { isOpenApprovalStatus, type ApprovalEnvelope, type OriginRef, type Plugi
 import { approvals, decisionRecords, projects } from '@hitly/db/schema'
 import { approvalHasExpired } from './approval-expiry'
 import { canDecide, getProjectAccess } from './rbac'
-import { originFields, envelopeMetadata, stripOriginSecrets } from './origin'
+import { originFields, envelopeMetadata } from './origin'
 import { loadOpenedContextRefs } from './context-opens'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
 import { loadEvidenceReceiptForDisplay } from './evidence'
+import { isSecretRequestKey, redactRequestPayload } from './redact-request-payload'
 
+/** Session GET /api/v1/approvals/:id. Origin, envelope, and decision secrets are redacted in the response only. */
 export async function getApprovalDetail(args: {
   approvalId: string
   userId: string
@@ -34,6 +36,9 @@ export async function getApprovalDetail(args: {
 
     const envelope = (await decodeTenantJson(args.workspaceId, approval.envelope)) as unknown as ApprovalEnvelope
     const origin = (await decodeTenantJson(args.workspaceId, approval.origin)) as unknown as OriginRef
+    // Display fields from the stored original; JSON below is a redacted *view*.
+    const metadata = envelopeMetadata(envelope, origin)
+    const fields = originFields(origin)
     const expired = approvalHasExpired(approval)
     const canAct = canDecide(access) && isOpenApprovalStatus(approval.status) && !expired
     const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status)
@@ -55,9 +60,10 @@ export async function getApprovalDetail(args: {
     const decodedDecisions = await Promise.all(
       decisions.map(async (row) => ({
         ...row,
-        payload: await decodeTenantJson(args.workspaceId, row.payload),
+        // Response-only: stored decision JSONB is not rewritten.
+        payload: redactRequestPayload(await decodeTenantJson(args.workspaceId, row.payload)),
         resumeResponse: row.resumeResponse
-          ? await decodeTenantJson(args.workspaceId, row.resumeResponse)
+          ? redactRequestPayload(await decodeTenantJson(args.workspaceId, row.resumeResponse))
           : row.resumeResponse,
       })),
     )
@@ -92,20 +98,13 @@ export async function getApprovalDetail(args: {
       expiresAt: approval.expiresAt,
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
-      envelope: (() => {
-        // The stored row may embed origin (the ingest return is
-        // `ApprovalEnvelope & { origin }`); strip credentials from that copy too.
-        const embedded = (envelope as ApprovalEnvelope & { origin?: unknown }).origin
-        return {
-          ...envelope,
-          ...(embedded !== undefined ? { origin: stripOriginSecrets(embedded) } : {}),
-          metadata: envelopeMetadata(envelope, origin),
-        }
-      })(),
-      // The approvals.origin column legitimately holds the callback token for
-      // resume(); reviewer projections must never carry it (spec: "never echo in reads").
-      origin: stripOriginSecrets(origin),
-      originFields: originFields(origin),
+      // Response-only: stored envelope/origin and payloadHash/argsHash are not rewritten.
+      envelope: redactRequestPayload({
+        ...envelope,
+        metadata,
+      }) as ApprovalEnvelope,
+      origin: redactRequestPayload(origin) as OriginRef,
+      originFields: fields.filter((row) => !isSecretRequestKey(row.key)),
       canAct,
       canCancel,
       ...(openedRefs ? { openedRefs } : {}),

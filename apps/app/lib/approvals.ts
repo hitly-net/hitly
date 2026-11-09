@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, or, sql } from 'drizzle-orm'
 import { edition } from '@hitly/cloud'
 import {
   isDecision,
@@ -21,7 +21,7 @@ import {
   type ResumeResponse,
   type WorkspaceRole,
 } from '@hitly/core'
-import { approvals, decisionRecords, projectApiKeys, projectRules, projects, users } from '@hitly/db/schema'
+import { approvals, decisionRecords, evidenceReceipts, projectApiKeys, projectEvents, projectRules, projects, users } from '@hitly/db/schema'
 import { getPlugin } from './plugins'
 import { envelopeMetadata, stripOriginSecrets } from './origin'
 import { hashApiKey } from './keys'
@@ -40,6 +40,8 @@ import { canDecide, getProjectAccess } from './rbac'
 import { loadOpenedContextRefs } from './context-opens'
 import { exportOtelTrace } from './otel-trace'
 import { resumeFailureMessage } from './resume-error'
+import { createOnceCutoff, envelopePayloadHash } from './create-once'
+import { buildHitlRead } from './hitl-response'
 
 export async function authenticateProjectKey(rawKey: string, projectId?: string) {
   const hashed = hashApiKey(rawKey)
@@ -107,9 +109,15 @@ function asOrigin(value: Record<string, unknown>): OriginRef {
 export const EVIDENCE_INCLUDE_ACTOR_DISPLAY = true
 
 /** Resolve the deciding human into the hitl-spec `{kind,id,display?}` actor shape (spec 4.1/4.2). */
-async function resolveReviewerActor(database: ReturnType<typeof requireDb>, actorUserId: string): Promise<EvidenceActor> {
+async function resolveReviewerActor(
+  database: ReturnType<typeof requireDb>,
+  actorUserId: string,
+): Promise<EvidenceActor | undefined> {
+  // S97-S4: never emit `decidedBy.id: ''` after the reviewer row is gone
+  // (`decision_records.actor_user_id` is ON DELETE SET NULL).
+  if (!actorUserId) return undefined
   let display: string | undefined
-  if (EVIDENCE_INCLUDE_ACTOR_DISPLAY && actorUserId) {
+  if (EVIDENCE_INCLUDE_ACTOR_DISPLAY) {
     const rows = await database
       .select({ name: users.name, email: users.email })
       .from(users)
@@ -121,31 +129,93 @@ async function resolveReviewerActor(database: ReturnType<typeof requireDb>, acto
   return { kind: 'human', id: actorUserId, ...(display ? { display } : {}) }
 }
 
+const EVIDENCE_CHANNELS = new Set<EvidenceClient['channel']>(['web', 'mobile', 'api'])
+const EVIDENCE_ACTOR_KINDS = new Set<EvidenceActor['kind']>(['human', 'group', 'service'])
+
+/** Snapshot stored on `decision_records.client` (tenant-encrypted) so retry reuses actor + device. */
+type StoredDecisionContext = {
+  client?: EvidenceClient
+  actor?: EvidenceActor
+}
+
+function asEvidenceClient(value: unknown): EvidenceClient | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (!EVIDENCE_CHANNELS.has(raw.channel as EvidenceClient['channel'])) return undefined
+  const client: EvidenceClient = { channel: raw.channel as EvidenceClient['channel'] }
+  if (raw.platform === 'ios' || raw.platform === 'android') client.platform = raw.platform
+  if (typeof raw.appVersion === 'string' && raw.appVersion) client.appVersion = raw.appVersion
+  if (typeof raw.userAgent === 'string' && raw.userAgent) client.userAgent = raw.userAgent
+  return client
+}
+
+function asEvidenceActor(value: unknown): EvidenceActor | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (!EVIDENCE_ACTOR_KINDS.has(raw.kind as EvidenceActor['kind'])) return undefined
+  if (typeof raw.id !== 'string' || !raw.id) return undefined
+  return {
+    kind: raw.kind as EvidenceActor['kind'],
+    id: raw.id,
+    ...(typeof raw.display === 'string' && raw.display ? { display: raw.display } : {}),
+  }
+}
+
+function decodeStoredDecisionContext(raw: unknown): StoredDecisionContext {
+  if (!raw || typeof raw !== 'object') return {}
+  const obj = raw as Record<string, unknown>
+  // Pre-S4 rows stored a bare EvidenceClient (`{channel, platform?, ...}`).
+  if (typeof obj.channel === 'string' && !('client' in obj) && !('actor' in obj)) {
+    return { client: asEvidenceClient(obj) }
+  }
+  return {
+    client: asEvidenceClient(obj.client),
+    actor: asEvidenceActor(obj.actor),
+  }
+}
+
 /**
- * B1 guard (hitly#97): a `presented` record may only be written for an ask that
- * has NOT been decided yet. Migration 0004 added `presented_at` as NULL with no
- * backfill, so pre-migration rows can legitimately be `failed_resume` (an open
- * status) with `presented_at IS NULL`. Appending `presented` for those rows
- * would place it AFTER `decided` in the evidence chain, which is false evidence
- * (an item that was decided was necessarily already shown) and breaks the
- * hitl-spec 5.2/5.4 order requested -> presented -> decided -> resumed.
+ * A `presented` record may only be written for an ask that has NOT been
+ * decided yet (hitl-spec 5.2/5.4: requested -> presented -> decided).
  *
- * Returns true when the row is still `pending`, or - belt and braces for odd
- * states - when no decision has ever been recorded for it.
+ * B1 (hitly#97): migration 0004 added `presented_at` as NULL with no backfill,
+ * so pre-migration rows can be `failed_resume` (an open status) with
+ * `presented_at IS NULL`. Appending `presented` there would land AFTER
+ * `decided` — false evidence, because a decided item was necessarily shown.
+ *
+ * Status `pending` is not enough. A late duplicate `presented` can still
+ * arrive after a terminal decision (`decided` / accept or reject,
+ * `expired`, `cancelled`, or `failed_resume`) when `presented_at` is NULL.
+ * The S97-S2 race check used `indexOf`, which only sees the first of each
+ * type and would still pass if a second `presented` landed after `decided`.
+ * Always look at `decision_records` and at decided/resume receipts: any
+ * prior decision means skip. Does not change state and does not appear as
+ * a fresh presentation after decided.
  */
 async function mayRecordPresented(
   database: ReturnType<typeof requireDb>,
   approvalId: string,
-  status: string,
   workspaceId: string,
 ): Promise<boolean> {
-  if (status === 'pending') return true
   const decidedRows = await database
     .select({ id: decisionRecords.id })
     .from(decisionRecords)
     .where(and(eq(decisionRecords.approvalId, approvalId), eq(decisionRecords.workspaceId, workspaceId)))
     .limit(1)
-  return decidedRows.length === 0
+  if (decidedRows.length > 0) return false
+
+  const terminal = await database
+    .select({ eventType: evidenceReceipts.eventType })
+    .from(evidenceReceipts)
+    .where(
+      and(
+        eq(evidenceReceipts.approvalId, approvalId),
+        eq(evidenceReceipts.workspaceId, workspaceId),
+        inArray(evidenceReceipts.eventType, ['decided', 'resumed', 'resume_failed']),
+      ),
+    )
+    .limit(1)
+  return terminal.length === 0
 }
 
 /**
@@ -187,7 +257,7 @@ export async function markApprovalPresented(args: {
     // Legacy rows from before migration 0004 have presented_at NULL even when
     // already decided (failed_resume is an open status). A late `presented`
     // would land after `decided` in the chain: false evidence, never recorded.
-    if (!(await mayRecordPresented(database, approval.id, approval.status, workspaceId))) {
+    if (!(await mayRecordPresented(database, approval.id, workspaceId))) {
       return { presentedAt: null }
     }
 
@@ -216,6 +286,7 @@ export async function markApprovalPresented(args: {
     try {
       const latest = await loadLatestReceipt(approval.id, workspaceId)
       const actor = await resolveReviewerActor(database, args.actorUserId)
+      if (!actor) return { presentedAt: presentedAt.toISOString() }
       const presentedEvent = await buildPresentedEvent({
         approvalId: approval.id,
         envelope,
@@ -278,6 +349,58 @@ function withProjectCredentials(body: Record<string, unknown>, project: typeof p
   return merged
 }
 
+type LoadedProject = Awaited<ReturnType<typeof decodeProject<typeof projects.$inferSelect>>>
+type IngestedEnvelope = ApprovalEnvelope & { origin: OriginRef }
+
+async function ingestBodyToEnvelope(args: {
+  body: Record<string, unknown>
+  project: LoadedProject
+}): Promise<{ ok: true; ingested: IngestedEnvelope } | { ok: false; error: string; status: 400 }> {
+  const pluginId = args.body.plugin ?? args.project.plugin
+  if (!isPluginId(pluginId) || pluginId !== args.project.plugin) {
+    await logProjectEvent({
+      projectId: args.project.id,
+      level: 'error',
+      type: 'ingest',
+      message: `Plugin mismatch: expected ${args.project.plugin}`,
+    })
+    return { ok: false as const, error: `Project is configured for ${args.project.plugin}`, status: 400 as const }
+  }
+
+  const merged = withProjectCredentials(args.body, args.project)
+  let ingested: IngestedEnvelope
+  try {
+    ingested = getPlugin(pluginId).ingest(merged)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Ingest failed'
+    await logProjectEvent({
+      projectId: args.project.id,
+      level: 'error',
+      type: 'ingest',
+      message,
+    })
+    return { ok: false as const, error: message, status: 400 as const }
+  }
+
+  const gatingErrors = validateRequestGating(ingested)
+  if (gatingErrors.length > 0) {
+    const message = `Invalid gating config: ${gatingErrors.map((error) => `${error.field}: ${error.message}`).join('; ')}`
+    await logProjectEvent({
+      projectId: args.project.id,
+      level: 'error',
+      type: 'ingest',
+      message,
+    })
+    return { ok: false as const, error: message, status: 400 as const }
+  }
+
+  ingested.origin.projectId = args.project.id
+  if (pluginId === 'mastra' && !ingested.origin.resumeHandle.mastraBaseUrl && typeof args.project.credentials.baseUrl === 'string') {
+    ingested.origin.resumeHandle.mastraBaseUrl = args.project.credentials.baseUrl
+  }
+  return { ok: true as const, ingested }
+}
+
 async function applyRules(args: {
   project: typeof projects.$inferSelect
   envelope: ApprovalEnvelope
@@ -312,6 +435,8 @@ export async function ingestApproval(args: {
   apiKey: string
   body: Record<string, unknown>
   idempotencyKey?: string | null
+  /** Clock for the create-once window (tests). */
+  now?: number
 }) {
   const requestedProjectId = typeof args.body.projectId === 'string' ? args.body.projectId : undefined
   const authn = await authenticateProjectKey(args.apiKey, requestedProjectId)
@@ -336,6 +461,19 @@ export async function ingestApproval(args: {
   const project = await decodeProject(loaded)
 
   if (args.idempotencyKey) {
+    // Create-once (hitl-spec 3.2): serialise submissions of the same key in this
+    // project for the rest of the transaction, so two concurrent submits cannot
+    // both miss the lookup and create two asks.
+    await database.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`hitly:create-once:${project.id}:${args.idempotencyKey}`}, 0))`,
+    )
+    // Replay is scoped to the API key that created the request, consistent
+    // with key-scoped cancel and the pending list (PM ruling D3). Open
+    // requests replay at any age; closed ones replay inside the published
+    // retention window (lib/create-once.ts). Newest matching row wins
+    // (created_at DESC, id DESC as the tie-break). Same payloadHash (JCS of
+    // the ingested envelope) replays the stored request; a different payloadHash
+    // is 409 idempotency_conflict so a changed body is never silently recorded.
     const existing = await database
       .select()
       .from(approvals)
@@ -344,67 +482,95 @@ export async function ingestApproval(args: {
           eq(approvals.workspaceId, project.workspaceId),
           eq(approvals.projectId, project.id),
           eq(approvals.idempotencyKey, args.idempotencyKey),
-          inArray(approvals.status, OPEN_APPROVAL_STATUSES),
+          eq(approvals.requesterKeyId, key.id),
+          or(inArray(approvals.status, OPEN_APPROVAL_STATUSES), gt(approvals.createdAt, createOnceCutoff(args.now ?? Date.now()))),
         ),
       )
+      .orderBy(desc(approvals.createdAt), desc(approvals.id))
       .limit(1)
     if (existing[0]) {
+      const incoming = await ingestBodyToEnvelope({ body: args.body, project })
+      if (!incoming.ok) return incoming
+      const storedEnvelope = await decodeTenantJson(project.workspaceId, existing[0].envelope)
+      const storedHash = await envelopePayloadHash(storedEnvelope)
+      const incomingHash = await envelopePayloadHash(incoming.ingested)
+      if (storedHash !== incomingHash) {
+        await logProjectEvent({
+          workspaceId: project.workspaceId,
+          projectId: project.id,
+          approvalId: existing[0].id,
+          type: 'ingest',
+          level: 'warn',
+          // approvalId belongs on the log line; never log the request payload or secrets.
+          message: `Create-once conflict: payloadHash does not match the stored request (approvalId=${existing[0].id})`,
+          payload: { conflict: true, code: 'idempotency_conflict', requesterKeyId: key.id },
+        })
+        return {
+          ok: false as const,
+          error: 'Idempotency-Key reused with a different payload',
+          code: 'idempotency_conflict' as const,
+          status: 409 as const,
+        }
+      }
+      await logProjectEvent({
+        workspaceId: project.workspaceId,
+        projectId: project.id,
+        approvalId: existing[0].id,
+        type: 'ingest',
+        message: 'Create-once replay: returned the existing request',
+        payload: { replayed: true, status: existing[0].status, requesterKeyId: key.id },
+      })
       return {
         ok: true as const,
         approval: {
           ...existing[0],
-          envelope: await decodeTenantJson(project.workspaceId, existing[0].envelope),
+          envelope: storedEnvelope,
           origin: await decodeTenantJson(project.workspaceId, existing[0].origin),
         },
         replayed: true,
       }
     }
+
+    // D3 (PM ruling): replay is per creating key, so a sibling key in the
+    // same project never replays another key's request. If the id is still
+    // held by a request this key cannot replay - a sibling's, or a legacy
+    // key-less row - the submission is a plain conflict: no id, status or
+    // payload of the other request is disclosed, and no second ask is
+    // created for a live id.
+    const heldByOther = await database
+      .select({ id: approvals.id })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.workspaceId, project.workspaceId),
+          eq(approvals.projectId, project.id),
+          eq(approvals.idempotencyKey, args.idempotencyKey),
+          sql`${approvals.requesterKeyId} is distinct from ${key.id}`,
+          or(inArray(approvals.status, OPEN_APPROVAL_STATUSES), gt(approvals.createdAt, createOnceCutoff(args.now ?? Date.now()))),
+        ),
+      )
+      .limit(1)
+    if (heldByOther[0]) {
+      await logProjectEvent({
+        workspaceId: project.workspaceId,
+        projectId: project.id,
+        type: 'ingest',
+        level: 'warn',
+        message: 'Create-once conflict: Idempotency-Key is held by a different API key',
+        payload: { conflict: true, requesterKeyId: key.id },
+      })
+      return {
+        ok: false as const,
+        error: 'Idempotency-Key already used in this project by a different API key',
+        status: 409 as const,
+      }
+    }
   }
 
-  const pluginId = args.body.plugin ?? project.plugin
-  if (!isPluginId(pluginId) || pluginId !== project.plugin) {
-    await logProjectEvent({
-      projectId: project.id,
-      level: 'error',
-      type: 'ingest',
-      message: `Plugin mismatch: expected ${project.plugin}`,
-    })
-    return { ok: false as const, error: `Project is configured for ${project.plugin}`, status: 400 as const }
-  }
-
-  const merged = withProjectCredentials(args.body, project)
-  let ingested
-  try {
-    ingested = getPlugin(pluginId).ingest(merged)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Ingest failed'
-    await logProjectEvent({
-      projectId: project.id,
-      level: 'error',
-      type: 'ingest',
-      message,
-    })
-    return { ok: false as const, error: message, status: 400 as const }
-  }
-
-  // Request-level gating validation (hitl-spec 7, at ingest): refuse malformed
-  // reasonRequired entries and context refs instead of storing a broken gate.
-  const gatingErrors = validateRequestGating(ingested)
-  if (gatingErrors.length > 0) {
-    const message = `Invalid gating config: ${gatingErrors.map((error) => `${error.field}: ${error.message}`).join('; ')}`
-    await logProjectEvent({
-      projectId: project.id,
-      level: 'error',
-      type: 'ingest',
-      message,
-    })
-    return { ok: false as const, error: message, status: 400 as const }
-  }
-
-  ingested.origin.projectId = project.id
-  if (pluginId === 'mastra' && !ingested.origin.resumeHandle.mastraBaseUrl && typeof project.credentials.baseUrl === 'string') {
-    ingested.origin.resumeHandle.mastraBaseUrl = project.credentials.baseUrl
-  }
+  const prepared = await ingestBodyToEnvelope({ body: args.body, project })
+  if (!prepared.ok) return prepared
+  const ingested = prepared.ingested
+  const pluginId = ingested.origin.plugin
 
   const routed = await applyRules({ project, envelope: ingested, origin: ingested.origin })
   const approvalId = newId('apr').slice(0, 36)
@@ -425,6 +591,7 @@ export async function ingestApproval(args: {
     } as unknown as Record<string, unknown>),
     origin: await encodeTenantJson(project.workspaceId, ingested.origin as unknown as Record<string, unknown>),
     idempotencyKey: args.idempotencyKey ?? null,
+    requesterKeyId: key.id,
     expiresAt: routed.expiresAt,
   })
 
@@ -521,6 +688,8 @@ export async function decideApproval(args: {
   client?: EvidenceClient
   /** Set by retryResume: marks the audit event only, never the evidence oversight. */
   retry?: boolean
+  /** Set by retryResume: reuse the snapshotted actor (frozen display, no empty id). */
+  decidedBy?: EvidenceActor
 }) {
   const workspaceId = args.workspaceId ?? requireTenantWorkspaceId()
   return withTenant(workspaceId, async () => {
@@ -613,7 +782,7 @@ export async function decideApproval(args: {
     }
 
     let latest = await loadLatestReceipt(approval.id, workspaceId)
-    const reviewerActor = await resolveReviewerActor(database, args.actorUserId)
+    const reviewerActor = args.decidedBy ?? (await resolveReviewerActor(database, args.actorUserId))
 
     // Implicit `presented` on decide (hitl-spec 5.2): an API-only decide, an old
     // mobile build, or a submit that beats the mark-presented effect still records
@@ -625,7 +794,8 @@ export async function decideApproval(args: {
     if (
       !args.retry &&
       !approval.presentedAt &&
-      (await mayRecordPresented(database, approval.id, approval.status, workspaceId))
+      reviewerActor &&
+      (await mayRecordPresented(database, approval.id, workspaceId))
     ) {
       const implicitPresentedAt = new Date()
       await database
@@ -858,16 +1028,21 @@ export async function decideApproval(args: {
       }
     }
 
+    const storedContext: StoredDecisionContext = {
+      ...(args.client ? { client: args.client } : {}),
+      ...(reviewerActor ? { actor: reviewerActor } : {}),
+    }
     await database.insert(decisionRecords).values({
       id: newId('dec').slice(0, 36),
       workspaceId,
       approvalId: approval.id,
-      actorUserId: args.actorUserId,
+      actorUserId: args.actorUserId || null,
       decision: args.payload.decision,
       payload: await encodeTenantJson(workspaceId, args.payload as unknown as Record<string, unknown>),
-      client: args.client
-        ? await encodeTenantJson(workspaceId, args.client as unknown as Record<string, unknown>)
-        : null,
+      client:
+        storedContext.client || storedContext.actor
+          ? await encodeTenantJson(workspaceId, storedContext as unknown as Record<string, unknown>)
+          : null,
       resumeError,
       resumeResponse: resumeResponse
         ? await encodeTenantJson(workspaceId, resumeResponse as unknown as Record<string, unknown>)
@@ -940,6 +1115,125 @@ export async function cancelApproval(args: { approvalId: string; actorUserId: st
   })
 }
 
+/**
+ * Requester cancel with a project API key. Only the key that created the
+ * request may cancel it; any other key (including another key on the same
+ * project) gets 404, so request ids do not leak across requesters. Recorded
+ * as `cancel` with `by: "requester"` and no human actor: it is not a reviewer
+ * decline. The origin is not resumed (the requester withdrew it itself).
+ */
+export async function cancelApprovalAsRequester(args: { apiKey: string; approvalId: string; reason?: string }) {
+  const authn = await authenticateProjectKey(args.apiKey)
+  if (!authn) return { ok: false as const, error: 'Invalid API key', status: 401 as const }
+  const workspaceId = authn.project.workspaceId
+  return withTenant(workspaceId, async () => {
+    await touchApiKey(authn.key.id)
+    const database = requireDb()
+    const approval = await loadApproval(args.approvalId, workspaceId, { forUpdate: true })
+    if (!approval || approval.projectId !== authn.project.id || approval.requesterKeyId !== authn.key.id) {
+      return { ok: false as const, error: 'Not found', status: 404 as const }
+    }
+    if (approvalHasExpired(approval)) {
+      if (approval.status === 'pending') {
+        await database
+          .update(approvals)
+          .set({ status: 'expired', updatedAt: new Date() })
+          .where(and(eq(approvals.id, approval.id), eq(approvals.workspaceId, workspaceId)))
+      }
+      return { ok: false as const, error: 'Approval has expired', status: 409 as const }
+    }
+    if (approval.status !== 'pending') {
+      // failed_resume already carries a reviewer decision; only an unanswered ask can be withdrawn.
+      return { ok: false as const, error: 'Approval is not awaiting a decision', status: 409 as const }
+    }
+    const reason = typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim().slice(0, 1000) : undefined
+    await database.insert(decisionRecords).values({
+      id: newId('dec').slice(0, 36),
+      workspaceId,
+      approvalId: approval.id,
+      actorUserId: null,
+      decision: 'cancel',
+      payload: await encodeTenantJson(workspaceId, {
+        decision: 'cancel',
+        by: 'requester',
+        requesterKeyId: authn.key.id,
+        ...(reason ? { reason } : {}),
+      }),
+      resumeError: null,
+      resumeResponse: null,
+    })
+    await database
+      .update(approvals)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(and(eq(approvals.id, approval.id), eq(approvals.workspaceId, workspaceId)))
+    await logProjectEvent({
+      workspaceId,
+      projectId: approval.projectId,
+      approvalId: approval.id,
+      type: 'cancelled',
+      message: `Cancelled by the requester (API key ${authn.key.prefix}…)`,
+      payload: { decision: 'cancel', by: 'requester', requesterKeyId: authn.key.id, previousStatus: approval.status },
+    })
+    return { ok: true as const, id: approval.id, status: 'cancelled' as const }
+  })
+}
+
+export const REQUESTER_PENDING_DEFAULT_LIMIT = 50
+export const REQUESTER_PENDING_MAX_LIMIT = 200
+
+/**
+ * The requester's open requests: created by this API key, in its project,
+ * still `pending` (and not past their deadline) or `failed_resume`. Newest first.
+ */
+export async function listRequesterPending(args: { apiKey: string; projectId?: string; limit?: number }) {
+  const authn = await authenticateProjectKey(args.apiKey, args.projectId)
+  if (!authn) return { ok: false as const, error: 'Invalid API key or project', status: 401 as const }
+  const workspaceId = authn.project.workspaceId
+  const limit = Math.min(Math.max(Math.trunc(args.limit ?? REQUESTER_PENDING_DEFAULT_LIMIT), 1), REQUESTER_PENDING_MAX_LIMIT)
+  return withTenant(workspaceId, async () => {
+    await touchApiKey(authn.key.id)
+    const now = new Date()
+    const rows = await requireDb()
+      .select({
+        id: approvals.id,
+        status: approvals.status,
+        actionName: approvals.actionName,
+        idempotencyKey: approvals.idempotencyKey,
+        createdAt: approvals.createdAt,
+        expiresAt: approvals.expiresAt,
+        presentedAt: approvals.presentedAt,
+      })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.workspaceId, workspaceId),
+          eq(approvals.projectId, authn.project.id),
+          eq(approvals.requesterKeyId, authn.key.id),
+          or(
+            eq(approvals.status, 'failed_resume'),
+            and(eq(approvals.status, 'pending'), or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, now))),
+          ),
+        ),
+      )
+      .orderBy(desc(approvals.createdAt), desc(approvals.id))
+      .limit(limit)
+    return {
+      ok: true as const,
+      projectId: authn.project.id,
+      items: rows.map((row) => ({
+        id: row.id,
+        kind: 'approval' as const,
+        status: row.status,
+        actionName: row.actionName,
+        idempotencyKey: row.idempotencyKey,
+        createdAt: row.createdAt.toISOString(),
+        deadline: row.expiresAt ? row.expiresAt.toISOString() : null,
+        presentedAt: row.presentedAt ? row.presentedAt.toISOString() : null,
+      })),
+    }
+  })
+}
+
 export async function retryResume(args: { approvalId: string; workspaceId?: string }) {
   const workspaceId = args.workspaceId ?? requireTenantWorkspaceId()
   return withTenant(workspaceId, async () => {
@@ -960,18 +1254,19 @@ export async function retryResume(args: { approvalId: string; workspaceId?: stri
       return { error: 'No decision to retry', status: 409 as const }
     }
     const payload = (await decodeTenantJson(workspaceId, record.payload)) as unknown as DecisionPayload
-    // A retry must not relabel the original decider's device: reuse the STORED
-    // client and actor. The retry itself is marked in the project event only
-    // (payload.retry), never in oversight.client.
-    const storedClient = record.client
-      ? ((await decodeTenantJson(workspaceId, record.client)) as unknown as EvidenceClient)
-      : undefined
+    // A retry must not relabel the original decider's device or display: reuse
+    // the STORED client and actor. The retry itself is marked in the project
+    // event only (payload.retry), never in oversight.client.
+    const stored = record.client
+      ? decodeStoredDecisionContext(await decodeTenantJson(workspaceId, record.client))
+      : {}
     return decideApproval({
       approvalId: approval.id,
       actorUserId: record.actorUserId ?? '',
       payload,
       workspaceId,
-      client: storedClient,
+      client: stored.client,
+      ...(stored.actor ? { decidedBy: stored.actor } : {}),
       retry: true,
     })
   })
@@ -1166,6 +1461,12 @@ export function parseDecisionBody(body: Record<string, unknown>): DecisionPayloa
 }
 
 /** Slim origin-poll payload. Authenticate with the project API key used at ingest. */
+/**
+ * Requester read with a project API key (hitl-spec section 4): the legacy
+ * fields plus the full hitl/response/v0 shape (`hitl`, null while open),
+ * `argsHash` (JCS, hitl-spec 3.8) over the stored original args, `activity`,
+ * and `editedArgs` when the approver amended the arguments.
+ */
 export async function getApprovalForOrigin(args: { apiKey: string; approvalId: string }) {
   const authn = await authenticateProjectKey(args.apiKey)
   if (!authn) return { ok: false as const, error: 'Invalid API key', status: 401 as const }
@@ -1173,7 +1474,8 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
   return withTenant(authn.project.workspaceId, async () => {
     await touchApiKey(authn.key.id)
     const database = requireDb()
-    const approval = await loadApproval(args.approvalId, authn.project.workspaceId)
+    const workspaceId = authn.project.workspaceId
+    const approval = await loadApproval(args.approvalId, workspaceId)
     if (!approval || approval.projectId !== authn.project.id) {
       return { ok: false as const, error: 'Not found', status: 404 as const }
     }
@@ -1182,16 +1484,52 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
       .select({
         decision: decisionRecords.decision,
         payload: decisionRecords.payload,
+        actorUserId: decisionRecords.actorUserId,
+        createdAt: decisionRecords.createdAt,
       })
       .from(decisionRecords)
-      .where(and(eq(decisionRecords.approvalId, approval.id), eq(decisionRecords.workspaceId, authn.project.workspaceId)))
+      .where(and(eq(decisionRecords.approvalId, approval.id), eq(decisionRecords.workspaceId, workspaceId)))
       .orderBy(desc(decisionRecords.createdAt))
       .limit(1)
     const latest = decisionRows[0]
     const payload = latest?.payload
-      ? await decodeTenantJson(authn.project.workspaceId, latest.payload as Record<string, unknown>)
+      ? await decodeTenantJson(workspaceId, latest.payload as Record<string, unknown>)
       : {}
     const decision = latest && isDecision(latest.decision) ? latest.decision : undefined
+
+    const openRows = await database
+      .select({ payload: projectEvents.payload, createdAt: projectEvents.createdAt })
+      .from(projectEvents)
+      .where(
+        and(
+          eq(projectEvents.approvalId, approval.id),
+          eq(projectEvents.workspaceId, workspaceId),
+          eq(projectEvents.type, 'opened'),
+        ),
+      )
+    const opens = openRows.flatMap((row) => {
+      const event = row.payload as { itemRef?: unknown; openedAt?: unknown } | null
+      if (!event || typeof event.itemRef !== 'string' || !event.itemRef) return []
+      const openedAt = typeof event.openedAt === 'string' ? event.openedAt : row.createdAt.toISOString()
+      return [{ itemRef: event.itemRef, openedAt }]
+    })
+
+    const envelope = asEnvelope(approval.envelope)
+    const read = await buildHitlRead({
+      approval,
+      envelope,
+      decision: latest && decision ? { decision, payload, actorUserId: latest.actorUserId, createdAt: latest.createdAt } : null,
+      opens,
+      mergeEdits: (edited) => {
+        if (!envelope.editableFields) return null
+        const merged = mergeEditableArgs({
+          originalArgs: envelope.action.args,
+          editedArgs: edited,
+          editableFields: envelope.editableFields,
+        })
+        return 'error' in merged ? null : merged.mergedArgs
+      },
+    })
 
     return {
       ok: true as const,
@@ -1201,6 +1539,7 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
       response: typeof payload.response === 'string' ? payload.response : undefined,
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
+      ...read,
     }
   })
 }

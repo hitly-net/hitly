@@ -1,0 +1,3 @@
+ALTER TABLE "approvals" ADD COLUMN "requester_key_id" varchar(36);--> statement-breakpoint
+ALTER TABLE "approvals" ADD CONSTRAINT "approvals_requester_key_id_project_api_keys_id_fk" FOREIGN KEY ("requester_key_id") REFERENCES "public"."project_api_keys"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "approvals_requester_key_status_idx" ON "approvals" USING btree ("requester_key_id","status");
