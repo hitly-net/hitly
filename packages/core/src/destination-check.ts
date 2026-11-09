@@ -362,6 +362,10 @@ export interface ConnectInOrderOptions {
   host?: string
   /** Called with a connection that opened after its attempt had timed out. */
   discard?: (connection: unknown) => void
+  /** Clock for remaining-budget math. Defaults to Date.now. */
+  now?: () => number
+  /** Schedule a timeout; return a cancel function. Defaults to setTimeout/clearTimeout. */
+  scheduleTimeout?: (callback: () => void, ms: number) => () => void
 }
 
 /**
@@ -377,20 +381,27 @@ export async function connectInOrder<T>(
 ): Promise<T> {
   const connectTimeoutMs = options.connectTimeoutMs ?? testHooks.connectTimeoutMs ?? DEFAULT_GRPC_CONNECT_TIMEOUT_MS
   const totalTimeoutMs = options.totalTimeoutMs ?? testHooks.totalTimeoutMs ?? DEFAULT_GRPC_TOTAL_CONNECT_TIMEOUT_MS
-  const deadline = Date.now() + totalTimeoutMs
+  const now = options.now ?? Date.now
+  const scheduleTimeout =
+    options.scheduleTimeout ??
+    ((callback, ms) => {
+      const timer = setTimeout(callback, ms)
+      return () => clearTimeout(timer)
+    })
+  const deadline = now() + totalTimeoutMs
   let lastError: unknown
   for (const address of addresses) {
-    const remaining = deadline - Date.now()
+    const remaining = deadline - now()
     if (remaining <= 0) break
     const timeoutMs = Math.min(connectTimeoutMs, remaining)
-    let timer: ReturnType<typeof setTimeout> | undefined
+    let cancelTimeout = () => {}
     let timedOut = false
     const pending = attempt(address, timeoutMs)
     try {
       return await Promise.race([
         pending,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
+          cancelTimeout = scheduleTimeout(() => {
             timedOut = true
             reject(failure('timeout', 'the connection timed out', options.host))
           }, timeoutMs)
@@ -400,10 +411,10 @@ export async function connectInOrder<T>(
       lastError = error
       if (timedOut) pending.then((connection) => options.discard?.(connection), () => {})
     } finally {
-      clearTimeout(timer)
+      cancelTimeout()
     }
   }
-  if (Date.now() >= deadline) throw failure('timeout', 'the connection timed out', options.host)
+  if (now() >= deadline) throw failure('timeout', 'the connection timed out', options.host)
   throw lastError ?? failure('connect', 'the connection failed', options.host)
 }
 
