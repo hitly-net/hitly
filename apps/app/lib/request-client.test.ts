@@ -54,6 +54,29 @@ test('malformed x-hitly-client is ignored (channel stays mobile via origin, fiel
   assert.equal(client.appVersion, undefined)
 })
 
+test('cookie session ignores x-hitly-client (S97-S1: header is bearer-only)', () => {
+  const junk = clientFromHeaders(
+    headersInit({
+      cookie: 'session=abc',
+      'x-hitly-client': 'total junk (((',
+      'user-agent': 'Mozilla/5.0',
+    }),
+  )
+  assert.equal(junk.channel, 'web')
+  assert.equal(junk.platform, undefined)
+  assert.equal(junk.appVersion, undefined)
+
+  const spoofedMobile = clientFromHeaders(
+    headersInit({
+      cookie: 'session=abc',
+      'x-hitly-client': 'hitly-mobile/9.9.9 (ios)',
+    }),
+  )
+  assert.equal(spoofedMobile.channel, 'web')
+  assert.equal(spoofedMobile.platform, undefined)
+  assert.equal(spoofedMobile.appVersion, undefined)
+})
+
 test('parseMobileClientHeader handles valid, version-only and junk values', () => {
   assert.deepEqual(parseMobileClientHeader('hitly-mobile/1.0.0 (android)'), {
     appVersion: '1.0.0',

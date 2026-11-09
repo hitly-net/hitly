@@ -31,7 +31,7 @@ import {
   getApprovalForOrigin,
 } from './approvals'
 import { getApprovalDetail } from './approval-detail'
-import { decodeTenantJson } from './tenant-crypto'
+import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 import { loadOpenedContextRefs, recordContextOpen } from './context-opens'
 import { generateApiKey } from './keys'
 import { newId } from './ids'
@@ -1528,6 +1528,64 @@ test('presented: first mark sets presented_at, writes one receipt + audit row; s
   assert.equal(auditAfter.length, 1, 'second mark adds no audit row')
 })
 
+test('presented: concurrent marks racing a decide write exactly one presented before decided (S97-S2)', async () => {
+  const ingestResult = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+  assert.ok(ingestResult.ok)
+  const approvalId = ingestResult.approval.id
+  const payload = parseDecisionBody({ decision: 'accept' })
+  assert.ok(payload)
+
+  const mark = () =>
+    markApprovalPresented({
+      approvalId,
+      actorUserId: userAdmin.id,
+      workspaceRole: 'admin',
+      workspaceId: workspaceA.id,
+      client: { channel: 'web' },
+    })
+  const decide = () =>
+    decideApproval({
+      approvalId,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+      client: { channel: 'web' },
+    })
+
+  const results = await Promise.all([...Array.from({ length: 6 }, mark), decide()])
+  const decideResult = results[6]
+  assert.ok(
+    decideResult && !('error' in decideResult),
+    `decide should succeed: ${decideResult && 'error' in decideResult ? decideResult.error : ''}`,
+  )
+
+  const receipts = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(eq(evidenceReceipts.approvalId, approvalId))
+    .orderBy(asc(evidenceReceipts.seq))
+  const types = receipts.map((r) => r.eventType)
+  assert.equal(
+    types.filter((t) => t === 'presented').length,
+    1,
+    `exactly one presented receipt, got ${types.join(', ')}`,
+  )
+  const seqs = receipts.map((r) => r.seq)
+  assert.equal(new Set(seqs).size, seqs.length, `seqs must be unique, got ${seqs.join(', ')}`)
+  const presentedIdx = types.indexOf('presented')
+  const decidedIdx = types.indexOf('decided')
+  assert.ok(
+    presentedIdx !== -1 && decidedIdx !== -1 && presentedIdx < decidedIdx,
+    `presented before decided, got ${types.join(', ')}`,
+  )
+
+  const audit = await db
+    .select()
+    .from(projectEvents)
+    .where(and(eq(projectEvents.approvalId, approvalId), eq(projectEvents.type, 'presented')))
+  assert.equal(audit.length, 1, 'exactly one presented audit row')
+})
+
 test('presented: reader-role viewer is not a reviewer (no-op, stays null)', async () => {
   const reader = { id: newId('usr'), email: `reader-${Date.now()}@test.hitly.net`, name: 'Reader User' }
   await db.insert(users).values({ ...reader, emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
@@ -1791,8 +1849,12 @@ test('presented: decision_records.client is stored and retryResume reuses it (re
       .orderBy(asc(decisionRecords.createdAt))
     assert.equal(records.length, 1)
     assert.ok(records[0]?.client, 'decision_records.client stored')
-    const storedClient = await decodeTenantJson(workspaceA.id, records[0]?.client as never)
-    assert.deepEqual(storedClient, mobileClient)
+    const storedContext = (await decodeTenantJson(workspaceA.id, records[0]?.client as never)) as {
+      client?: Record<string, string>
+      actor?: { kind?: string; id?: string; display?: string }
+    }
+    assert.deepEqual(storedContext.client, mobileClient)
+    assert.equal(storedContext.actor?.id, userAdmin.id, 'actor snapshot stored for retry')
 
     const retry = await retryResume({ approvalId: ingestResult.approval.id, workspaceId: workspaceA.id })
     assert.ok(!('error' in retry), `retryResume should succeed: ${'error' in retry ? retry.error : ''}`)
@@ -1803,8 +1865,10 @@ test('presented: decision_records.client is stored and retryResume reuses it (re
       .where(eq(decisionRecords.approvalId, ingestResult.approval.id))
       .orderBy(asc(decisionRecords.createdAt))
     assert.equal(records2.length, 2, 'retry records a new decision row')
-    const retriedClient = await decodeTenantJson(workspaceA.id, records2[1]?.client as never)
-    assert.deepEqual(retriedClient, mobileClient, 'retry reuses the ORIGINAL stored client')
+    const retriedContext = (await decodeTenantJson(workspaceA.id, records2[1]?.client as never)) as {
+      client?: Record<string, string>
+    }
+    assert.deepEqual(retriedContext.client, mobileClient, 'retry reuses the ORIGINAL stored client')
 
     // The retry decided event must carry the original client, never a fresh web label.
     const deadline = Date.now() + 5000
@@ -1836,6 +1900,138 @@ test('presented: decision_records.client is stored and retryResume reuses it (re
     await db.delete(projectApiKeys).where(eq(projectApiKeys.id, key.id))
     await db.delete(projects).where(eq(projects.id, project.id))
   } finally {
+    await new Promise<void>((resolve) => captureServer.close(() => resolve()))
+  }
+})
+
+test('presented: retry freezes decidedBy.display and omits empty id after user delete (S97-S4)', async () => {
+  const captured: Record<string, unknown>[] = []
+  const http = await import('node:http')
+  const captureServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url?.includes('/evidence')) {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        try {
+          const event = JSON.parse(body)
+          if (event.event_type !== 'ping') captured.push(event)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            event_id: event.event_id,
+            content_sha256: event.integrity.content_sha256,
+            store_uri: `http://localhost:19992/evidence/${event.event_id}`,
+            stored_at: new Date().toISOString(),
+          }))
+        } catch {
+          res.writeHead(400)
+          res.end()
+        }
+      })
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  await new Promise<void>((resolve) => captureServer.listen(19992, () => resolve()))
+
+  const originalName = userAdmin.name
+  try {
+    const project = { id: newId('prj'), workspaceId: workspaceA.id, name: 'Project DecidedBy Retry' }
+    await db.insert(projects).values({
+      ...project,
+      plugin: 'mastra',
+      credentials: {},
+      evidenceSinkType: 'http',
+      evidenceSinkConfig: { url: 'http://localhost:19992/evidence', authHeader: 'Bearer test' },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    const keyGen = generateApiKey()
+    const key = { raw: keyGen.raw, hashed: keyGen.hashed, id: newId('key') }
+    await db.insert(projectApiKeys).values({
+      id: key.id,
+      projectId: project.id,
+      workspaceId: workspaceA.id,
+      hashedKey: key.hashed,
+      prefix: keyGen.prefix,
+      name: 'Test Key DecidedBy Retry',
+      createdAt: new Date(),
+    })
+
+    const ingestResult = await ingestApproval({
+      apiKey: key.raw,
+      body: buildMastraPayload({ projectId: project.id }),
+    })
+    assert.ok(ingestResult.ok)
+    const payload = parseDecisionBody({ decision: 'accept' })
+    assert.ok(payload)
+    const decided = await decideApproval({
+      approvalId: ingestResult.approval.id,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+      client: { channel: 'web' },
+    })
+    assert.ok(!('error' in decided), `decide should succeed: ${'error' in decided ? decided.error : ''}`)
+
+    await db.update(users).set({ name: 'Renamed Admin' }).where(eq(users.id, userAdmin.id))
+    const retry = await retryResume({ approvalId: ingestResult.approval.id, workspaceId: workspaceA.id })
+    assert.ok(!('error' in retry), `retryResume should succeed: ${'error' in retry ? retry.error : ''}`)
+
+    const deadline = Date.now() + 5000
+    while (captured.filter((e) => e.event_type === 'decided').length < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    const decidedEvents = captured.filter((e) => e.event_type === 'decided') as {
+      oversight?: { decidedBy?: { kind?: string; id?: string; display?: string } }
+    }[]
+    assert.ok(decidedEvents.length >= 2, 'two decided events captured')
+    assert.equal(decidedEvents[0]?.oversight?.decidedBy?.id, userAdmin.id)
+    assert.equal(decidedEvents[0]?.oversight?.decidedBy?.display, originalName)
+    assert.equal(decidedEvents[1]?.oversight?.decidedBy?.id, userAdmin.id, 'id stays stable across retry')
+    assert.equal(
+      decidedEvents[1]?.oversight?.decidedBy?.display,
+      originalName,
+      'retry reuses the snapshotted display, not the renamed users.name',
+    )
+
+    // Pre-S4 / deleted-user path: actor_user_id SET NULL and a bare EvidenceClient
+    // blob (no actor snapshot). Retry must omit decidedBy rather than emit id: ''.
+    const latest = await db
+      .select()
+      .from(decisionRecords)
+      .where(eq(decisionRecords.approvalId, ingestResult.approval.id))
+      .orderBy(asc(decisionRecords.createdAt))
+    const last = latest[latest.length - 1]
+    assert.ok(last)
+    await db
+      .update(decisionRecords)
+      .set({
+        actorUserId: null,
+        client: await encodeTenantJson(workspaceA.id, { channel: 'web' }),
+      })
+      .where(eq(decisionRecords.id, last.id))
+
+    captured.length = 0
+    const retryDeleted = await retryResume({ approvalId: ingestResult.approval.id, workspaceId: workspaceA.id })
+    assert.ok(
+      !('error' in retryDeleted),
+      `retry after deleted actor should succeed: ${'error' in retryDeleted ? retryDeleted.error : ''}`,
+    )
+    const deletedDeadline = Date.now() + 5000
+    while (captured.filter((e) => e.event_type === 'decided').length < 1 && Date.now() < deletedDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    const afterDelete = captured.filter((e) => e.event_type === 'decided') as {
+      oversight?: { decidedBy?: { id?: string } }
+    }[]
+    assert.ok(afterDelete.length >= 1, 'deleted-actor retry still writes decided')
+    assert.equal(afterDelete[0]?.oversight?.decidedBy, undefined, 'no empty-id decidedBy after user delete')
+
+    await db.delete(projectApiKeys).where(eq(projectApiKeys.id, key.id))
+    await db.delete(projects).where(eq(projects.id, project.id))
+  } finally {
+    await db.update(users).set({ name: originalName }).where(eq(users.id, userAdmin.id))
     await new Promise<void>((resolve) => captureServer.close(() => resolve()))
   }
 })
@@ -1967,6 +2163,32 @@ test('presented: legacy failed_resume row with presented_at NULL never gets pres
 
     const rows = await db.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1)
     assert.equal(rows[0]?.presentedAt, null, 'presented_at stays NULL through mark + retry')
+
+    // P7 (S97-S6): a reviewer re-submits from the UI (`decideApproval`, no `retry`)
+    // must also skip presented. Removing the decide-side `mayRecordPresented`
+    // call used to pass the PR's tests because the retry skip only covered
+    // `retryResume`.
+    captured.length = 0
+    const redecide = await decideApproval({
+      approvalId,
+      actorUserId: userAdmin.id,
+      payload,
+      workspaceId: workspaceA.id,
+      client: { channel: 'web' },
+    })
+    assert.ok(!('error' in redecide), `non-retry re-decide should succeed: ${'error' in redecide ? redecide.error : ''}`)
+    const redecideDeadline = Date.now() + 5000
+    while (captured.filter((e) => e.event_type === 'decided').length < 1 && Date.now() < redecideDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    assert.deepEqual(
+      captured.map((e) => e.event_type),
+      ['decided', 'resume_failed'],
+      `non-retry re-decide must append no presented event, got ${captured.map((e) => e.event_type).join(', ')}`,
+    )
+
+    const rowsAfter = await db.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1)
+    assert.equal(rowsAfter[0]?.presentedAt, null, 'presented_at stays NULL through mark + retry + UI re-decide')
 
     const receipts = await db
       .select()
