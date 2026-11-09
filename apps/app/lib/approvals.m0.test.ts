@@ -10,7 +10,7 @@ import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import Ajv2020 from 'ajv/dist/2020'
-import { argsHash } from '@hitly/core'
+import { argsHash, jcsHash } from '@hitly/core'
 import {
   approvals,
   decisionRecords,
@@ -28,7 +28,10 @@ import {
   ingestApproval,
   listRequesterPending,
   parseDecisionBody,
+  REQUESTER_PENDING_MAX_LIMIT,
 } from './approvals'
+import { getOriginalRequest } from './original-request'
+import { encodeTenantJson } from './tenant-crypto'
 import { DEFAULT_CREATE_ONCE_RETENTION_DAYS } from './create-once'
 import { generateApiKey } from './keys'
 import { newId } from './ids'
@@ -443,4 +446,157 @@ test('deleting the requester key keeps the request (FK set null)', async () => {
   const [row] = await db.select().from(approvals).where(eq(approvals.id, created.approval.id))
   assert.equal(row?.requesterKeyId, null)
   assert.equal(row?.status, 'pending')
+})
+
+test('edit decision: stored envelope, original request and argsHash stay byte-identical; edits live only in the read', async () => {
+  // M1 (gate pr104): the create-once record is write-once. Writing the merged
+  // edit args back into approvals.envelope (mutant A12) must go red here.
+  const created = await ingest(
+    keyP1,
+    undefined,
+    payload({
+      allowedActions: { accept: true, reject: true, edit: true },
+      editableFields: { amount: { type: 'int', min: 0, max: 1000 } },
+    }),
+  )
+  const id = created.approval.id
+  const originalArgs = { amount: 100, currency: 'EUR' }
+
+  const storedBefore = await client.query<{ text: string }>(
+    'select envelope::text as text from approvals where id = $1',
+    [id],
+  )
+  const originalBefore = await getOriginalRequest({
+    approvalId: id,
+    workspaceId: workspace.id,
+    userId: reviewer.id,
+    workspaceRole: 'admin',
+  })
+  if (!originalBefore.ok) throw new Error(originalBefore.error)
+  assert.equal(originalBefore.argsHash, await argsHash(originalArgs))
+
+  const decision = parseDecisionBody({
+    decision: 'edit',
+    editedArgs: { amount: 55 },
+    editReason: 'pricing_correction',
+    editReasonText: 'negotiated down',
+  })
+  assert.ok(decision)
+  const result = await decideApproval({ approvalId: id, actorUserId: reviewer.id, payload: decision, workspaceId: workspace.id })
+  if (!('approval' in result)) throw new Error(`decide failed: ${JSON.stringify(result)}`)
+  assert.ok(result.status === 'decided' || result.status === 'failed_resume')
+
+  // The stored request is unchanged: byte-identical JSONB, original args intact.
+  const storedAfter = await client.query<{ text: string }>(
+    'select envelope::text as text from approvals where id = $1',
+    [id],
+  )
+  assert.equal(storedAfter.rows[0]?.text, storedBefore.rows[0]?.text, 'stored envelope changed after an edit decision')
+  assert.deepEqual(
+    (JSON.parse(storedAfter.rows[0]!.text) as { action: { args: unknown } }).action.args,
+    originalArgs,
+    'merged edit args leaked into the stored envelope',
+  )
+
+  // The original-request view (argsHash/payloadHash) is unchanged end to end.
+  const originalAfter = await getOriginalRequest({
+    approvalId: id,
+    workspaceId: workspace.id,
+    userId: reviewer.id,
+    workspaceRole: 'admin',
+  })
+  if (!originalAfter.ok) throw new Error(originalAfter.error)
+  assert.deepEqual(originalAfter, originalBefore)
+
+  // The amendment travels only in the read: original argsHash plus editedArgs/_meta.
+  const expectedEdited = { amount: 55, currency: 'EUR' }
+  const read = await getApprovalForOrigin({ apiKey: keyP1.raw, approvalId: id })
+  if (!read.ok) throw new Error(read.error)
+  assert.equal(read.argsHash, originalBefore.argsHash, "read's argsHash must stay the ORIGINAL args hash")
+  assert.ok(read.hitl)
+  assert.ok(validateResponse(read.hitl), JSON.stringify(validateResponse.errors))
+  assert.equal(read.hitl.argsHash, originalBefore.argsHash)
+  assert.deepEqual(read.editedArgs, expectedEdited)
+  assert.deepEqual(read.hitl._meta?.['net.hitly/editedArgs'], expectedEdited)
+  assert.equal(read.hitl._meta?.['net.hitly/editedArgsHash'], await jcsHash(expectedEdited))
+  assert.notEqual(read.hitl._meta?.['net.hitly/editedArgsHash'], originalBefore.argsHash)
+})
+
+test('requester cancel racing a reviewer decide: exactly one winner, one decision record, loser gets 409', async () => {
+  // M2 (gate pr104): the race is decided by `loadApproval(..., { forUpdate: true })`
+  // on both paths. Dropping the row lock from cancelApprovalAsRequester
+  // (mutant A7d) must produce double outcomes here.
+  const RUNS = 16
+  for (let run = 1; run <= RUNS; run++) {
+    const created = await ingest(keyP1)
+    const id = created.approval.id
+    const jitter = Math.floor(Math.random() * 8)
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+    const decision = parseDecisionBody({ decision: 'accept' })
+    assert.ok(decision)
+    const [cancel, decide] = await Promise.all([
+      wait(jitter).then(() => cancelApprovalAsRequester({ apiKey: keyP1.raw, approvalId: id })),
+      wait(8 - jitter).then(() =>
+        decideApproval({ approvalId: id, actorUserId: reviewer.id, payload: decision, workspaceId: workspace.id }),
+      ),
+    ])
+    const cancelWon = cancel.ok === true
+    const decideWon = 'approval' in decide
+    assert.notEqual(cancelWon, decideWon, `run ${run}: exactly one of cancel/decide must win (cancelWon=${cancelWon}, decideWon=${decideWon})`)
+    const loser = cancelWon ? decide : cancel
+    assert.equal((loser as { status?: number }).status, 409, `run ${run}: the loser must get 409`)
+
+    const records = await db.select().from(decisionRecords).where(eq(decisionRecords.approvalId, id))
+    assert.equal(records.length, 1, `run ${run}: exactly one decision record`)
+    assert.equal(records[0]?.decision, cancelWon ? 'cancel' : 'accept', `run ${run}: the winner's decision is the recorded one`)
+
+    const [row] = await db.select().from(approvals).where(eq(approvals.id, id))
+    if (cancelWon) {
+      assert.equal(row?.status, 'cancelled', `run ${run}: final status must match the winner`)
+    } else {
+      assert.ok(
+        row?.status === 'decided' || row?.status === 'failed_resume',
+        `run ${run}: final status must match the winner, got ${row?.status}`,
+      )
+    }
+  }
+})
+
+test('pending list route: the server caps the page at the published 200 even with limit=10000', async () => {
+  // M3 (gate pr104): REQUESTER_PENDING_MAX_LIMIT is a claimed control; dropping
+  // the server-side Math.min clamp (mutant A9) must go red here.
+  assert.equal(REQUESTER_PENDING_MAX_LIMIT, 200)
+  const k = await insertKey(projectP.id, 'cap key')
+  const total = REQUESTER_PENDING_MAX_LIMIT + 5
+  const base = Date.now()
+  const rows = []
+  for (let i = 0; i < total; i++) {
+    rows.push({
+      id: newId('apr').slice(0, 36),
+      workspaceId: workspace.id,
+      projectId: projectP.id,
+      plugin: 'mastra' as const,
+      status: 'pending' as const,
+      actionName: 'pay',
+      envelope: await encodeTenantJson(workspace.id, { action: { name: 'pay', args: {} } }),
+      origin: await encodeTenantJson(workspace.id, { runId: `cap-${i}` }),
+      requesterKeyId: k.id,
+      expiresAt: new Date(base + 3_600_000),
+      createdAt: new Date(base + i),
+    })
+  }
+  await db.insert(approvals).values(rows)
+
+  const route = await listRoute(
+    new Request(`http://localhost/api/v1/approvals?projectId=${projectP.id}&limit=10000`, {
+      headers: { authorization: `Bearer ${k.raw}` },
+    }),
+  )
+  assert.equal(route.status, 200)
+  const body = (await route.json()) as { status: string; items: Array<{ id: string; createdAt: string }> }
+  assert.equal(body.status, 'open')
+  assert.equal(body.items.length, REQUESTER_PENDING_MAX_LIMIT, `limit=10000 must be capped at ${REQUESTER_PENDING_MAX_LIMIT} server-side`)
+  assert.equal(new Set(body.items.map((item) => item.id)).size, REQUESTER_PENDING_MAX_LIMIT)
+  // Newest first still holds under the cap.
+  assert.equal(body.items[0]?.createdAt, new Date(base + total - 1).toISOString())
 })

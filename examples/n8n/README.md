@@ -37,6 +37,8 @@ The Wait node’s URL is `$execution.resumeUrl` (`/webhook-waiting/...`). It sta
    - `Content-Type: application/json`
    - `Idempotency-Key: {{ $json.id }}` (Notion page id)
 
+   Keep the page id as the key while the request is open: re-runs replay the same card. Note the create-once rule (hitl-spec 3.2): after reject or cancel the same `Idempotency-Key` **replays the closed request** for the published retention window (10 days by default, advertised as `createOnce.retentionSeconds` on the ingest response) instead of creating a new item. To deliberately re-ask, change the key (for example `{{ $json.id }}:retry-2`), as in hitl-spec 4.2.
+
    Body:
 
    ```json
