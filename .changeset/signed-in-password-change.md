@@ -1,0 +1,5 @@
+---
+"@hitly/app": patch
+---
+
+Signed-in password change on the Security page. The signed-in user gives the current password (a wrong one is refused with the shared INVALID_PASSWORD wording and changes nothing), picks a new one under the same strength rules as password reset (shared passwordPolicyMessage helper and MIN_PASSWORD_LENGTH, no copies), and on success every other session is revoked while this device continues on the rotated Better Auth session cookie. A password-changed notification goes out through the existing reset mail path (same sendMail builder, no token, link or password in it), and per-client attempts are throttled with the shared limiter factory (10 per 15 minutes, 429 past the budget, in-process calls skip Better Auth's own limiter hence the app-side gate). POST /api/session/change-password keeps the sign-out route's same-origin + JSON policy; the form lives in components/change-password-form.tsx, the client helpers in lib/password-change.ts, the server handler in lib/password-change-route.ts.
