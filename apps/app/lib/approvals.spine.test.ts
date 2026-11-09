@@ -1584,6 +1584,29 @@ test('presented: concurrent marks racing a decide write exactly one presented be
     .from(projectEvents)
     .where(and(eq(projectEvents.approvalId, approvalId), eq(projectEvents.type, 'presented')))
   assert.equal(audit.length, 1, 'exactly one presented audit row')
+
+  // Decide alone (no concurrent mark): implicit presented inside decideApproval
+  // must still precede decided. A reorder of those two appends survives the
+  // race above when a mark wins first and decide skips the implicit block.
+  const solo = await ingestApproval({ apiKey: apiKeyA.raw, body: buildMastraPayload() })
+  assert.ok(solo.ok)
+  const soloDecide = await decideApproval({
+    approvalId: solo.approval.id,
+    actorUserId: userAdmin.id,
+    payload,
+    workspaceId: workspaceA.id,
+    client: { channel: 'web' },
+  })
+  assert.ok(!('error' in soloDecide), 'solo decide should succeed')
+  const soloReceipts = await db
+    .select()
+    .from(evidenceReceipts)
+    .where(eq(evidenceReceipts.approvalId, solo.approval.id))
+    .orderBy(asc(evidenceReceipts.seq))
+  const soloTypes = soloReceipts.map((row) => row.eventType)
+  assert.equal(soloTypes[0], 'requested')
+  assert.equal(soloTypes[1], 'presented')
+  assert.equal(soloTypes[2], 'decided')
 })
 
 test('presented: reader-role viewer is not a reviewer (no-op, stays null)', async () => {
