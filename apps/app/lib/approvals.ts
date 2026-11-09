@@ -4,7 +4,6 @@ import {
   isDecision,
   isOpenApprovalStatus,
   isPluginId,
-  jcsHash,
   OPEN_APPROVAL_STATUSES,
   originResumeError,
   validateAnswerSubmission,
@@ -38,7 +37,7 @@ import { canDecide, getProjectAccess } from './rbac'
 import { loadOpenedContextRefs } from './context-opens'
 import { exportOtelTrace } from './otel-trace'
 import { resumeFailureMessage } from './resume-error'
-import { createOnceCutoff } from './create-once'
+import { createOnceCutoff, envelopePayloadHash } from './create-once'
 import { buildHitlRead } from './hitl-response'
 
 export async function authenticateProjectKey(rawKey: string, projectId?: string) {
@@ -336,33 +335,6 @@ function withProjectCredentials(body: Record<string, unknown>, project: typeof p
 
 type LoadedProject = Awaited<ReturnType<typeof decodeProject<typeof projects.$inferSelect>>>
 type IngestedEnvelope = ApprovalEnvelope & { origin: OriginRef }
-
-/**
- * Create-once payloadHash: `b64url(SHA-256(JCS(envelope)))` over the ingested
- * create-once record (`plugin.ingest()` output stored on `approvals.envelope`).
- *
- * Included: every field the plugin wrote onto that record — `action` (name +
- * args), `allowedActions`, gating/context (`reasonRequired`, `contextMarkdown`,
- * `metadata`, `externalUrls`, `attachments`), `resumeSchema`, `expiresAt`,
- * `editableFields`, `editReason`, envelope evidence fields (`traceId`, `spanId`,
- * `agentId`, `systemId`, `inventoryId`, `policyId`, `policyRationale`,
- * `riskTier`, `toolName`, `sensitivity`, `dataCategories`), and the nested
- * `origin` (`plugin`, `projectId`, `runId`, `stepId`, `resumeHandle` including
- * origin URLs merged from the project such as `mastraBaseUrl`, `details`, and
- * origin evidence fields). `JSON.parse(JSON.stringify(...))` drops `undefined`
- * keys so ingest/JSONB match the stored row; JCS then sorts members, so
- * shuffled `action.args` key order still matches.
- *
- * Excluded (never hashed): HTTP headers (`Authorization`, `Idempotency-Key`,
- * `Content-Type`, `x-hitly-client`); API key material; host-assigned
- * create-once fields (`id`, `status`, timestamps, `requesterKeyId`, `replayed`,
- * `createOnce`, response `argsHash`); project credential secrets
- * (`resumeSecret`, `token`) which are not copied onto the envelope; unmapped
- * extra keys on the raw POST body (dropped at ingest).
- */
-async function envelopePayloadHash(envelope: unknown): Promise<string> {
-  return jcsHash(JSON.parse(JSON.stringify(envelope)) as unknown)
-}
 
 async function ingestBodyToEnvelope(args: {
   body: Record<string, unknown>
