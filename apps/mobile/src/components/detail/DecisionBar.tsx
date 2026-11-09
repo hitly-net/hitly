@@ -13,6 +13,13 @@ import { EditArgsSheet } from './EditArgsSheet'
 import { ReasonSheet } from './ReasonSheet'
 import { RespondSheet } from './RespondSheet'
 import { canShowEdit } from './edit-helpers'
+import {
+  canSubmitReason,
+  openReasonFlow,
+  reasonDecidePayload,
+  reasonFlowAfterDecide,
+  type ReasonFlow,
+} from './reason-helpers'
 
 export type DecideExtra = {
   editedArgs?: Record<string, unknown>
@@ -55,9 +62,7 @@ export function DecisionBar({
   const [editOpen, setEditOpen] = useState(false)
   const [respondOpen, setRespondOpen] = useState(false)
   const [response, setResponse] = useState('')
-  const [reasonFlow, setReasonFlow] = useState<{ decision: Decision; extra?: DecideExtra; reason: string } | null>(
-    null,
-  )
+  const [reasonFlow, setReasonFlow] = useState<ReasonFlow<DecideExtra> | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -76,8 +81,9 @@ export function DecisionBar({
       await onDecide(decision, extra)
       setEditOpen(false)
       setRespondOpen(false)
-      setReasonFlow(null)
+      setReasonFlow((flow) => reasonFlowAfterDecide(flow, 'success'))
     } catch (err) {
+      setReasonFlow((flow) => reasonFlowAfterDecide(flow, 'failure'))
       setError(err instanceof Error ? err.message : 'Decision failed')
     } finally {
       setPending(false)
@@ -92,7 +98,7 @@ export function DecisionBar({
       return
     }
     if (envelope && requiresReason(envelope, decision)) {
-      setReasonFlow({ decision, extra, reason: '' })
+      setReasonFlow((current) => openReasonFlow(current, decision, extra))
       return
     }
     void run(decision, extra)
@@ -162,11 +168,12 @@ export function DecisionBar({
           onChange={(text) => setReasonFlow((flow) => (flow ? { ...flow, reason: text } : flow))}
           onSubmit={() => {
             if (!reasonFlow) return
-            if (!reasonFlow.reason.trim()) return
-            const { decision, extra, reason } = reasonFlow
+            if (!canSubmitReason(reasonFlow.reason)) return
+            const payload = reasonDecidePayload(reasonFlow)
+            if (!payload) return
             // Do NOT clear the flow before deciding: run() clears it on success, and
             // a refused/failed submit keeps the sheet open with the typed reason (S11).
-            void run(decision, { ...extra, reason })
+            void run(payload.decision, payload.extra)
           }}
           onClose={() => setReasonFlow(null)}
         />
