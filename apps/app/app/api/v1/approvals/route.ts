@@ -36,7 +36,12 @@ export async function POST(request: Request) {
     })
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: result.status })
+      return NextResponse.json(
+        'code' in result && result.code
+          ? { error: result.error, code: result.code }
+          : { error: result.error },
+        { status: result.status },
+      )
     }
 
     const envelope = result.approval.envelope as { action?: { args?: Record<string, unknown> } }
