@@ -7,8 +7,8 @@
  *   - getApprovalDetail (GET /api/v1/approvals/:id): must not echo it, in the
  *     `origin` projection nor in `envelope.origin`;
  *   - getOriginalRequest (GET /api/v1/approvals/:id/original-request): the
- *     canonical payload must not contain it, and the hash still matches the
- *     stored (credential-free) envelope byte-for-byte;
+ *     canonical payload must not contain it; payloadSha256 still covers the
+ *     stored (pre-redaction) envelope byte-for-byte (main's #113 contract);
  *   - a legacy row whose envelope still embeds the token (written before the
  *     strip-at-ingest fix) is redacted by both readers as well.
  *
@@ -25,6 +25,7 @@ import { users, workspaces, memberships, projects, projectMemberships, projectAp
 import { ingestApproval } from './approvals'
 import { getApprovalDetail } from './approval-detail'
 import { getOriginalRequest } from './original-request'
+import { REDACTED, redactRequestPayload } from './redact-request-payload'
 import { generateApiKey } from './keys'
 import { newId } from './ids'
 
@@ -158,8 +159,14 @@ test('GET /approvals/:id (getApprovalDetail) never echoes the token to reviewers
     | { resumeHandle?: Record<string, unknown> }
     | undefined
   assert.equal(embedded?.resumeHandle?.cbAuthToken, undefined)
-  // Non-secret origin data still comes through (this is not a blanket origin strip).
-  assert.equal((detail.origin as { resumeHandle?: Record<string, unknown> }).resumeHandle?.resumeUrl, 'http://127.0.0.1:19991/resume')
+  // Main's #113 helper is authoritative on read: the whole resumeHandle is a
+  // secret key and gets blanket-replaced; non-secret origin fields survive.
+  assert.equal(
+    (detail.origin as { resumeHandle?: unknown }).resumeHandle,
+    REDACTED,
+    'origin.resumeHandle must be fully redacted by main\'s helper',
+  )
+  assert.equal((detail.origin as { plugin?: string }).plugin, 'http')
   assert.ok(detail.originFields.some((field) => field.key === 'workflowName'))
 })
 
@@ -174,12 +181,13 @@ test('GET /approvals/:id/original-request never echoes the token and keeps byte-
   assert.ok(result.ok, `expected ok, got ${JSON.stringify(result)}`)
   assert.ok(!result.canonicalPayload.includes(CANARY), 'canonical payload must not contain the token')
 
-  // Read-side strip must be a no-op for clean rows: the copy and its hash stay
-  // byte-identical to the stored envelope, so verifier checks keep working.
+  // Main's #113 semantics: payloadSha256 covers the STORED original
+  // (pre-redaction) so off-host verification keeps working, while the served
+  // canonicalPayload is the stored envelope after redactRequestPayload
+  // (resumeHandle/cb_auth_token replaced). Pin both against the stored row.
   const row = await storedRow(approval.id)
-  const storedCanonical = canonicalJson(row.envelope)
-  assert.equal(result.canonicalPayload, storedCanonical)
-  assert.equal(result.payloadSha256, await sha256Hex(storedCanonical))
+  assert.equal(result.canonicalPayload, canonicalJson(redactRequestPayload(row.envelope)))
+  assert.equal(result.payloadSha256, await sha256Hex(canonicalJson(row.envelope)))
 })
 
 test('legacy rows with the token embedded in the envelope are redacted by both readers', async () => {
