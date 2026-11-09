@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DEFAULT_DEADLINE_MS } from './config.ts'
+import { DEFAULT_DEADLINE_MS, MAX_DEADLINE_MS } from './config.ts'
 import { argsHash } from './jcs.ts'
-import { DETAIL_MAX, TOOL_NAMES, toResponseV0, validateDetail, validateQuestion } from './tools.ts'
+import { DETAIL_MAX, TOOL_NAMES, toResponseV0, validateDetail, validateQuestion, validateRequestId } from './tools.ts'
 import { baseApproval, FakeHost, FIXED_NOW, startHarness, structured } from './test-helpers.ts'
 
 test('exactly the five requester tools are listed; there is no decide tool', async () => {
@@ -420,6 +420,208 @@ test('cancel withdraws the request and get_decision then reports cancelled [M0]'
     const got = structured(await client.callTool({ name: 'get_decision', arguments: { requestId: id } }))
     assert.equal(got.status, 'cancelled')
     assert.equal(got.value, undefined)
+  } finally {
+    await h.close()
+  }
+})
+
+test('deadline: ISO 8601, default 24h, maximum 30 days, past and over-cap refused with a clear tool error', async () => {
+  assert.equal(MAX_DEADLINE_MS, 30 * 24 * 60 * 60 * 1000)
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    // Exactly at the cap (30 days) is the last legal value.
+    const atCap = structured(
+      await client.callTool({ name: 'request_approval', arguments: { ...baseApproval, idempotencyKey: 'bot-task-cap30d', deadline: '2026-12-09T13:00:00Z' } }),
+    )
+    assert.equal(atCap.deadline, '2026-12-09T13:00:00.000Z')
+    // One second past the cap is refused with a clear message, before the host call.
+    const overCap = await client.callTool({ name: 'request_approval', arguments: { ...baseApproval, idempotencyKey: 'bot-task-over30d', deadline: '2026-12-09T13:00:01Z' } })
+    assert.equal(overCap.isError, true)
+    assert.equal((structured(overCap).error as { code: string }).code, 'invalid_request')
+    assert.match(JSON.stringify(structured(overCap)), /30 days/)
+    // ask_user shares the same deadline rule.
+    const askOver = await client.callTool({
+      name: 'ask_user',
+      arguments: { idempotencyKey: 'bot-ask-over30d', prompt: 'Pick a slot?', answerSchema: { type: 'free_text' }, callback_url: baseApproval.callback_url, deadline: '2027-01-01T00:00:00Z' },
+    })
+    assert.equal(askOver.isError, true)
+    assert.match(JSON.stringify(structured(askOver)), /30 days/)
+    // A past deadline is refused.
+    const past = await client.callTool({ name: 'request_approval', arguments: { ...baseApproval, idempotencyKey: 'bot-task-past2', deadline: '2026-11-09T12:59:59Z' } })
+    assert.equal(past.isError, true)
+    assert.match(JSON.stringify(structured(past)), /future/)
+    // Only the legal ones reached the host, with the right expiresAt.
+    assert.equal(h.host.ingests.length, 1)
+    assert.equal(h.host.ingests[0].body.expiresAt, '2026-12-09T13:00:00.000Z')
+    // Malformed values never make it past the schema.
+    for (const bad of ['tomorrow', '2026-13-01T00:00:00Z', '2026-13-40']) {
+      const res = await client.callTool({ name: 'request_approval', arguments: { ...baseApproval, idempotencyKey: 'bot-task-bad-deadline', deadline: bad } })
+      assert.equal(res.isError, true, bad)
+    }
+    assert.equal(h.host.ingests.length, 1)
+  } finally {
+    await h.close()
+  }
+})
+
+test('requestId is restricted to an id pattern: no ".", ".." or "/" ever reaches the host', async () => {
+  assert.equal(validateRequestId('apr_0001'), null)
+  assert.notEqual(validateRequestId('..'), null)
+  assert.notEqual(validateRequestId('.'), null)
+  assert.notEqual(validateRequestId('../../etc/passwd'), null)
+  assert.notEqual(validateRequestId('apr/0001'), null)
+  assert.notEqual(validateRequestId('apr 0001'), null)
+  assert.notEqual(validateRequestId(''), null)
+  assert.notEqual(validateRequestId('x'.repeat(65)), null)
+  const h = await startHarness({ host: new FakeHost('m0') })
+  try {
+    const client = await h.client()
+    for (const bad of ['..', '.', 'a/../b', 'apr/1', 'apr 1', 'apr%2F1']) {
+      const read = await client.callTool({ name: 'get_decision', arguments: { requestId: bad } })
+      assert.equal(read.isError, true, bad)
+      assert.equal((structured(read).error as { code: string }).code, 'invalid_request', bad)
+      const cancelled = await client.callTool({ name: 'cancel', arguments: { requestId: bad } })
+      assert.equal(cancelled.isError, true, bad)
+      assert.equal((structured(cancelled).error as { code: string }).code, 'invalid_request', bad)
+    }
+    assert.deepEqual(h.host.reads, [], 'a malformed id must never be sent to the host')
+    assert.deepEqual(h.host.cancels, [], 'a malformed id must never be sent to the host')
+    // A well-formed id still works.
+    const created = structured(await client.callTool({ name: 'request_approval', arguments: baseApproval }))
+    assert.equal((structured(await client.callTool({ name: 'get_decision', arguments: { requestId: created.requestId as string } }))).status, 'pending')
+  } finally {
+    await h.close()
+  }
+})
+
+test('an edit decision without editedArgs fails closed and is never an approval', () => {
+  // Corrupt today-style reads.
+  const bare = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'edit' })
+  assert.equal(bare.status, 'declined', 'a lost editedArgs is never an approval')
+  assert.equal(bare.value, undefined)
+  const empty = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'edit', editedArgs: {} })
+  assert.equal(empty.status, 'declined')
+  assert.equal(empty.value, undefined)
+  // The dangerous one: an M0 host read claiming answered/approve for an edit with no args.
+  const v0 = toResponseV0({ id: 'apr_1', spec: 'hitl/response/v0', status: 'answered', value: 'approve', decision: 'edit' })
+  assert.equal(v0.status, 'declined')
+  assert.equal(v0.value, undefined)
+  // failed_resume with the same hole also fails closed.
+  const failed = toResponseV0({ id: 'apr_1', status: 'failed_resume', decision: 'edit' })
+  assert.equal(failed.status, 'declined')
+  assert.equal(failed.value, undefined)
+  // Positive control: an edit that carries editedArgs is still an approval.
+  const ok = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'edit', editedArgs: { amount: 25 } })
+  assert.equal(ok.status, 'answered')
+  assert.equal(ok.value, 'approve')
+  assert.deepEqual(ok.editedArgs, { amount: 25 })
+  // accept/reject are unaffected.
+  assert.equal(toResponseV0({ id: 'apr_1', status: 'decided', decision: 'accept' }).value, 'approve')
+  assert.equal(toResponseV0({ id: 'apr_1', status: 'decided', decision: 'reject' }).value, 'reject')
+})
+
+test('the edit fail-closed rule holds over the wire too', async () => {
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    const id = structured(await client.callTool({ name: 'request_approval', arguments: baseApproval })).requestId as string
+    h.host.decide(id, { status: 'decided', decision: 'edit' })
+    const got = structured(await client.callTool({ name: 'get_decision', arguments: { requestId: id } }))
+    assert.equal(got.status, 'declined')
+    assert.equal(got.value, undefined)
+    assert.equal(JSON.stringify(got).includes('approve'), false)
+  } finally {
+    await h.close()
+  }
+})
+
+test('decide-like extras (decision, allowedActions, editedArgs, projectId, plugin, resumeUrl) never reach host ingest', async () => {
+  const INGEST_KEYS = new Set([
+    'plugin', 'kind', 'runId', 'resumeUrl', 'actionName', 'args', 'question', 'contextMarkdown', 'allowedActions',
+    'reasonRequired', 'externalUrls', 'expiresAt', 'argsHash', 'metadata', 'cbAuthToken', 'prompt', 'answerSchema',
+  ])
+  const host = new FakeHost('m0')
+  const h = await startHarness({ host })
+  try {
+    const client = await h.client()
+    // A caller trying to smuggle decision-making fields into the create payloads.
+    await client.callTool({
+      name: 'request_approval',
+      arguments: {
+        ...baseApproval,
+        idempotencyKey: 'bot-task-smuggle-1',
+        decision: 'accept',
+        editedArgs: { orderId: 'EVIL' },
+        projectId: 'proj_evil',
+        plugin: 'evil-plugin',
+        resumeUrl: 'https://evil.example/ingest',
+        allowedActions: { accept: true, reject: false, ignore: false },
+        reason: 'self-approved',
+        answer: 'yes',
+      },
+    })
+    await client.callTool({
+      name: 'ask_user',
+      arguments: {
+        idempotencyKey: 'bot-ask-smuggle-1',
+        prompt: 'Pick a slot?',
+        answerSchema: { type: 'free_text' },
+        callback_url: baseApproval.callback_url,
+        decision: 'accept',
+        editedArgs: { slot: 'EVIL' },
+        projectId: 'proj_evil',
+        plugin: 'evil-plugin',
+        resumeUrl: 'https://evil.example/ingest',
+      },
+    })
+    const id = structured(await client.callTool({ name: 'request_approval', arguments: { ...baseApproval, idempotencyKey: 'bot-task-smuggle-2' } })).requestId as string
+    host.decide(id, { status: 'decided', decision: 'edit', editedArgs: { amount: 25 }, reason: 'Partial', decidedBy: { kind: 'human', id: 'u1' } })
+    await client.callTool({ name: 'get_decision', arguments: { requestId: id } })
+    await client.callTool({ name: 'list_pending', arguments: { projectId: 'proj_evil' } })
+    await client.callTool({ name: 'cancel', arguments: { requestId: id, reason: 'done' } })
+
+    assert.equal(host.ingests.length, 3)
+    const expectations = [
+      { allowedActions: { accept: true, reject: true, ignore: true } },
+      { allowedActions: { accept: false, reject: false, respond: true, ignore: true } },
+      { allowedActions: { accept: true, reject: true, ignore: true } },
+    ]
+    for (const [i, { body }] of host.ingests.entries()) {
+      for (const key of ['decision', 'editedArgs', 'projectId', 'reason', 'answer', 'value', 'spec'] as const) {
+        assert.equal(body[key], undefined, `${key} must never reach ingest (body ${String(i)})`)
+      }
+      assert.equal(body.plugin, 'http', 'plugin is server-controlled, never caller-supplied')
+      assert.equal(body.resumeUrl, baseApproval.callback_url, 'resumeUrl comes from callback_url only')
+      assert.deepEqual(body.allowedActions, expectations[i].allowedActions, 'allowedActions is server-controlled')
+      for (const key of Object.keys(body)) assert.ok(INGEST_KEYS.has(key), `unexpected ingest field ${key}`)
+    }
+    // projectId is a query hint for the pending list, not an ingest payload.
+    assert.deepEqual(host.lists.map((list) => list.projectId), ['proj_evil'])
+    assert.equal(host.ingests.some(({ body }) => JSON.stringify(body).includes('proj_evil')), false)
+    assert.equal(host.ingests.some(({ body }) => JSON.stringify(body).includes('EVIL')), false)
+  } finally {
+    await h.close()
+  }
+})
+
+test('an oversize JSON-RPC body is refused with 413 before anything is parsed', async () => {
+  const h = await startHarness()
+  try {
+    const huge = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'request_approval', arguments: { ...baseApproval, padding: 'x'.repeat(1.5 * 1024 * 1024) } },
+    })
+    const res = await fetch(`${h.url}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${'hitly_testkey_AAAAAAAAAAAAAAAAAAAAAAAA'}` },
+      body: huge,
+    })
+    assert.equal(res.status, 413)
+    assert.match(await res.text(), /too large/i)
+    assert.equal(h.host.ingests.length, 0)
   } finally {
     await h.close()
   }

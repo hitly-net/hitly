@@ -21,6 +21,9 @@ type Row = { id: string; key: string; idempotencyKey: string; body: Record<strin
 export class FakeHost {
   rows = new Map<string, Row>()
   ingests: { key: string; idempotencyKey: string; body: Record<string, unknown> }[] = []
+  reads: { key: string; id: string }[] = []
+  cancels: { key: string; id: string; reason?: string }[] = []
+  lists: { key: string; projectId?: string }[] = []
   validKeys = new Set([TEST_KEY, OTHER_KEY])
   seq = 0
   constructor(public mode: 'today' | 'm0' = 'today') {}
@@ -40,19 +43,22 @@ export class FakeHost {
         }),
       getApproval: (id) =>
         auth<ApprovalRead>(() => {
+          this.reads.push({ key, id })
           const row = this.rows.get(id)
           if (!row || row.key !== key) return { ok: false, status: 404, error: 'Not found', code: 'not_found' }
           return { ok: true, status: 200, data: row.read }
         }),
-      listPending: () =>
+      listPending: (projectId) =>
         auth<unknown>(() => {
+          this.lists.push({ key, projectId })
           if (this.mode === 'today') return { ok: false, status: 405, error: 'Method Not Allowed', code: 'not_supported_by_host' }
           const items = [...this.rows.values()]
             .filter((row) => row.key === key && row.read.status === 'pending')
             .map((row) => ({ id: row.id, kind: row.body.kind, question: row.body.question, prompt: row.body.prompt, createdAt: '2026-11-09T13:00:00.000Z', deadline: row.body.expiresAt }))
           return { ok: true, status: 200, data: { items } }
         }),
-      cancel: (id) => {
+      cancel: (id, reason) => {
+        this.cancels.push({ key, id, reason })
         if (this.mode === 'today') {
           // Session-only today: a project key is not a session, so the host answers 401.
           return Promise.resolve({ ok: false, status: 401, error: 'Unauthorized', code: 'unauthorized' } as const)

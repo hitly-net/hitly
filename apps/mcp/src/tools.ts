@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { DEFAULT_DEADLINE_MS, type McpConfig } from './config.ts'
+import { DEFAULT_DEADLINE_MS, MAX_DEADLINE_MS, type McpConfig } from './config.ts'
 import type { ApprovalRead, HostClient, HostResult } from './host-client.ts'
 import { argsHash } from './jcs.ts'
 import type { Logger } from './logger.ts'
@@ -95,12 +95,25 @@ export function validateDetail(detail: string): string | null {
   return null
 }
 
+/** Request ids are opaque host ids (e.g. `apr_0001`); never a path segment. */
+export const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
+
+export function validateRequestId(requestId: string): string | null {
+  if (!REQUEST_ID_PATTERN.test(requestId)) {
+    return 'requestId must match [A-Za-z0-9_-]{1,64} (no ".", "..", "/" or whitespace)'
+  }
+  return null
+}
+
 function resolveDeadline(ctx: ToolContext, deadline?: string): { iso: string } | { error: string } {
   const now = ctx.now?.() ?? Date.now()
   if (!deadline) return { iso: new Date(now + DEFAULT_DEADLINE_MS).toISOString() }
   const at = Date.parse(deadline)
   if (Number.isNaN(at)) return { error: 'deadline must be an ISO 8601 date-time' }
   if (at <= now) return { error: 'deadline must be in the future' }
+  if (at - now > MAX_DEADLINE_MS) {
+    return { error: `deadline must be at most ${MAX_DEADLINE_MS / (24 * 60 * 60 * 1000)} days from now` }
+  }
   return { iso: new Date(at).toISOString() }
 }
 
@@ -176,9 +189,15 @@ export function toResponseV0(read: ApprovalRead): Record<string, unknown> {
     if (read[key] !== undefined && read[key] !== null) out[key] = read[key]
   }
   const edited = read.editedArgs
-  if (edited && typeof edited === 'object' && !Array.isArray(edited) && Object.keys(edited).length > 0) {
+  const hasEdited = Boolean(edited && typeof edited === 'object' && !Array.isArray(edited) && Object.keys(edited).length > 0)
+  if (hasEdited) {
     // Human amendment. The stored request (and argsHash) is unchanged; the bot must act on these.
     out.editedArgs = edited
+  }
+  if (decision === 'edit' && !hasEdited) {
+    // Fail closed: an 'edit' that lost its editedArgs is corrupt, never an approval.
+    out.status = 'declined'
+    delete out.value
   }
   const activity = read.activity && typeof read.activity === 'object' ? (read.activity as Record<string, unknown>) : undefined
   out.activity = activity ?? { presentedAt: read.presentedAt ?? null, items: [] }
@@ -372,6 +391,8 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     },
     async (input) =>
       timed(ctx, 'get_decision', async () => {
+        const idError = validateRequestId(input.requestId)
+        if (idError) return { result: fail('invalid_request', idError) }
         const read = await ctx.host.getApproval(input.requestId)
         if (!read.ok) return { requestId: input.requestId, result: hostFail(read), status: read.code }
         const response = toResponseV0(read.data)
@@ -411,6 +432,8 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     },
     async (input) =>
       timed(ctx, 'cancel', async () => {
+        const idError = validateRequestId(input.requestId)
+        if (idError) return { result: fail('invalid_request', idError) }
         const cancelled = await ctx.host.cancel(input.requestId, input.reason)
         if (!cancelled.ok) {
           const hint = cancelled.code === 'unauthorized' ? 'requester cancel with an API key may not be available on this host yet' : undefined
