@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm'
-import { canonicalJson, sha256Hex, type ApprovalEnvelope, type WorkspaceRole } from '@hitly/core'
+import { argsHash as jcsArgsHash, canonicalJson, jcsHash, sha256Hex, type ApprovalEnvelope, type WorkspaceRole } from '@hitly/core'
 import { approvals, evidenceReceipts } from '@hitly/db/schema'
 import { getProjectAccess } from './rbac'
 import { requireDb, withTenant } from './tenant'
@@ -27,9 +27,12 @@ import { decodeTenantJson } from './tenant-crypto'
  * precision at ingest `JSON.parse` (e.g. `12345678901234567890` is stored and served
  * as `12345678901234567000`); that is not repaired here.
  *
- * Hash form: hex SHA-256 over Hitly `canonicalJson`, not hitl-spec §5
- * `b64url(SHA-256(JCS(...)))`. Aligning with JCS/b64url is a follow-up — changing
- * `canonicalJson` would rewrite every evidence hash on existing data.
+ * Hash forms: `payloadHash` / `argsHash` are the hitl-spec 3.8 / 5 wire form,
+ * `b64url(SHA-256(JCS(...)))`; `argsHash` equals the request's `argsHash` on
+ * ingest and in hitl/response/v0 reads. `payloadSha256` / `argsSha256` stay hex
+ * SHA-256 over Hitly `canonicalJson` because they anchor the hitly.evidence.v1
+ * chain (`proposed_sha256`); changing them would rewrite every evidence hash on
+ * existing data.
  */
 
 export type OriginalRequestOk = {
@@ -42,6 +45,10 @@ export type OriginalRequestOk = {
   payloadSha256: string
   /** sha256 of the canonical action args; equals the requested event's `proposed_sha256`. */
   argsSha256: string
+  /** hitl-spec 5: b64url(SHA-256(JCS(stored payload))). */
+  payloadHash: string
+  /** hitl-spec 3.8: b64url(SHA-256(JCS(action.args))) — the request's argsHash. */
+  argsHash: string
   /** The requested event's evidence receipt anchor (hitly#97 chain), when durable. */
   evidence?: { eventId: string; contentSha256: string; seq: number }
 }
@@ -104,6 +111,8 @@ export async function getOriginalRequest(args: {
       canonicalPayload,
       payloadSha256,
       argsSha256,
+      payloadHash: await jcsHash(payload),
+      argsHash: await jcsArgsHash(payload.action?.args ?? {}),
     }
     if (receipt) {
       result.evidence = { eventId: receipt.eventId, contentSha256: receipt.contentSha256, seq: receipt.seq }

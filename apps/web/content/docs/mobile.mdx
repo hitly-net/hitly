@@ -22,7 +22,7 @@ Web stays the admin surface for team, rules, people, logs, and API keys. Mobile 
 2. Hosted: enter the instance origin. The app probes `GET /api/v1/health` (`product` must be `hitly`).
 3. Email and password against that origin’s Better Auth endpoints. The session token is stored on device and sent as `Authorization: Bearer`.
 
-Do not put a project API key (`hitly_…`) in the mobile app. Those keys are ingest-only.
+Do not put a project API key (`hitly_…`) in the mobile app. Those keys are requester credentials for origins, not reviewer credentials.
 
 ## Deep links
 

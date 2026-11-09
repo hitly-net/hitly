@@ -143,7 +143,7 @@ apps/mobile/
 
 ## Reviewer REST (session auth)
 
-Do **not** use project API keys (`hitly_…`) from the mobile app. Those are ingest-only (`POST /api/v1/approvals` from origins).
+Do **not** use project API keys (`hitly_…`) from the mobile app. Those are requester credentials for origins (create, read, cancel and list their own requests).
 
 Reviewer routes authenticate with Better Auth: session cookie (web) or `Authorization: Bearer <session token>` (mobile). Workspace scope: cookie `hitly-workspace-id` or header `x-hitly-workspace-id`.
 

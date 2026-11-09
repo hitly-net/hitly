@@ -43,6 +43,13 @@
       "when": 1794220513923,
       "tag": "0005_invite_token",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794228833721,
+      "tag": "0006_approval_requester_key",
+      "breakpoints": true
     }
   ]
 }
