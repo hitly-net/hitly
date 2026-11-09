@@ -12,4 +12,15 @@ config.resolver.nodeModulesPaths = [
 ]
 config.resolver.disableHierarchicalLookup = true
 
+// @hitly/core keeps a Node-only fallback (`await import('node:crypto')`) behind a
+// WebCrypto check. React Native has no Node builtins, so release bundling fails
+// to resolve it. Resolve Node builtins to an empty module for the app bundle;
+// the mobile app never calls those code paths.
+const upstreamResolveRequest = config.resolver.resolveRequest
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName.startsWith('node:')) return { type: 'empty' }
+  if (upstreamResolveRequest) return upstreamResolveRequest(context, moduleName, platform)
+  return context.resolveRequest(context, moduleName, platform)
+}
+
 module.exports = config

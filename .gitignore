@@ -39,3 +39,10 @@ venv/
 ENV/
 env/
 .pytest_cache/
+
+# Android release signing / push credentials (never commit)
+*.jks
+*.keystore
+!apps/mobile/android/app/debug.keystore
+google-services.json
+credentials.json
