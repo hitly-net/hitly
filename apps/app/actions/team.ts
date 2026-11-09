@@ -3,33 +3,22 @@
 import { revalidatePath } from 'next/cache'
 import { and, eq } from 'drizzle-orm'
 import { isWorkspaceRole } from '@hitly/core'
-import { invites, memberships } from '@hitly/db/schema'
+import { memberships } from '@hitly/db/schema'
 import { getAppContext } from '@/lib/context'
 import { newId } from '@/lib/ids'
 import { canManageWorkspace } from '@/lib/rbac'
 import { requireDb } from '@/lib/require-db'
 import { sendMail } from '@/lib/mail'
+import { createAndSendWorkspaceInvite, resendWorkspaceInvite, revokeWorkspaceInvite } from '@/lib/invites'
 import { findUserByEmail } from '@/lib/workspace'
 
 const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
-async function sendWorkspaceInviteMail(args: {
-  to: string
-  workspaceName: string
-  existingMember: boolean
-}) {
-  if (args.existingMember) {
-    await sendMail({
-      to: args.to,
-      subject: `You've been added to ${args.workspaceName} on Hitly`,
-      text: `You've been added to ${args.workspaceName}.\n\n${APP_URL}\n`,
-    })
-    return
-  }
+async function sendAddedToWorkspaceMail(args: { to: string; workspaceName: string }) {
   await sendMail({
     to: args.to,
-    subject: `You're invited to ${args.workspaceName} on Hitly`,
-    text: `You've been invited to join ${args.workspaceName}.\n\nCreate an account: ${APP_URL}/signup\n\nThis invite expires in 14 days.\n`,
+    subject: `You've been added to ${args.workspaceName} on HITLy`,
+    text: `You've been added to ${args.workspaceName}.\n\n${APP_URL}\n`,
   })
 }
 
@@ -62,24 +51,18 @@ export async function inviteToWorkspace(formData: FormData) {
       userId: existingUser.id,
       role: invitedRole,
     })
-    await sendWorkspaceInviteMail({
-      to: email,
-      workspaceName: workspace.name,
-      existingMember: true,
-    })
+    await sendAddedToWorkspaceMail({ to: email, workspaceName: workspace.name })
   } else {
-    await database.insert(invites).values({
-      id: newId('inv').slice(0, 36),
+    // Emails a one-time accept link (lib/invites.ts); inviting the same
+    // address again replaces the earlier link.
+    await createAndSendWorkspaceInvite({
       workspaceId: workspace.id,
+      workspaceName: workspace.name,
       email,
       role: invitedRole,
       invitedByUserId: user.id,
-      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-    })
-    await sendWorkspaceInviteMail({
-      to: email,
-      workspaceName: workspace.name,
-      existingMember: false,
+      appUrl: APP_URL,
+      database,
     })
   }
   revalidatePath('/settings/team')
@@ -105,10 +88,25 @@ export async function cancelInvite(inviteId: string) {
   if (!canManageWorkspace(role)) {
     throw new Error('Only workspace admins can cancel invites')
   }
-  const database = requireDb()
-  const rows = await database.select().from(invites).where(eq(invites.id, inviteId)).limit(1)
-  const invite = rows[0]
-  if (!invite || invite.workspaceId !== workspace.id) throw new Error('Invite not found')
-  await database.delete(invites).where(eq(invites.id, inviteId))
+  // Deleting the invite revokes its link.
+  const removed = await revokeWorkspaceInvite({ workspaceId: workspace.id, inviteId, database: requireDb() })
+  if (!removed) throw new Error('Invite not found')
+  revalidatePath('/settings/team')
+}
+
+/** Emails a fresh accept link for a pending invite; any earlier link stops working. */
+export async function resendInvite(inviteId: string) {
+  const { workspace, role } = await getAppContext()
+  if (!canManageWorkspace(role)) {
+    throw new Error('Only workspace admins can resend invites')
+  }
+  const result = await resendWorkspaceInvite({
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
+    inviteId,
+    appUrl: APP_URL,
+    database: requireDb(),
+  })
+  if (!result.ok) throw new Error('Invite not found')
   revalidatePath('/settings/team')
 }

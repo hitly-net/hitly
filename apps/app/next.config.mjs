@@ -22,6 +22,17 @@ const config = {
         source: '/reset-password',
         headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
       },
+      {
+        // Workspace invite links carry their token in the path.
+        source: '/invite/:token*',
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      },
+      {
+        // /signup?invite=<token> redirects to /invite/<token>.
+        source: '/signup',
+        has: [{ type: 'query', key: 'invite' }],
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      },
     ]
   },
 }

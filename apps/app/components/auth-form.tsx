@@ -6,10 +6,16 @@ export function AuthForm({
   action,
   submitLabel,
   extraFields,
+  redirectTo,
+  fixedEmail,
 }: {
   action: '/api/auth/sign-in/email' | '/api/auth/sign-up/email'
   submitLabel: string
   extraFields?: 'name'
+  /** Same-site path to open after success (defaults: /inbox after sign-up, / after sign-in). */
+  redirectTo?: string
+  /** Pre-fills the email and makes it read-only. */
+  fixedEmail?: string
 }) {
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
@@ -34,7 +40,12 @@ export function AuthForm({
         return
       }
       await response.json().catch(() => ({}))
-      const redirectPath = action.includes('sign-up') ? '/inbox' : '/'
+      const redirectPath =
+        redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')
+          ? redirectTo
+          : action.includes('sign-up')
+            ? '/inbox'
+            : '/'
       window.location.href = redirectPath
     } catch {
       setError('Something went wrong')
@@ -47,7 +58,15 @@ export function AuthForm({
       {extraFields === 'name' ? (
         <input name="name" required placeholder="Name" autoComplete="name" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
       ) : null}
-      <input name="email" type="email" required placeholder="Email" autoComplete="username" className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
+      <input
+        name="email"
+        type="email"
+        required
+        placeholder="Email"
+        autoComplete="username"
+        defaultValue={fixedEmail}
+        readOnly={fixedEmail !== undefined}
+        className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
       <input
         name="password"
         type="password"

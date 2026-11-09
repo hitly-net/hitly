@@ -10,6 +10,7 @@ import { sendMail } from './mail'
 import { emailAndPasswordOptions } from './auth-email-password'
 import { bootstrapUserWorkspaces } from './workspace'
 import { isSignupEnabled } from './signup'
+import { gateAccountCreation } from './invites'
 import { resolveAuthSecret } from './auth-secret'
 import { trustedProxyAuthOptions } from './trusted-proxies'
 import { authLogger, handleAuthApiError } from './auth-logging'
@@ -43,9 +44,10 @@ function createAuth(database: NonNullable<typeof db>) {
       user: {
         create: {
           before: async (user) => {
-            if (!isSignupEnabled()) {
-              throw new Error('Account creation is currently disabled. Contact us for early access.')
-            }
+            // Public signup, or a valid invite token for exactly this email,
+            // validated and consumed here (lib/invites.ts). A pending invite
+            // matched on email alone is not enough.
+            await gateAccountCreation(user.email, isSignupEnabled())
             return { data: user }
           },
           after: async (user) => {
