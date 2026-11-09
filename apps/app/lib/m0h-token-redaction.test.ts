@@ -154,7 +154,7 @@ test('GET /approvals/:id (getApprovalDetail) never echoes the token to reviewers
   const shown = JSON.stringify(detail)
   assert.ok(!shown.includes(CANARY), 'the full detail projection must not contain the token')
   assert.equal((detail.origin as { resumeHandle?: Record<string, unknown> }).resumeHandle?.cbAuthToken, undefined)
-  const embedded = (detail.envelope as Record<string, unknown>).origin as
+  const embedded = (detail.envelope as unknown as Record<string, unknown>).origin as
     | { resumeHandle?: Record<string, unknown> }
     | undefined
   assert.equal(embedded?.resumeHandle?.cbAuthToken, undefined)
@@ -260,7 +260,7 @@ test('a cb_auth_token smuggled inside the caller metadata bag is stripped at res
   })
   assert.ok(detail.ok)
   assert.ok(!JSON.stringify(detail).includes(CANARY), 'detail must strip the metadata-smuggled token')
-  assert.equal((detail.envelope as Record<string, unknown>).metadata ? (detail.envelope as { metadata?: Record<string, unknown> }).metadata?.pageId : undefined, 'p1')
+  assert.equal((detail.envelope as { metadata?: Record<string, unknown> }).metadata?.pageId, 'p1')
 
   const original = await getOriginalRequest({
     approvalId: result.approval.id,
