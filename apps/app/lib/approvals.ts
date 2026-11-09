@@ -394,8 +394,9 @@ export async function ingestApproval(args: {
     // Replay is scoped to the API key that created the request, consistent
     // with key-scoped cancel and the pending list (PM ruling D3). Open
     // requests replay at any age; closed ones replay inside the published
-    // retention window (lib/create-once.ts). Same payloadHash (JCS of the
-    // ingested envelope) replays the stored request; a different payloadHash
+    // retention window (lib/create-once.ts). Newest matching row wins
+    // (created_at DESC, id DESC as the tie-break). Same payloadHash (JCS of
+    // the ingested envelope) replays the stored request; a different payloadHash
     // is 409 idempotency_conflict so a changed body is never silently recorded.
     const existing = await database
       .select()
@@ -409,7 +410,7 @@ export async function ingestApproval(args: {
           or(inArray(approvals.status, OPEN_APPROVAL_STATUSES), gt(approvals.createdAt, createOnceCutoff(args.now ?? Date.now()))),
         ),
       )
-      .orderBy(desc(approvals.createdAt))
+      .orderBy(desc(approvals.createdAt), desc(approvals.id))
       .limit(1)
     if (existing[0]) {
       const incoming = await ingestBodyToEnvelope({ body: args.body, project })

@@ -337,6 +337,66 @@ test('create-once: concurrent submissions of a new key create exactly one reques
   assert.equal((await rowsFor(idem)).length, 1)
 })
 
+test('create-once replay picks the newest matching row (ORDER BY created_at DESC, id DESC)', async () => {
+  // A18: two matching rows. Reversing the replay ORDER BY to oldest-first
+  // (created_at ASC / id ASC) must go red.
+  const idem = `idem-${newId('t')}`
+  const older = await ingest(keyP1, idem)
+  await setRow(older.approval.id, { idempotencyKey: `idem-${newId('t')}` })
+  const newer = await ingest(keyP1, idem)
+  const t0 = Date.now() - 60_000
+  await setRow(older.approval.id, { idempotencyKey: idem, createdAt: new Date(t0) })
+  await setRow(newer.approval.id, { createdAt: new Date(t0 + 5_000) })
+
+  const replay = await ingest(keyP1, idem)
+  assert.equal(replay.replayed, true)
+  assert.equal(replay.approval.id, newer.approval.id, 'replay must return the newest matching row, not the oldest')
+  assert.notEqual(replay.approval.id, older.approval.id)
+  assert.equal((await rowsFor(idem)).length, 2)
+
+  const idemTie = `idem-${newId('t')}`
+  const first = await ingest(keyP1, idemTie)
+  await setRow(first.approval.id, { idempotencyKey: `idem-${newId('t')}` })
+  const second = await ingest(keyP1, idemTie)
+  const same = new Date(t0 + 30_000)
+  await setRow(first.approval.id, { idempotencyKey: idemTie, createdAt: same })
+  await setRow(second.approval.id, { createdAt: same })
+  const [, hi] = [first.approval.id, second.approval.id].sort()
+  const tieReplay = await ingest(keyP1, idemTie)
+  assert.equal(tieReplay.replayed, true)
+  assert.equal(tieReplay.approval.id, hi, 'equal createdAt: the greater id must win (id DESC)')
+  assert.equal((await rowsFor(idemTie)).length, 2)
+})
+
+test('create-once: sibling keys racing a fresh id: one create, the other 409, no duplicate row', async () => {
+  // S14: real Postgres, not mocked. Two sibling requester keys race to create
+  // the same unused Idempotency-Key. Exactly one row exists afterwards: one
+  // create wins, the other key gets 409.
+  const RUNS = 8
+  for (let run = 1; run <= RUNS; run++) {
+    const idem = `idem-${newId('t')}`
+    const [left, right] = await Promise.all([
+      ingestApproval({ apiKey: keyP1.raw, body: payload(), idempotencyKey: idem }),
+      ingestApproval({ apiKey: keyP2.raw, body: payload(), idempotencyKey: idem }),
+    ])
+    const winners = [left, right].filter((result) => result.ok)
+    const losers = [left, right].filter((result) => !result.ok)
+    assert.equal(winners.length, 1, `run ${run}: exactly one create must win`)
+    assert.equal(losers.length, 1, `run ${run}: the other key must lose`)
+    const winner = winners[0]
+    const loser = losers[0]
+    if (!winner || !winner.ok || !loser || loser.ok) throw new Error(`run ${run}: expected one ok and one error`)
+    assert.equal(winner.replayed, false, `run ${run}: the winner is a create, not a replay`)
+    assert.equal(loser.status, 409, `run ${run}: the losing sibling must get 409`)
+    const rows = await rowsFor(idem)
+    assert.equal(rows.length, 1, `run ${run}: no duplicate row`)
+    assert.ok(
+      rows[0]?.requesterKeyId === keyP1.id || rows[0]?.requesterKeyId === keyP2.id,
+      `run ${run}: the surviving row belongs to one of the racing keys`,
+    )
+  }
+})
+
 test('create-once: ingest waits on the per-project, per-key advisory lock', async () => {
   const idem = `idem-${newId('t')}`
   const body = payload()
@@ -509,6 +569,32 @@ test('pending list: scoped to the calling key, open and unexpired only', async (
   assert.equal(badStatus.status, 400)
   const badLimit = await listRoute(new Request('http://localhost/api/v1/approvals?limit=ten', { headers: { authorization: `Bearer ${k2.raw}` } }))
   assert.equal(badLimit.status, 400)
+})
+
+test('pending list: failed_resume rows are included in GET /api/v1/approvals open list', async () => {
+  // A8d: failed_resume is an open status. Dropping it from the list filter
+  // (or treating it like overdue pending) must go red here.
+  const k = await insertKey(projectP.id, 'failed-resume list key')
+  const failed = await ingest(k)
+  await setRow(failed.approval.id, { status: 'failed_resume', expiresAt: new Date(Date.now() - 1000) })
+  const pending = await ingest(k)
+
+  const list = await listRequesterPending({ apiKey: k.raw })
+  if (!list.ok) throw new Error(list.error)
+  const byId = new Map(list.items.map((item) => [item.id, item]))
+  assert.equal(byId.get(failed.approval.id)?.status, 'failed_resume')
+  assert.equal(byId.get(pending.approval.id)?.status, 'pending')
+
+  const route = await listRoute(
+    new Request(`http://localhost/api/v1/approvals?projectId=${projectP.id}&status=open`, {
+      headers: { authorization: `Bearer ${k.raw}` },
+    }),
+  )
+  assert.equal(route.status, 200)
+  const body = (await route.json()) as { status: string; items: Array<{ id: string; status: string }> }
+  assert.equal(body.status, 'open')
+  assert.equal(body.items.find((item) => item.id === failed.approval.id)?.status, 'failed_resume')
+  assert.equal(body.items.find((item) => item.id === pending.approval.id)?.status, 'pending')
 })
 
 test('deleting the requester key keeps the request (FK set null)', async () => {
