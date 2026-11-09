@@ -46,7 +46,21 @@ export function buildResetEmail({ to, link }: { to: string; link: string }) {
   }
 }
 
-type MailFn = (message: { to: string; subject: string; text: string }) => Promise<unknown>
+export type MailFn = (message: { to: string; subject: string; text: string }) => Promise<unknown>
+
+/**
+ * Client message for a password policy rejection from Better Auth, or null
+ * for other codes. One helper answers both the reset flow and the signed-in
+ * change flow (lib/password-change.ts) so the strength wording lives in one
+ * place, alongside MIN_PASSWORD_LENGTH - which also feeds Better Auth's
+ * `minPasswordLength` (lib/auth-email-password.ts) and the forms'
+ * `minLength` attributes.
+ */
+export function passwordPolicyMessage(code: string | undefined): string | null {
+  if (code === 'PASSWORD_TOO_SHORT') return `Use at least ${MIN_PASSWORD_LENGTH} characters.`
+  if (code === 'PASSWORD_TOO_LONG') return 'That password is too long.'
+  return null
+}
 
 /**
  * Builds the `sendResetPassword` hook for Better Auth. The email links straight
@@ -123,12 +137,8 @@ export async function submitNewPassword(
     if (response.status >= 500) return { ok: false, message: RESET_PASSWORD_RETRY_MESSAGE, requestNewLink: false }
     const data = (await response.json().catch(() => ({}))) as { code?: string }
     if (data.code === 'INVALID_TOKEN') return { ok: false, message: RESET_LINK_INVALID_MESSAGE, requestNewLink: true }
-    if (data.code === 'PASSWORD_TOO_SHORT') {
-      return { ok: false, message: `Use at least ${MIN_PASSWORD_LENGTH} characters.`, requestNewLink: false }
-    }
-    if (data.code === 'PASSWORD_TOO_LONG') {
-      return { ok: false, message: 'That password is too long.', requestNewLink: false }
-    }
+    const policy = passwordPolicyMessage(data.code)
+    if (policy) return { ok: false, message: policy, requestNewLink: false }
     return { ok: false, message: RESET_PASSWORD_FAILED_MESSAGE, requestNewLink: true }
   } catch {
     return { ok: false, message: RESET_REQUEST_NETWORK_MESSAGE, requestNewLink: false }
