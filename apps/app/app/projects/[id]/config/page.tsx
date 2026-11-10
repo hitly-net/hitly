@@ -1,8 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { projectApiKeys, projectMemberships, users } from '@hitly/db/schema'
-import { HitlyWordmark } from '@hitly/ui'
-import { updateProjectConfig } from '@/actions/projects'
+import { ProjectConfigForm } from '@/components/project-config-form'
 import { AppShell } from '@/components/app-shell'
 import { ProjectApiKeys } from '@/components/project-api-keys'
 import { ProjectResumeSecret } from '@/components/project-resume-secret'
@@ -10,6 +9,7 @@ import { ProjectTabs } from '@/components/project-tabs'
 import { TestEvidenceSink } from '@/components/test-evidence-sink'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
+import { publicOriginFields } from '@/lib/project-config'
 import { ensureProjectResumeSecret } from '@/lib/resume-secret'
 import { resumeSecretPrefix } from '@/lib/keys'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
@@ -50,180 +50,32 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
       <h1 className="text-2xl font-semibold">{project.name}</h1>
       <ProjectTabs projectId={id} current="Config" />
 
-      <form action={updateProjectConfig.bind(null, id)} className="mt-6 flex max-w-xl flex-col gap-3">
-        <input
-          name="name"
-          defaultValue={project.name}
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <textarea
-          name="description"
-          defaultValue={project.description ?? ''}
-          placeholder="Description"
-          className="min-h-20 rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <input
-          name="sla"
-          defaultValue={project.defaultSlaMinutes}
-          placeholder="Default SLA (minutes)"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <select
-          name="defaultAssigneeUserId"
-          defaultValue={project.defaultAssigneeUserId ?? ''}
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        >
-          <option value="">No default assignee</option>
-          {people.map((person) => (
-            <option key={person.userId} value={person.userId}>
-              {person.name} ({person.email})
-            </option>
-          ))}
-        </select>
-        <input
-          name="baseUrl"
-          defaultValue={String(credentials.baseUrl ?? credentials.deploymentUrl ?? '')}
-          placeholder={project.plugin === 'temporal' ? 'Temporal address' : 'Origin base URL'}
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        {project.plugin === 'temporal' ? (
-          <>
-            <input
-              name="address"
-              defaultValue={String(credentials.address ?? '')}
-              placeholder="Address"
-              className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            />
-            <input
-              name="namespace"
-              defaultValue={String(credentials.namespace ?? 'default')}
-              placeholder="Namespace"
-              className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            />
-            <input
-              name="taskQueue"
-              defaultValue={String(credentials.taskQueue ?? '')}
-              placeholder="Task queue"
-              className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            />
-          </>
-        ) : (
-          <input
-            name="token"
-            defaultValue=""
-            placeholder="Mastra / origin HTTP token (leave blank to keep)"
-            className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-          />
-        )}
-
-        <h3 className="mt-4 text-sm font-semibold">Evidence Storage</h3>
-        <p className="text-xs text-zinc-500">
-          Evidence is written to your URL. <HitlyWordmark className="text-xs font-normal" /> keeps a receipt only. Decide will not resume the origin if this URL fails.
-        </p>
-        <select
-          name="evidenceSinkType"
-          defaultValue={project.evidenceSinkType}
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        >
-          <option value="none">None</option>
-          <option value="http">HTTP</option>
-          <option value="s3">S3</option>
-        </select>
-        <input
-          name="evidenceSinkUrl"
-          defaultValue={String(sinkConfig.url ?? '')}
-          placeholder="Evidence sink URL"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <input
-          name="evidenceSinkAuthHeader"
-          type="password"
-          defaultValue=""
-          placeholder="Authorization header (leave blank to keep)"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <textarea
-          name="evidenceSinkHeaders"
-          defaultValue=""
-          placeholder="Custom headers (one per line: Name: value)"
-          className="min-h-20 rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <p className="text-xs text-zinc-500">
-          Optional custom HTTP headers sent with each evidence POST. One per line like <code>X-Store-Token: abc123</code>. Transport-only, not stored in the evidence event.
-        </p>
-        <textarea
-          name="evidenceSinkMetadata"
-          defaultValue=""
-          placeholder='Metadata JSON object: {"tenant":"acme","bucket":"audit"}'
-          className="min-h-20 rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <p className="text-xs text-zinc-500">
-          Optional metadata JSON object sent as <code>X-Hitly-Metadata</code> header with each evidence POST. Transport-only, not stored in the evidence event.
-        </p>
-
-        <h3 className="mt-4 text-sm font-semibold">S3 Configuration</h3>
-        <p className="text-xs text-zinc-500">
-          For S3 sink type. Supports AWS S3, Cloudflare R2, Garage, and on-premises S3-compatible storage (Ceph, Cloudian).
-        </p>
-        <input
-          name="evidenceSinkS3Endpoint"
-          defaultValue={String(sinkConfig.endpoint ?? '')}
-          placeholder="S3 endpoint (e.g., http://127.0.0.1:3902)"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <input
-          name="evidenceSinkS3Region"
-          defaultValue={String(sinkConfig.region ?? '')}
-          placeholder="S3 region (e.g., local, us-east-1, eu-west-1, auto)"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <input
-          name="evidenceSinkS3Bucket"
-          defaultValue={String(sinkConfig.bucket ?? '')}
-          placeholder="S3 bucket name (e.g., evidence)"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <input
-          name="evidenceSinkS3AccessKeyId"
-          defaultValue=""
-          placeholder="S3 access key ID (leave blank to keep)"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <input
-          name="evidenceSinkS3SecretAccessKey"
-          type="password"
-          defaultValue=""
-          placeholder="S3 secret access key (leave blank to keep)"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <input
-          name="evidenceSinkS3Prefix"
-          defaultValue={String(sinkConfig.prefix ?? '')}
-          placeholder="S3 key prefix (optional, e.g., hitly/)"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            name="evidenceSinkS3ForcePathStyle"
-            defaultChecked={
-              sinkConfig.forcePathStyle === true ||
-              (sinkConfig.forcePathStyle !== false &&
-                typeof sinkConfig.endpoint === 'string' &&
-                !sinkConfig.endpoint.includes('amazonaws.com'))
-            }
-            className="h-4 w-4"
-          />
-          Force path-style URLs (defaults to on for non-AWS endpoints)
-        </label>
-
-        <button
-          type="submit"
-          className="h-10 rounded-md bg-zinc-900 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          Save
-        </button>
-      </form>
+      <ProjectConfigForm
+        projectId={id}
+        plugin={project.plugin}
+        name={project.name}
+        description={project.description ?? ''}
+        defaultSlaMinutes={project.defaultSlaMinutes}
+        defaultAssigneeUserId={project.defaultAssigneeUserId}
+        people={people.map((person) => ({
+          userId: person.userId,
+          name: person.name ?? person.email,
+          email: person.email,
+        }))}
+        origin={publicOriginFields(project.plugin, credentials)}
+        evidenceSinkType={
+          project.evidenceSinkType === 'http' || project.evidenceSinkType === 's3' ? project.evidenceSinkType : 'none'
+        }
+        sink={{
+          url: String(sinkConfig.url ?? ''),
+          endpoint: String(sinkConfig.endpoint ?? ''),
+          region: String(sinkConfig.region ?? ''),
+          bucket: String(sinkConfig.bucket ?? ''),
+          prefix: String(sinkConfig.prefix ?? ''),
+          forcePathStyle:
+            typeof sinkConfig.forcePathStyle === 'boolean' ? sinkConfig.forcePathStyle : undefined,
+        }}
+      />
 
       {project.evidenceSinkType === 'http' && typeof sinkConfig.url === 'string' && sinkConfig.url && (
         <div className="mt-3 max-w-xl">
