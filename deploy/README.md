@@ -59,6 +59,8 @@ If evidence sinks, OTEL collectors or agents run on this host or the private net
 
 Production refuses to start (the process exits with a message naming the variable) when `BETTER_AUTH_SECRET` is missing, shorter than 32 characters or a placeholder, or when `DATABASE_URL` uses a development or placeholder password such as the `hitly` password from the local `docker-compose.yml`. Give the production database its own password.
 
+The app Postgres pool (shared by drizzle and Better Auth) waits `HITLY_DB_CONNECTION_TIMEOUT_MS` milliseconds for a free connection (default `5000`) and uses `HITLY_DB_POOL_MAX` connections (default `10`). In every environment the process refuses to start when the timeout is set and not a positive integer, or when the pool max is set and below `3`. MFA confirm holds one connection while Better Auth revoke-other-sessions takes a second; a pool of 1 or 2 cannot serve that. The start message names the variable and never a connection string or password.
+
 **Client addresses.** Per-client limits (Better Auth's request limiter and the reset page's link check) need to know which `X-Forwarded-For` entry is the client. Set one of these in `apps/app/.env.production`:
 
 - `HITLY_TRUSTED_PROXIES`: comma-separated IP addresses or CIDR ranges of the reverse proxies in front of the app. The client is the right-most entry that is not one of them. A malformed entry stops the server at start.
