@@ -1524,6 +1524,16 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
     })
 
     const envelope = asEnvelope(approval.envelope)
+    // No callback_url at create time => the HTTP plugin stored no resumeUrl
+    // and decide skipped resume() by design: zero outbound calls. Report the
+    // delivery outcome honestly as 'none' (never 'failed') so requester
+    // reads distinguish "no callback was ever configured" from a broken one.
+    // Only surfaced for decided requests without a stored resumeUrl; reads
+    // of requests that had a callback are unchanged.
+    const storedResumeHandle = (approval.origin as { resumeHandle?: Record<string, unknown> } | null)?.resumeHandle
+    const storedResumeUrl = typeof storedResumeHandle?.resumeUrl === 'string' ? storedResumeHandle.resumeUrl.trim() : ''
+    const noCallbackDelivery =
+      approval.plugin === 'http' && !storedResumeUrl && (approval.status === 'decided' || approval.status === 'failed_resume')
     const read = await buildHitlRead({
       approval,
       envelope,
@@ -1552,6 +1562,7 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
       // invisible to the requester's get_decision. Carried on the response
       // only - the stored request and decision payload are never mutated.
       ...(payload.answer !== undefined ? { answer: payload.answer } : {}),
+      ...(noCallbackDelivery ? { callbackDelivery: 'none' as const } : {}),
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
       ...read,

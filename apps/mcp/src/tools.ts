@@ -66,7 +66,10 @@ const common = {
     .describe('ISO 8601 deadline. Default: 24 hours from now. Expiry never counts as approval.'),
   callback_url: httpsUrl
     .optional()
-    .describe('https URL HITLy POSTs the outcome to (HTTP plugin resumeUrl). Treat it as a hint; confirm with get_decision.'),
+    .describe(
+      'https URL HITLy POSTs the outcome to (HTTP plugin resumeUrl). Treat it as a hint; confirm with get_decision. ' +
+        'When omitted HITLy attempts NO callback at all: poll get_decision for the outcome.',
+    ),
   cb_auth_token: z
     .string()
     .min(16)
@@ -128,10 +131,16 @@ function reportedDeadline(created: { data: { replayed?: boolean; [key: string]: 
   return fallbackIso
 }
 
-function resolveResumeUrl(ctx: ToolContext, callbackUrl?: string): { url: string; callback: boolean } | { error: string } {
+/**
+ * callback_url is the only source of a resumeUrl. When it is omitted no
+ * resumeUrl is sent at all: the HTTP plugin stores nothing and skips
+ * resume(), so HITLy attempts NO callback - the bot confirms with
+ * get_decision. HITLY_MCP_PUBLIC_URL exists only to allowlist this server's
+ * Origin on /mcp; it is never a synthesised callback sink.
+ */
+function resolveResumeUrl(callbackUrl?: string): { url?: string; callback: boolean } {
   if (callbackUrl) return { url: callbackUrl, callback: true }
-  if (ctx.config.publicUrl) return { url: `${ctx.config.publicUrl}/callbacks/noop`, callback: false }
-  return { error: 'callback_url is required on this server (HTTP ingest needs a resumeUrl)' }
+  return { url: undefined, callback: false }
 }
 
 function checkCbToken(ctx: ToolContext, token?: string): string | null {
@@ -212,6 +221,10 @@ export function toResponseV0(read: ApprovalRead): Record<string, unknown> {
   }
   const activity = read.activity && typeof read.activity === 'object' ? (read.activity as Record<string, unknown>) : undefined
   out.activity = activity ?? { presentedAt: read.presentedAt ?? null, items: [] }
+  // Host-reported delivery outcome for requests created without callback_url
+  // (no resumeUrl stored, resume skipped): 'none'. A decided request that had
+  // a callback carries no callbackDelivery on the read; failed_resume below wins.
+  if (typeof read.callbackDelivery === 'string') out.callbackDelivery = read.callbackDelivery
   if (read.status === 'failed_resume') out.callbackDelivery = 'failed'
   return out
 }
@@ -240,7 +253,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Request approval',
       description:
-        'Ask a human (on HITLy web or mobile) to Approve, Reject or Ignore an action. Returns immediately with requestId and state "pending"; it never waits. Wait for the callback, or poll get_decision politely (30-60s, backing off) until the deadline (default 24h). If get_decision returns editedArgs, act on those, not the original args. Expiry is never approval.',
+        'Ask a human (on HITLy web or mobile) to Approve, Reject or Ignore an action. Returns immediately with requestId and state "pending"; it never waits. Wait for the callback (only when callback_url was given; without it HITLy makes no callback at all), or poll get_decision politely (30-60s, backing off) until the deadline (default 24h). If get_decision returns editedArgs, act on those, not the original args. Expiry is never approval.',
       inputSchema: {
         ...common,
         question: z.string().describe('One sentence, at most 160 characters, ending with "?".'),
@@ -260,8 +273,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
         if (questionError) return { result: fail('invalid_request', questionError) }
         const deadline = resolveDeadline(ctx, input.deadline)
         if ('error' in deadline) return { result: fail('invalid_request', deadline.error) }
-        const resume = resolveResumeUrl(ctx, input.callback_url)
-        if ('error' in resume) return { result: fail('invalid_request', resume.error) }
+        const resume = resolveResumeUrl(input.callback_url)
         const tokenError = checkCbToken(ctx, input.cb_auth_token)
         if (tokenError) return { result: fail('not_supported_by_host', tokenError) }
 
@@ -273,7 +285,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
           plugin: 'http',
           kind: 'approval',
           runId: `mcp-${input.idempotencyKey}`,
-          resumeUrl: resume.url,
+          ...(resume.url ? { resumeUrl: resume.url } : {}),
           actionName: input.action.name,
           args,
           question: input.question.trim(),
@@ -346,8 +358,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
         }
         const deadline = resolveDeadline(ctx, input.deadline)
         if ('error' in deadline) return { result: fail('invalid_request', deadline.error) }
-        const resume = resolveResumeUrl(ctx, input.callback_url)
-        if ('error' in resume) return { result: fail('invalid_request', resume.error) }
+        const resume = resolveResumeUrl(input.callback_url)
         const tokenError = checkCbToken(ctx, input.cb_auth_token)
         if (tokenError) return { result: fail('not_supported_by_host', tokenError) }
 
@@ -362,7 +373,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
           plugin: 'http',
           kind: 'question',
           runId: `mcp-${input.idempotencyKey}`,
-          resumeUrl: resume.url,
+          ...(resume.url ? { resumeUrl: resume.url } : {}),
           actionName: 'ask_user',
           args: {},
           prompt: input.prompt.trim(),
