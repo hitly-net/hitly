@@ -313,6 +313,97 @@ describe('MFA confirm revokes other sessions', () => {
     assert.ok(!types.includes(ACCOUNT_SECURITY_EVENT.otherSessionsRevoked))
     assert.ok(!types.includes(ACCOUNT_SECURITY_EVENT.enrolled))
   })
+
+  it('rolls back confirm when revokeOtherSessions throws, then a retry with a fresh code succeeds', async () => {
+    const address = email('confirm-revoke-fail')
+    await createUser(address)
+    const cookieA = await signInCookie(address)
+    const cookieB = await signInCookie(address)
+    const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookieA, { currentPassword: PASSWORD }), routeMocks())
+    const payload = (await enrolled.json()) as { secret: string }
+    const user = await userByEmail(address)
+    assert.ok(user)
+
+    const failLines: string[] = []
+    const failed = await handleMfaConfirm(
+      post(MFA_CONFIRM_ENDPOINT, cookieA, { code: totpCode(fromBase32(payload.secret), NOW) }),
+      routeMocks({
+        log: (line) => failLines.push(line),
+        revokeOtherSessions: async () => {
+          throw new Error('revoke failed')
+        },
+      }),
+    )
+    assert.equal(failed.status, 500)
+    assert.deepEqual(await failed.json(), { error: 'mfa_failed' })
+    assert.deepEqual(failLines, ['[hitly mfa] Could not confirm MFA: Error'])
+    const pending = (await database.select().from(userMfa).where(eq(userMfa.userId, user.id)))[0]
+    assert.equal(pending?.enabled, false)
+    assert.equal(pending?.lastUsedStep, null)
+    const typesAfterFail = (
+      await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))
+    ).map((event) => event.type)
+    assert.ok(!typesAfterFail.includes(ACCOUNT_SECURITY_EVENT.enrolled))
+    assert.ok(!typesAfterFail.includes(ACCOUNT_SECURITY_EVENT.otherSessionsRevoked))
+    assert.ok(await sessionFromCookie(cookieA))
+    assert.ok(await sessionFromCookie(cookieB), 'other sessions stay valid when revoke fails')
+
+    const retried = await handleMfaConfirm(
+      post(MFA_CONFIRM_ENDPOINT, cookieA, { code: totpAt(payload.secret, 1) }),
+      mocksAt(1),
+    )
+    assert.equal(retried.status, 200)
+    assert.equal((await database.select().from(userMfa).where(eq(userMfa.userId, user.id)))[0]?.enabled, true)
+    assert.ok(await sessionFromCookie(cookieA), 'the current session is kept')
+    assert.equal(await sessionFromCookie(cookieB), null, 'other sessions are revoked on retry')
+  })
+
+  it('revokes every other session for the user and leaves a different user untouched', async () => {
+    const address = email('confirm-three')
+    const other = email('confirm-three-other')
+    await createUser(address)
+    await createUser(other)
+    const cookieA = await signInCookie(address)
+    const cookieB = await signInCookie(address)
+    const cookieC = await signInCookie(address)
+    const cookieD = await signInCookie(other)
+    const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookieA, { currentPassword: PASSWORD }), routeMocks())
+    const payload = (await enrolled.json()) as { secret: string }
+    const confirmed = await handleMfaConfirm(
+      post(MFA_CONFIRM_ENDPOINT, cookieA, { code: totpCode(fromBase32(payload.secret), NOW) }),
+      routeMocks(),
+    )
+    assert.equal(confirmed.status, 200)
+    assert.ok(await sessionFromCookie(cookieA), 'session A is kept')
+    assert.equal(await sessionFromCookie(cookieB), null, 'session B is revoked')
+    assert.equal(await sessionFromCookie(cookieC), null, 'session C is revoked')
+    assert.ok(await sessionFromCookie(cookieD), 'user D is untouched')
+  })
+
+  it('confirm audit rows are named events with no TOTP secret, code, or encryption key', async () => {
+    const address = email('confirm-audit')
+    await createUser(address)
+    const cookie = await signInCookie(address)
+    const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookie, { currentPassword: PASSWORD }), routeMocks())
+    const payload = (await enrolled.json()) as { secret: string }
+    const code = totpCode(fromBase32(payload.secret), NOW)
+    const confirmed = await handleMfaConfirm(post(MFA_CONFIRM_ENDPOINT, cookie, { code }), routeMocks())
+    assert.equal(confirmed.status, 200)
+    const user = await userByEmail(address)
+    assert.ok(user)
+    const events = await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))
+    const allowed = new Set<string>(Object.values(ACCOUNT_SECURITY_EVENT))
+    assert.ok(events.some((event) => event.type === ACCOUNT_SECURITY_EVENT.enrolled))
+    assert.ok(events.some((event) => event.type === ACCOUNT_SECURITY_EVENT.otherSessionsRevoked))
+    const wrappingKey = process.env.HITLY_MFA_ENCRYPTION_KEY ?? ''
+    for (const event of events) {
+      assert.ok(allowed.has(event.type), 'audit type must be an ACCOUNT_SECURITY_EVENT value')
+      const serialised = JSON.stringify(event)
+      assert.ok(!serialised.includes(payload.secret), 'audit must not contain the TOTP secret')
+      assert.ok(!serialised.includes(code), 'audit must not contain the TOTP code')
+      if (wrappingKey) assert.ok(!serialised.includes(wrappingKey), 'audit must not contain the encryption key')
+    }
+  })
 })
 
 describe('MFA login second step', () => {

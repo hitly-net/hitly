@@ -341,7 +341,9 @@ export async function handleMfaEnrol(request: ChangeRequest, deps: MfaRouteDeps 
 /**
  * POST /api/session/mfa/confirm — activate pending MFA with a valid TOTP code.
  * On success, every other session for this user is revoked (current kept),
- * using Better Auth's revokeOtherSessions helper.
+ * using Better Auth's revokeOtherSessions helper. Revoke runs inside the
+ * confirm transaction: if it throws, enabled=true, lastUsedStep, and both
+ * audit rows roll back so enrolment stays pending and a retry can finish.
  */
 export async function handleMfaConfirm(request: ChangeRequest, deps: MfaRouteDeps = {}): Promise<NextResponse> {
   const log = deps.log ?? ((line: string) => console.warn(line))
@@ -392,17 +394,15 @@ export async function handleMfaConfirm(request: ChangeRequest, deps: MfaRouteDep
         .set({ enabled: true, lastUsedStep: verified.step, failedVerifyCount: 0, lockedUntil: null, updatedAt: new Date() })
         .where(eq(userMfa.id, row.id))
       await writeAudit(tx, user.id, ACCOUNT_SECURITY_EVENT.enrolled)
+      // If revokeOtherSessions succeeds and this transaction later fails to
+      // commit, other sessions are already gone while MFA stays pending; the
+      // user retries confirm. That split is acceptable.
+      await revokeOtherSessions(request.headers)
       await writeAudit(tx, user.id, ACCOUNT_SECURITY_EVENT.otherSessionsRevoked)
       return 'ok' as const
     })
     if (result === 'not_pending') return json({ error: 'not_pending' }, 409)
     if (result === 'invalid') return json({ error: 'invalid_code' }, 400)
-    try {
-      await revokeOtherSessions(request.headers)
-    } catch (error) {
-      log(`[hitly mfa] Could not revoke other sessions: ${error instanceof Error ? error.name : 'error'}`)
-      return json({ error: 'mfa_failed' }, 500)
-    }
     log(`${MFA_OTHER_SESSIONS_REVOKED_LOG} user=${user.id}`)
     return json({ ok: true })
   } catch (error) {
