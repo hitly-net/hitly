@@ -1,7 +1,12 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   MFA_ENCRYPTION_KEY_ENV,
+  MFA_RECOVERY_ALPHABET,
+  MFA_RECOVERY_CODE_COUNT,
   MFA_TOTP_PERIOD_SECONDS,
   buildOtpauthUri,
   decryptUtf8,
@@ -112,5 +117,22 @@ describe('recovery codes', () => {
       assert.ok(!digest.includes(normaliseRecoveryCode(code)))
       assert.equal(hashRecoveryCode(code.toLowerCase().replace('-', ' '), KEY), digest)
     }
+  })
+
+  it('draws recovery characters with randomInt, not modulo on random bytes', () => {
+    assert.equal(MFA_RECOVERY_ALPHABET.length, 32)
+    const codes = generateRecoveryCodes(MFA_RECOVERY_CODE_COUNT)
+    assert.equal(codes.length, MFA_RECOVERY_CODE_COUNT)
+    for (const code of codes) {
+      assert.match(code, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/)
+      for (const char of code.replace('-', '')) {
+        assert.ok(MFA_RECOVERY_ALPHABET.includes(char), char)
+      }
+    }
+    const source = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'mfa-crypto.ts'), 'utf8')
+    const body = source.slice(source.indexOf('function randomRecoveryPart'), source.indexOf('export function generateRecoveryCodes'))
+    assert.match(body, /randomInt\s*\(\s*MFA_RECOVERY_ALPHABET\.length\s*\)/)
+    assert.equal(body.includes('%'), false, 'recovery characters must not use modulo on random bytes')
+    assert.equal(body.includes('randomBytes'), false)
   })
 })

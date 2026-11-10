@@ -83,6 +83,30 @@ describe('startup problems', () => {
     assert.ok(!short[0]!.includes('AAAA'))
   })
 
+  it('refuses a malformed HITLY_MFA_ENCRYPTION_KEY in production and never prints the value', () => {
+    const malformed = 'not-a-valid-mfa-key'
+    const problems = startupProblems(prod({ HITLY_MFA_ENCRYPTION_KEY: malformed }))
+    assert.equal(problems.length, 1)
+    assert.match(problems[0]!, /HITLY_MFA_ENCRYPTION_KEY/)
+    assert.match(problems[0]!, /32-byte standard base64/)
+    assert.ok(!problems[0]!.includes(malformed))
+  })
+
+  it('does not apply the MFA key check outside production', () => {
+    for (const NODE_ENV of [undefined, 'development', 'test', 'Production']) {
+      assert.deepEqual(
+        startupProblems({ NODE_ENV, HITLY_MFA_ENCRYPTION_KEY: '' }),
+        [],
+        `missing key in ${String(NODE_ENV)}`,
+      )
+      assert.deepEqual(
+        startupProblems({ NODE_ENV, HITLY_MFA_ENCRYPTION_KEY: 'not-a-valid-mfa-key' }),
+        [],
+        `malformed key in ${String(NODE_ENV)}`,
+      )
+    }
+  })
+
   it('refuses a malformed HITLY_TRUSTED_PROXIES in every environment', () => {
     for (const NODE_ENV of ['development', 'production']) {
       const problems = startupProblems({ ...prod({ NODE_ENV }), HITLY_TRUSTED_PROXIES: 'proxy.example' })
@@ -90,6 +114,37 @@ describe('startup problems', () => {
       assert.match(problems[0]!, /HITLY_TRUSTED_PROXIES/)
       assert.ok(!problems[0]!.includes('proxy.example'))
     }
+  })
+
+  it('refuses HITLY_DB_POOL_MAX below 3 in every environment and never prints a URL', () => {
+    for (const NODE_ENV of [undefined, 'development', 'test', 'production']) {
+      const problems = startupProblems({ ...prod({ NODE_ENV }), HITLY_DB_POOL_MAX: '1' })
+      assert.equal(problems.length, 1, String(NODE_ENV))
+      assert.match(problems[0]!, /HITLY_DB_POOL_MAX/)
+      assert.match(problems[0]!, /at least 3/)
+      assert.ok(!problems[0]!.includes('1'))
+      assert.ok(!problems[0]!.includes(GOOD_DB))
+      assert.ok(!problems[0]!.includes('Unique-Value-123'))
+    }
+    assert.deepEqual(startupProblems(prod({ HITLY_DB_POOL_MAX: '3' })), [])
+    assert.deepEqual(startupProblems({ HITLY_DB_POOL_MAX: '2' }), [
+      'HITLY_DB_POOL_MAX must be at least 3',
+    ])
+  })
+
+  it('refuses a bad HITLY_DB_CONNECTION_TIMEOUT_MS in every environment and never repeats the value', () => {
+    const bad = 'not-a-timeout'
+    for (const NODE_ENV of [undefined, 'development', 'production']) {
+      const problems = startupProblems({ ...prod({ NODE_ENV }), HITLY_DB_CONNECTION_TIMEOUT_MS: bad })
+      assert.equal(problems.length, 1, String(NODE_ENV))
+      assert.match(problems[0]!, /HITLY_DB_CONNECTION_TIMEOUT_MS/)
+      assert.match(problems[0]!, /positive integer/)
+      assert.ok(!problems[0]!.includes(bad))
+    }
+    assert.deepEqual(startupProblems(prod({ HITLY_DB_CONNECTION_TIMEOUT_MS: '5000' })), [])
+    assert.deepEqual(startupProblems({ HITLY_DB_CONNECTION_TIMEOUT_MS: '0' }), [
+      'HITLY_DB_CONNECTION_TIMEOUT_MS must be a positive integer',
+    ])
   })
 
   it('logs each problem and exits with status 1', () => {
@@ -151,11 +206,43 @@ describe('server start (instrumentation register)', () => {
     assert.ok(!`${result.stdout}${result.stderr}`.includes('too-short-secret'))
   })
 
+  it('exits with status 1 on a missing HITLY_MFA_ENCRYPTION_KEY in production', () => {
+    const result = startServer(prod({ HITLY_MFA_ENCRYPTION_KEY: '' }))
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /HITLY_MFA_ENCRYPTION_KEY/)
+    assert.ok(!result.stdout.includes('register returned'))
+  })
+
+  it('exits with status 1 on a malformed HITLY_MFA_ENCRYPTION_KEY in production and never prints it', () => {
+    const malformed = 'not-a-valid-mfa-key'
+    const result = startServer(prod({ HITLY_MFA_ENCRYPTION_KEY: malformed }))
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /HITLY_MFA_ENCRYPTION_KEY/)
+    assert.ok(!`${result.stdout}${result.stderr}`.includes(malformed))
+    assert.ok(!result.stdout.includes('register returned'))
+  })
+
   it('exits with status 1 on a malformed HITLY_TRUSTED_PROXIES', () => {
     const result = startServer({ NODE_ENV: 'development', HITLY_TRUSTED_PROXIES: '192.0.2.300' })
     assert.equal(result.status, 1, result.stderr)
     assert.match(result.stderr, /HITLY_TRUSTED_PROXIES/)
     assert.ok(!`${result.stdout}${result.stderr}`.includes('192.0.2.300'))
+  })
+
+  it('exits with status 1 on HITLY_DB_POOL_MAX below 3 in development', () => {
+    const result = startServer({ NODE_ENV: 'development', HITLY_DB_POOL_MAX: '1' })
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /HITLY_DB_POOL_MAX/)
+    assert.ok(!result.stdout.includes('register returned'))
+  })
+
+  it('exits with status 1 on a bad HITLY_DB_CONNECTION_TIMEOUT_MS', () => {
+    const bad = 'not-a-timeout'
+    const result = startServer({ NODE_ENV: 'development', HITLY_DB_CONNECTION_TIMEOUT_MS: bad })
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /HITLY_DB_CONNECTION_TIMEOUT_MS/)
+    assert.ok(!`${result.stdout}${result.stderr}`.includes(bad))
+    assert.ok(!result.stdout.includes('register returned'))
   })
 
   it('runs the checks before anything else starts', () => {
