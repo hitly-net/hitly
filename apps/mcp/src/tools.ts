@@ -331,7 +331,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Ask the user',
       description:
-        'Ask a human a question and get a typed answer later. The prompt is the headline shown to the reviewer: one line, at most 160 characters, ending with "?". Use the optional markdown detail (at most 8000 characters) to explain; it renders under the headline. Returns immediately with requestId and state "pending"; it never waits. Confirm with get_decision before acting.',
+        'Ask a human a question and get a typed answer later. The prompt is the headline shown to the reviewer: one line, at most 160 characters, ending with "?". Use the optional markdown detail (at most 8000 characters) to explain; it renders under the headline. Returns immediately with requestId and state "pending"; it never waits. Confirm with get_decision before acting; the reviewer\'s typed answer comes back as answer {kind, value} (e.g. {"kind":"single_choice","value":"blue"}) - use it verbatim. Ask one question per request: hitl/v0 answers exactly one ask, so issue one ask_user per field; do not build on simple_form, which is going away.',
       inputSchema: {
         ...common,
         prompt: z.string().describe('Headline question: one sentence, at most 160 characters, ending with "?".'),
