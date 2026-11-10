@@ -15,6 +15,7 @@ import {
 import { getAppContext, withAppTenant } from '@/lib/context'
 import { parseAnswerField } from '@/lib/answer-form-helpers'
 import { generateApiKey } from '@/lib/keys'
+import { guardProjectAdminChange } from '@/lib/member-guard'
 import { newId } from '@/lib/ids'
 import { insertNewProject } from '@/lib/project-create'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
@@ -232,7 +233,18 @@ export async function updateProjectMemberRole(projectId: string, membershipId: s
     const role = String(formData.get('role') ?? '')
     if (!isProjectRole(role)) throw new Error('Invalid role')
     const database = requireDb()
-    await database.update(projectMemberships).set({ role }).where(and(eq(projectMemberships.id, membershipId), eq(projectMemberships.workspaceId, requireTenantWorkspaceId())))
+    // Also verifies the membership belongs to this project in this workspace.
+    await guardProjectAdminChange({ projectId, membershipId, newRole: role, database })
+    await database
+      .update(projectMemberships)
+      .set({ role })
+      .where(
+        and(
+          eq(projectMemberships.id, membershipId),
+          eq(projectMemberships.projectId, projectId),
+          eq(projectMemberships.workspaceId, requireTenantWorkspaceId()),
+        ),
+      )
     revalidatePath(`/projects/${projectId}/people`)
   })
 }
@@ -241,7 +253,18 @@ export async function removeProjectMember(projectId: string, membershipId: strin
   return withAppTenant(async () => {
     await requireProjectAdmin(projectId)
     const database = requireDb()
-    await database.delete(projectMemberships).where(and(eq(projectMemberships.id, membershipId), eq(projectMemberships.workspaceId, requireTenantWorkspaceId())))
+    // Refuse to take the project to zero admins (also covers removing
+    // yourself as the last admin); verifies project/workspace scope.
+    await guardProjectAdminChange({ projectId, membershipId, database })
+    await database
+      .delete(projectMemberships)
+      .where(
+        and(
+          eq(projectMemberships.id, membershipId),
+          eq(projectMemberships.projectId, projectId),
+          eq(projectMemberships.workspaceId, requireTenantWorkspaceId()),
+        ),
+      )
     revalidatePath(`/projects/${projectId}/people`)
   })
 }
