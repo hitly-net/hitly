@@ -7,7 +7,7 @@
  * nothing here logs a secret, code, or key.
  */
 
-import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 
 export const MFA_ENCRYPTION_KEY_ENV = 'HITLY_MFA_ENCRYPTION_KEY'
 export const MFA_TOTP_PERIOD_SECONDS = 30
@@ -22,7 +22,7 @@ const AES_KEY_BYTES = 32
 const GCM_IV_BYTES = 12
 const GCM_TAG_BYTES = 16
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
-const RECOVERY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+export const MFA_RECOVERY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 export function mfaEncryptionKeyProblem(value: string | undefined): string | null {
   const raw = (value ?? '').trim()
@@ -174,9 +174,8 @@ export function verifyTotpCode(
 }
 
 function randomRecoveryPart(length: number): string {
-  const bytes = randomBytes(length)
   let out = ''
-  for (const byte of bytes) out += RECOVERY_ALPHABET[byte % RECOVERY_ALPHABET.length]
+  for (let i = 0; i < length; i += 1) out += MFA_RECOVERY_ALPHABET[randomInt(MFA_RECOVERY_ALPHABET.length)]
   return out
 }
 
