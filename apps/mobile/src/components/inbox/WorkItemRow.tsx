@@ -13,11 +13,17 @@ export function WorkItemRowView({ item, onPress }: { item: WorkItemRow; onPress:
       <PluginMark plugin={item.plugin} />
       <View style={styles.body}>
         <Text style={styles.title} numberOfLines={1}>
-          {item.actionName}
+          {/* ask_user rows are titled by the question (truncated); approvals unchanged. */}
+          {item.prompt || item.actionName}
         </Text>
-        <Text style={styles.meta} numberOfLines={1}>
-          {item.projectName} · {resultLabel(item)}
-        </Text>
+        <View style={styles.metaRow}>
+          {item.kind === 'question' ? (
+            <Text style={styles.askTag}>ask_user</Text>
+          ) : null}
+          <Text style={styles.meta} numberOfLines={1}>
+            {item.projectName} · {resultLabel(item)}
+          </Text>
+        </View>
       </View>
       {item.status === 'decided' ? null : <SlaChip expiresAt={item.expiresAt} />}
     </Pressable>
@@ -35,5 +41,17 @@ const styles = StyleSheet.create({
   },
   body: { flex: 1, minWidth: 0 },
   title: { fontSize: 16, fontWeight: '600', color: colors.text },
-  meta: { marginTop: 2, fontSize: 12, color: colors.muted },
+  metaRow: { marginTop: 2, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  askTag: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.muted,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    overflow: 'hidden',
+  },
+  meta: { fontSize: 12, color: colors.muted },
 })

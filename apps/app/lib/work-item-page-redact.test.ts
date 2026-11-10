@@ -330,7 +330,19 @@ test('inbox detail / list / audit / mobile loaders redact on the server (source)
   assert.match(auditPageSrc, /listAudit/, 'audit/history page must use listAudit')
   assert.match(inboxLibCode, /toInboxListItem/, 'inbox list must map through the allowlisted DTO')
   assert.match(inboxLibCode, /toAuditRow/, 'audit list must map through the allowlisted DTO')
-  assert.doesNotMatch(inboxLibCode, /approvals\.envelope/, 'inbox/audit loaders must not select envelope')
+  // The envelope may be selected ONLY to project the allowlisted ask_user
+  // headline (the `prompt` key); the runtime canary test below proves no
+  // other envelope content ever reaches the serialised row.
+  assert.match(
+    inboxLibCode,
+    /if \(row\.actionName === 'ask_user'\)[\s\S]*?typeof envelope\.prompt === 'string'[\s\S]*?toInboxListItem/,
+    'envelope use in the inbox list must be confined to the allowlisted prompt extraction',
+  )
+  assert.doesNotMatch(
+    inboxLibCode,
+    /toInboxListItem\(\{[\s\S]*?envelope:/,
+    'the inbox DTO must never carry the envelope',
+  )
   assert.doesNotMatch(inboxLibCode, /approvals\.origin/, 'inbox/audit loaders must not select origin')
   assert.doesNotMatch(inboxLibCode, /decisionRecords\.payload/, 'audit loader must not select decision payload')
   assert.doesNotMatch(
@@ -483,6 +495,11 @@ test('inbox list and audit/history loaders omit planted secrets from serialised 
   const approval = await ingest()
   await plantCanaries(approval.id)
   await plantDecisionCanaries(approval.id)
+  // An ask_user-shaped row too: its envelope is projected for the allowlisted
+  // `prompt` headline, so a leaky projection must trip the canaries below.
+  const ask = await ingest()
+  await db.update(approvals).set({ actionName: 'ask_user' }).where(eq(approvals.id, ask.id))
+  await plantCanaries(ask.id)
 
   const { items } = await listInboxItems({
     workspaceId: workspaceA.id,
@@ -492,6 +509,10 @@ test('inbox list and audit/history loaders omit planted secrets from serialised 
   const found = items.find((item) => item.id === approval.id)
   assert.ok(found, 'inbox list should include the planted approval')
   assert.deepEqual(Object.keys(found).sort(), [...INBOX_LIST_KEYS].sort())
+  const askRow = items.find((item) => item.id === ask.id)
+  assert.ok(askRow, 'inbox list should include the planted ask_user row')
+  assert.equal(askRow?.kind, 'question', 'ask_user rows are typed as questions for the ask_user tag')
+  assert.deepEqual(Object.keys(askRow ?? {}).sort(), [...INBOX_LIST_KEYS].sort())
   const inboxJson = serializeInboxList(items)
   assertNoCanary('inbox list JSON', inboxJson)
 
