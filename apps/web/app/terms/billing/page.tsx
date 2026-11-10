@@ -1,8 +1,14 @@
 import { SiteFooter, SiteHeader } from '@/components/marketing/site-chrome'
 import { HitlyWordmark } from '@hitly/ui'
 import Link from 'next/link'
+import { marketingMeta } from '@/lib/site'
 
-export const metadata = { title: 'Billing Terms' }
+export const metadata = marketingMeta({
+  title: 'Billing Terms',
+  description:
+    'How HITLy Cloud plans are billed: USD subscriptions through Stripe, renewals, cancellation, and invoices.',
+  path: '/terms/billing',
+})
 
 export default function BillingTermsPage() {
   return (

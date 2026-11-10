@@ -2,8 +2,10 @@ import { RootProvider } from 'fumadocs-ui/provider/next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { headers } from 'next/headers'
 import Script from 'next/script'
+import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import { isCloudHost } from '@/lib/host'
+import { SITE_URL } from '@/lib/site'
 import './globals.css'
 
 const geist = Geist({
@@ -16,12 +18,28 @@ const geistMono = Geist_Mono({
   variable: '--font-mono',
 })
 
-export const metadata = {
+const DESCRIPTION =
+  'HITLy is the approval inbox for agent work. Mastra, Hermes, HTTP, LangGraph, and Temporal origins pause; reviewers decide in HITLy; plugins resume the run.'
+
+export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
     default: 'HITLy',
     template: '%s — HITLy',
   },
-  description: 'Approval inbox for agent work — Mastra, Hermes, HTTP, LangGraph, and Temporal.',
+  description: DESCRIPTION,
+  openGraph: {
+    type: 'website',
+    siteName: 'HITLy',
+    url: `${SITE_URL}/`,
+    title: 'HITLy',
+    description: DESCRIPTION,
+  },
+  twitter: {
+    card: 'summary',
+    title: 'HITLy',
+    description: DESCRIPTION,
+  },
 }
 
 export default async function Layout({ children }: { children: ReactNode }) {
