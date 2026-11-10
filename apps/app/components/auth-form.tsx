@@ -33,13 +33,16 @@ export function AuthForm({
         body: JSON.stringify(body),
         credentials: 'include',
       })
+      const data = (await response.json().catch(() => ({}))) as { message?: string; mfaRequired?: boolean }
       if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { message?: string }
         setError(data.message ?? 'Something went wrong')
         setPending(false)
         return
       }
-      await response.json().catch(() => ({}))
+      if (data.mfaRequired) {
+        window.location.href = '/login/mfa'
+        return
+      }
       const redirectPath =
         redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')
           ? redirectTo

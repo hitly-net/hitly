@@ -20,10 +20,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const appDir = path.join(__dirname, '..')
 const GOOD_SECRET = 'k'.repeat(32)
 const GOOD_DB = 'postgres://app:Unique-Value-123@db.example:5432/hitly'
+const GOOD_MFA_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
 const prod = (extra: Record<string, string | undefined> = {}) => ({
   NODE_ENV: 'production',
   BETTER_AUTH_SECRET: GOOD_SECRET,
   DATABASE_URL: GOOD_DB,
+  HITLY_MFA_ENCRYPTION_KEY: GOOD_MFA_KEY,
   ...extra,
 })
 
@@ -69,6 +71,16 @@ describe('startup problems', () => {
     for (const NODE_ENV of [undefined, 'development', 'test', 'Production', 'PRODUCTION', 'prod', ' production']) {
       assert.deepEqual(startupProblems({ ...dev, NODE_ENV }), [], String(NODE_ENV))
     }
+  })
+
+  it('refuses a missing or short HITLY_MFA_ENCRYPTION_KEY in production', () => {
+    const missing = startupProblems(prod({ HITLY_MFA_ENCRYPTION_KEY: '' }))
+    assert.equal(missing.length, 1)
+    assert.match(missing[0]!, /HITLY_MFA_ENCRYPTION_KEY/)
+    const short = startupProblems(prod({ HITLY_MFA_ENCRYPTION_KEY: 'AAAA' }))
+    assert.equal(short.length, 1)
+    assert.match(short[0]!, /HITLY_MFA_ENCRYPTION_KEY/)
+    assert.ok(!short[0]!.includes('AAAA'))
   })
 
   it('refuses a malformed HITLY_TRUSTED_PROXIES in every environment', () => {
