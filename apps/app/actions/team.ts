@@ -5,9 +5,14 @@ import { and, eq } from 'drizzle-orm'
 import { isWorkspaceRole } from '@hitly/core'
 import { memberships } from '@hitly/db/schema'
 import { getAppContext } from '@/lib/context'
+import {
+  assertWorkspaceKeepsOwner,
+  assertWorkspaceMemberRemovalKeepsProjectAdmins,
+} from '@/lib/member-guard'
 import { newId } from '@/lib/ids'
 import { canManageWorkspace } from '@/lib/rbac'
 import { requireDb } from '@/lib/require-db'
+import { withTenant } from '@/lib/tenant'
 import { sendMail } from '@/lib/mail'
 import { createAndSendWorkspaceInvite, resendWorkspaceInvite, revokeWorkspaceInvite } from '@/lib/invites'
 import { findUserByEmail } from '@/lib/workspace'
@@ -73,13 +78,23 @@ export async function removeWorkspaceMember(memberId: string) {
   if (!canManageWorkspace(role)) {
     throw new Error('Only workspace admins can remove members')
   }
-  const database = requireDb()
-  const rows = await database.select().from(memberships).where(eq(memberships.id, memberId)).limit(1)
-  const member = rows[0]
-  if (!member || member.workspaceId !== workspace.id) throw new Error('Member not found')
-  if (member.userId === user.id) throw new Error('You cannot remove yourself')
-  if (member.role === 'owner') throw new Error('Cannot remove the owner')
-  await database.delete(memberships).where(eq(memberships.id, memberId))
+  // Guards and the delete share one transaction, so a concurrent project
+  // role change cannot slip between the count and the removal.
+  await withTenant(workspace.id, async () => {
+    const database = requireDb()
+    const rows = await database.select().from(memberships).where(eq(memberships.id, memberId)).limit(1)
+    const member = rows[0]
+    if (!member || member.workspaceId !== workspace.id) throw new Error('Member not found')
+    if (member.userId === user.id) throw new Error('You cannot remove yourself')
+    if (member.role === 'owner') throw new Error('Cannot remove the owner')
+    // Server-side backstop for the same rule (a workspace always keeps an
+    // owner), independent of the UI hiding the button.
+    await assertWorkspaceKeepsOwner({ membershipId: member.id, database })
+    // A workspace removal strands the person's project admin seats: refuse
+    // while they are the only admin of any project in this workspace.
+    await assertWorkspaceMemberRemovalKeepsProjectAdmins({ userId: member.userId, database })
+    await database.delete(memberships).where(eq(memberships.id, memberId))
+  })
   revalidatePath('/settings/team')
 }
 
