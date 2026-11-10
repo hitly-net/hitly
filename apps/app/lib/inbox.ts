@@ -99,12 +99,18 @@ export async function listInboxItems(args: {
   // show or count an already-expired request as pending: settle past-deadline
   // rows first (one flip + one expiry callback each), then the status
   // filters below do their normal job.
-  await settleExpiredApprovalsInProjects(args.workspaceId, projectIds)
+  const nowDate = new Date()
+  await settleExpiredApprovalsInProjects(args.workspaceId, projectIds, nowDate.getTime())
   const scope = isInboxScope(args.scope) ? args.scope : 'all'
   if (scope === 'open') {
     // Pending inbox (web + mobile): only items still awaiting a human.
     // failed_resume rows already carry a human decision and must not appear.
     filters.push(inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES]))
+    // Same expiresAt >= now backstop as listRequesterPending: the settle
+    // above is bounded (200 rows per call), and even a row the settle
+    // skipped must never surface as pending.
+    const notPastDeadline = or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, nowDate))
+    if (notPastDeadline) filters.push(notPastDeadline)
   } else if (scope === 'closed') {
     filters.push(inArray(approvals.status, [...CLOSED_APPROVAL_STATUSES]))
   }
@@ -217,7 +223,8 @@ export async function inboxSummary(args: {
     }
   // Same read-time expiry rule as the lists: an expired request is never
   // counted as pending (Needs attention card, favicon and mobile badges).
-  await settleExpiredApprovalsInProjects(args.workspaceId, projectIds)
+  const nowDate = new Date()
+  await settleExpiredApprovalsInProjects(args.workspaceId, projectIds, nowDate.getTime())
   const database = requireDb()
   const pendingRows = await database
     .select({ count: sql<number>`count(*)` })
@@ -227,6 +234,9 @@ export async function inboxSummary(args: {
         inArray(approvals.projectId, projectIds),
         eq(approvals.workspaceId, args.workspaceId),
         inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES]),
+        // expiresAt >= now backstop, mirroring listRequesterPending and the
+        // open scope: the bounded settle may skip rows past its 200-row cap.
+        or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, nowDate)),
       ),
     )
   const failedRows = await database
