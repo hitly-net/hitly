@@ -142,6 +142,30 @@ describe('@hitly/plugin-http M0h', () => {
       )
     })
 
+    it('refuses binary as an ask_user answer type (binary stays request_approval-only)', () => {
+      assert.throws(
+        () =>
+          httpPlugin.ingest({
+            resumeUrl: 'https://hooks.example/resume',
+            runId: 'r_ask_binary',
+            kind: 'question',
+            actionName: 'ask_user',
+            prompt: 'Ship it?',
+            answerSchema: { type: 'binary' },
+          }),
+        /answerSchema\.type must be one of: text, single, multi, number/,
+      )
+      // MCP ask_user publishes the same refusal; HTTP must match it.
+      // request_approval (no ask_user actionName) keeps binary.
+      const approval = httpPlugin.ingest({
+        resumeUrl: 'https://hooks.example/resume',
+        runId: 'r_appr_binary',
+        actionName: 'request_approval',
+        answerSchema: { type: 'binary' },
+      })
+      assert.deepEqual(approval.answerSchema, { type: 'binary' })
+    })
+
     it('unmapped extra keys are still dropped; absent schema/prompt stay absent', () => {
       const env = httpPlugin.ingest({
         resumeUrl: 'https://hooks.example/resume',

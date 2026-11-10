@@ -188,6 +188,14 @@ export const httpPlugin: HitlyPlugin = {
     const parsedAnswerSchema = parseAnswerSchema(body.answerSchema)
     if (!parsedAnswerSchema.ok) throw new Error(parsedAnswerSchema.error)
     const answerSchema: AnswerSchema | undefined = parsedAnswerSchema.schema
+    // binary is the request_approval approve/reject shape, never an ask_user
+    // answer type: MCP ask_user refuses it the same way, so HTTP ingest must
+    // not smuggle it past the widget rules. Refused here, nothing is created.
+    if (body.actionName === 'ask_user' && answerSchema?.type === 'binary') {
+      throw new Error(
+        'answerSchema.type must be one of: text, single, multi, number (legacy aliases free_text, single_choice, multi_choice are accepted)',
+      )
+    }
 
     const cbAuthToken = optionalString(body.cb_auth_token) ?? optionalString(body.cbAuthToken)
     const lifecycleEvents = parseLifecycleEvents(body.lifecycleEvents ?? body.lifecycle_events)

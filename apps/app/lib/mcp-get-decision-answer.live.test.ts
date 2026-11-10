@@ -167,9 +167,10 @@ test('get_decision returns editedArgs without touching the stored request (real 
 })
 
 test('the typed answer passes through the reviewer-facing secret redaction', async () => {
-  // Spec kinds only (hitl/v0 has no form answer): value is the typed value,
-  // and secret-shaped SIBLING keys in the decision payload are still redacted.
-  const answer = { kind: 'multi', value: ['Hall A', 'Hall B'] }
+  // Secret-nested keys INSIDE answer.value are redacted (the main e1d52936
+  // pin, restored) and secret-shaped SIBLING keys in the decision payload
+  // are redacted by the same pass.
+  const answer = { kind: 'multi', value: { contact: 'alice@example.test', api_key: 'sk-liv...CRET' } }
   const view = redactApprovalForReviewer({
     envelope: {
       action: { name: 'ask_user', args: {} },
@@ -184,10 +185,19 @@ test('the typed answer passes through the reviewer-facing secret redaction', asy
     ],
   })
   const payload = view.decisions[0].payload as {
-    answer: { kind: string; value: string[] }
+    answer: { kind: string; value: Record<string, unknown> }
     contact: { api_key: string }
   }
   assert.equal(payload.answer.kind, 'multi')
-  assert.deepEqual(payload.answer.value, ['Hall A', 'Hall B'], 'the typed answer survives redaction intact')
+  assert.equal(
+    payload.answer.value.contact,
+    'alice@example.test',
+    'non-secret answer content survives redaction intact',
+  )
+  assert.equal(
+    payload.answer.value.api_key,
+    REDACTED,
+    'secret-nested keys inside answer.value get the same redaction as other payload fields',
+  )
   assert.equal(payload.contact.api_key, REDACTED, 'secret-nested keys inside the payload get the same redaction as other payload fields')
 })
