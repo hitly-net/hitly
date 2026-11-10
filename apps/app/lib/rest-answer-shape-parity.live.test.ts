@@ -145,11 +145,15 @@ function findNullAnswer(value: unknown, path = '$'): string | null {
 
 // The spec 4.2 verbatim matrix: unicode, line breaks, an intentionally empty
 // answer and a long answer. Each must survive REST and MCP identically.
+// Merge adaptation (#130 into #134): the host now re-validates the answer at
+// decide against the STORED schema (hitl-spec 7) - `kind` must be the stored
+// spec type, never the MCP input alias. The ingest keeps the alias (`free_text`
+// -> stored `text`), so these decide with the canonical kind.
 const TYPED_VARIANTS: Array<[string, Record<string, unknown>]> = [
-  ['unicode', { kind: 'free_text', value: 'Übermorgen um 13:00 ✓ 日本語 🚀', note: 'ünïcode' }],
-  ['multiline', { kind: 'free_text', value: 'line one\nline two\r\nline three\n', confidence: 0.5 }],
-  ['empty string', { kind: 'free_text', value: '' }],
-  ['long', { kind: 'free_text', value: 'ünïcode 🚀 long answer '.repeat(2_000) }],
+  ['unicode', { kind: 'text', value: 'Übermorgen um 13:00 ✓ 日本語 🚀', note: 'ünïcode' }],
+  ['multiline', { kind: 'text', value: 'line one\nline two\r\nline three\n', confidence: 0.5 }],
+  ['empty string', { kind: 'text', value: '' }],
+  ['long', { kind: 'text', value: 'ünïcode 🚀 long answer '.repeat(2_000) }],
 ]
 
 for (const [label, typed] of TYPED_VARIANTS) {
@@ -180,7 +184,7 @@ for (const [label, typed] of TYPED_VARIANTS) {
 
 test('respond with no reply text omits value on REST and MCP; never value: "" (real host, PG)', async () => {
   const approvalId = await askAsBot()
-  await decide(approvalId, { decision: 'respond', answer: { kind: 'free_text', value: 'No reply text needed' } })
+  await decide(approvalId, { decision: 'respond', answer: { kind: 'text', value: 'No reply text needed' } })
 
   const body = await readViaRest(approvalId)
   const hitl = hitlView(body)
@@ -193,7 +197,10 @@ test('respond with no reply text omits value on REST and MCP; never value: "" (r
 })
 
 test('respond with an explicit empty-string reply keeps value: "" on both surfaces (real host, PG)', async () => {
-  const approvalId = await askAsBot()
+  // Merge adaptation: a stored-schema respond must carry answer{kind,value},
+  // never a free-text response (hitl-spec 7). This reply-text scenario lives
+  // on the legacy no-schema path, where it tests exactly the same shape.
+  const approvalId = await askAsBot({ answerSchema: undefined })
   await decide(approvalId, { decision: 'respond', response: '' })
 
   const hitl = hitlView(await readViaRest(approvalId))
@@ -217,7 +224,9 @@ test('accept still maps to value approve on both surfaces (regression pin)', asy
 })
 
 test('no typed answer: answer and the deprecated alias are ABSENT, never null, on REST and MCP (real host, PG)', async () => {
-  const approvalId = await askAsBot()
+  // Merge adaptation: reply-text decisions (no typed answer) belong to the
+  // legacy no-schema path; a stored-schema respond requires answer{kind,value}.
+  const approvalId = await askAsBot({ answerSchema: undefined })
   await decide(approvalId, { decision: 'respond', response: 'Approved, no question typed' })
 
   const body = await readViaRest(approvalId)
@@ -234,7 +243,9 @@ test('no typed answer: answer and the deprecated alias are ABSENT, never null, o
 })
 
 test('a stored literal null answer is treated as absent everywhere (real host, PG)', async () => {
-  const approvalId = await askAsBot()
+  // Merge adaptation: the legacy-row simulation is a reply-text decision, so
+  // it runs on the no-schema path (a stored-schema respond requires answer).
+  const approvalId = await askAsBot({ answerSchema: undefined })
   await decide(approvalId, { decision: 'respond', response: 'Legacy row simulation' })
   // Simulate a legacy decision row whose stored payload carries answer: null.
   await fixture.db
@@ -260,7 +271,11 @@ test('a stored literal null answer is treated as absent everywhere (real host, P
 // top-level `value` on REST or MCP, and callbacks must never send `answer: null`.
 
 test('respond with BOTH reply text and a typed answer: no top-level value on REST nor MCP (real host, PG)', async () => {
-  const approvalId = await askAsBot()
+  // Merge adaptation: a stored-schema respond cannot also carry `response`
+  // (spec 7 refuses it). The PM-ruling scenario - reply text stored alongside
+  // a typed answer must not resurrect a top-level value - lives on the legacy
+  // no-schema path, where both carriers are accepted and read back verbatim.
+  const approvalId = await askAsBot({ answerSchema: undefined })
   const typed = { kind: 'free_text', value: 'Tuesday morning ✓' }
   await decide(approvalId, { decision: 'respond', response: 'Here is some reply text', answer: typed })
 
@@ -282,7 +297,12 @@ test('respond with BOTH reply text and a typed answer: no top-level value on RES
 
 test('accept and reject with a typed answer also carry answer only, never value (real host, PG)', async () => {
   for (const decision of ['accept', 'reject'] as const) {
+    // Merge adaptation: with a stored schema, a typed answer is accepted on
+    // respond only (spec 7). This ruling - accept/reject carry answer, never
+    // value - is exercised on the legacy no-schema path, where the generic
+    // typed answer is stored verbatim on accept/reject.
     const approvalId = await askAsBot({
+      answerSchema: undefined,
       actionName: 'deploy',
       args: { env: 'prod' },
       allowedActions: { accept: true, reject: true, respond: false, ignore: true },
@@ -305,7 +325,7 @@ test('callbacks: answered POST carries the answer intact with no null; decided P
   const hitsBefore = receiver.hits.length
 
   const withAnswer = await askAsBot()
-  const typed = { kind: 'single_choice', value: 'Morning' }
+  const typed = { kind: 'text', value: 'Morning' }
   await decide(withAnswer, { decision: 'respond', answer: typed })
 
   const answered = receiver.hits.slice(hitsBefore).filter((hit) => hit.body.type === 'answered')
