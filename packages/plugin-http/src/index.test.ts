@@ -62,9 +62,20 @@ function baseOrigin(resumeUrl: string, extra: Record<string, unknown> = {}): Ori
 
 describe('@hitly/plugin-http M0h', () => {
   describe('ingest', () => {
-    it('requires resumeUrl and runId', () => {
-      assert.throws(() => httpPlugin.ingest({ runId: 'r1' }), /resumeUrl/)
+    it('requires runId; resumeUrl is optional (no callback without it)', () => {
+      // No resumeUrl: accepted, and none is stored (rule: no callback_url =>
+      // HITLy attempts NO callback). resume() skips delivery entirely.
+      const env = httpPlugin.ingest({ runId: 'r1' })
+      assert.equal('resumeUrl' in (env.origin.resumeHandle as Record<string, unknown>), false)
       assert.throws(() => httpPlugin.ingest({ resumeUrl: 'https://example.com/cb' }), /runId/)
+      assert.throws(() => httpPlugin.ingest({ resumeUrl: 'https://example.com/cb', runId: '   ' }), /runId/)
+    })
+
+    it('stores no resumeUrl for blank values and keeps it for real ones', () => {
+      const blank = httpPlugin.ingest({ runId: 'r1', resumeUrl: '   ' })
+      assert.equal('resumeUrl' in (blank.origin.resumeHandle as Record<string, unknown>), false)
+      const real = httpPlugin.ingest({ runId: 'r1', resumeUrl: 'https://example.com/cb' })
+      assert.equal(real.origin.resumeHandle.resumeUrl, 'https://example.com/cb')
     })
 
     it('stores cb_auth_token on resumeHandle, never in metadata', () => {
@@ -224,6 +235,42 @@ describe('@hitly/plugin-http M0h', () => {
       })
       await httpPlugin.resume(baseOrigin('https://hooks.example/resume'), { decision: 'reject', reason: 'no' })
       assert.equal(hits, 1)
+      mock.restoreAll()
+    })
+
+    it('resume() with no stored resumeUrl performs zero outbound calls', async () => {
+      // Created without callback_url: the decision must complete with NO
+      // callback attempt at all (no POST, no auth, no HMAC), never failed_resume.
+      let hits = 0
+      mock.method(globalThis, 'fetch', async () => {
+        hits++
+        return new Response('{}', { status: 200 })
+      })
+      const env = httpPlugin.ingest({ runId: 'run_nc', actionName: 'pay' })
+      const origin: OriginRef = { ...env.origin, resumeHandle: { ...env.origin.resumeHandle, approvalId: 'apr_nc' } }
+      const decided = await httpPlugin.resume(origin, { decision: 'accept' })
+      assert.equal(decided, undefined, 'resume is skipped entirely (void = no resume error)')
+      // The ask_user answer path is skipped the same way.
+      const answered = await httpPlugin.resume(origin, { decision: 'respond', response: 'Saturday', answer: 'Saturday' })
+      assert.equal(answered, undefined)
+      assert.equal(hits, 0, 'not a single outbound request')
+      mock.restoreAll()
+    })
+
+    it('lifecycle delivery no-ops without a stored resumeUrl even when opted in', async () => {
+      let hits = 0
+      mock.method(globalThis, 'fetch', async () => {
+        hits++
+        return new Response('{}', { status: 200 })
+      })
+      const env = httpPlugin.ingest({ runId: 'run_nc2', lifecycleEvents: ['presented'] })
+      assert.equal('resumeUrl' in (env.origin.resumeHandle as Record<string, unknown>), false)
+      const out = await deliverHttpLifecycleEvent({
+        origin: { ...env.origin, resumeHandle: { ...env.origin.resumeHandle, approvalId: 'apr_nc2' } },
+        type: 'presented',
+      })
+      assert.equal(out, null)
+      assert.equal(hits, 0)
       mock.restoreAll()
     })
 

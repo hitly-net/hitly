@@ -138,7 +138,7 @@ yarn workspace @hitly/mcp start
 | `HITLY_MCP_PORT` | `3006` | Listen port. The proxy for `mcp.hitly.net` targets this configurable `host:port`. |
 | `HITLY_API_URL` | `https://cloud.hitly.net` | HITLy host the server calls. |
 | `HITLY_APP_URL` | `HITLY_API_URL` | Base for `reviewUrl` (`/inbox/:id`). |
-| `HITLY_MCP_PUBLIC_URL` | unset | Public origin of this server. When set, requests without `callback_url` use `<origin>/callbacks/noop` (HTTP ingest requires a `resumeUrl`); when unset, `callback_url` is required. Its origin is always allowed on `/mcp`. |
+| `HITLY_MCP_PUBLIC_URL` | unset | Public origin of this server. Its origin is always allowed on `/mcp`. Never used as a callback sink: requests without `callback_url` store no `resumeUrl` and HITLy attempts no callback (confirm with `get_decision`). |
 | `HITLY_MCP_ALLOWED_ORIGINS` | empty | Comma-separated http(s) origins (no path) additionally allowed on `/mcp`, e.g. `https://bot.example,http://localhost:8080`. |
 | `HITLY_MCP_RATE_LIMIT` | `120` | Requests per key per window; `0` disables. |
 | `HITLY_MCP_RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds. |
