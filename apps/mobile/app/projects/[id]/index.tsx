@@ -9,6 +9,7 @@ import { InboxScopeTabs } from '../../../src/components/inbox/InboxScopeTabs'
 import { InboxSearch } from '../../../src/components/inbox/InboxSearch'
 import { WorkItemList } from '../../../src/components/inbox/WorkItemList'
 import { projectItemsFilterKey, useListFilters } from '../../../src/use-list-filters'
+import { appendInboxItems, fetchInboxPage } from '../../../src/inbox-pages'
 import type { ProjectRow, WorkItemRow } from '../../../src/types'
 
 export default function ProjectScreen() {
@@ -27,17 +28,32 @@ function ProjectBody() {
   const [project, setProject] = useState<ProjectRow | null>(null)
   const { scope, setScope, q, setQ, ready } = useListFilters(id ? projectItemsFilterKey(id) : null)
   const [items, setItems] = useState<WorkItemRow[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!client || !id || !ready) return
     const [next, inbox] = await Promise.all([
       client.project(id),
-      client.inbox({ scope, q: q.trim() || undefined, projectId: id }),
+      fetchInboxPage(client.inbox, { scope, q: q.trim() || undefined, projectId: id }),
     ])
     setProject(next)
     setItems(inbox.items)
+    setNextCursor(inbox.nextCursor)
   }, [client, id, q, ready, scope])
+
+  const loadMore = useCallback(async () => {
+    if (!client || !id || !ready || !nextCursor || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const inbox = await fetchInboxPage(client.inbox, { scope, q: q.trim() || undefined, projectId: id }, nextCursor)
+      setItems((prev) => appendInboxItems(prev, inbox.items))
+      setNextCursor(inbox.nextCursor)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [client, id, loadingMore, nextCursor, q, ready, scope])
 
   useFocusEffect(
     useCallback(() => {
@@ -60,7 +76,13 @@ function ProjectBody() {
       </View>
       <InboxScopeTabs value={scope} onChange={setScope} />
       <InboxSearch value={q} onChange={setQ} />
-      <WorkItemList items={items} onOpen={(itemId) => router.push(`/inbox/${itemId}`)} />
+      <WorkItemList
+        items={items}
+        onOpen={(itemId) => router.push(`/inbox/${itemId}`)}
+        hasMore={Boolean(nextCursor)}
+        loadingMore={loadingMore}
+        onLoadMore={() => void loadMore()}
+      />
     </View>
   )
 }

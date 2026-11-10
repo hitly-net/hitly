@@ -40,7 +40,7 @@ export interface ApprovalRead {
 export interface HostClient {
   ingest(body: Record<string, unknown>, idempotencyKey: string): Promise<HostResult<IngestResponse>>
   getApproval(id: string): Promise<HostResult<ApprovalRead>>
-  listPending(projectId?: string): Promise<HostResult<unknown>>
+  listPending(projectId?: string, cursor?: string): Promise<HostResult<unknown>>
   cancel(id: string, reason?: string): Promise<HostResult<unknown>>
 }
 
@@ -111,9 +111,10 @@ export class HttpHostClient implements HostClient {
    * DEPENDS ON M0: key-scoped pending list. Today `GET /api/v1/approvals` has no GET
    * handler (405) and the inbox is session-only, so this reports not_supported_by_host.
    */
-  listPending(projectId?: string) {
+  listPending(projectId?: string, cursor?: string) {
     const query = new URLSearchParams({ status: 'pending' })
     if (projectId) query.set('projectId', projectId)
+    if (cursor) query.set('cursor', cursor)
     return this.call<unknown>('GET', `/api/v1/approvals?${query.toString()}`)
   }
 

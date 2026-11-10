@@ -131,7 +131,7 @@ Any key on the request's project can read it; keys on other projects get 404.
 
 `GET /api/v1/approvals` with a project API key lists the open requests **that key created**: `pending` (not past its deadline) and `failed_resume`, newest first (`created_at DESC, id DESC`).
 
-Query: `projectId` (optional; must be the key's project), `status=open` (the default and only value), `limit` (1–200, default 50), `cursor` (opaque; pass the previous page's `nextCursor`). Invalid `cursor` is `400`. `limit` is clamped to 200.
+Query: `projectId` (optional; must be the key's project), `status=open` (the default; `status=pending` is an exact alias of `open`), `limit` (1–200, default 50), `cursor` (opaque; pass the previous page's `nextCursor`). Invalid `cursor` is `400`. `limit` is clamped to 200. Unknown `status` values remain `400`.
 
 ```json
 {

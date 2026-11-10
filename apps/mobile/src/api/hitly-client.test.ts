@@ -66,6 +66,26 @@ test('inbox sends scope=open query param', async () => {
   assert.ok(capturedUrl?.includes('scope=open'), 'Should include scope=open in query')
 })
 
+test('inbox sends nextCursor as cursor on later fetches', async () => {
+  let capturedUrl: string | undefined
+  const mockFetch = async (url: string) => {
+    capturedUrl = url
+    if (url.includes('/inbox')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [], nextCursor: null }),
+      } as Response
+    }
+    throw new Error('Unexpected URL')
+  }
+  globalThis.fetch = mockFetch as typeof fetch
+
+  const client = createHitlyClient({ baseUrl: 'http://localhost:3001', token: 'test-token' })
+  await client.inbox({ scope: 'open', cursor: 'opaque-next-cursor' })
+  assert.ok(capturedUrl?.includes('cursor=opaque-next-cursor'), `later fetches must send cursor, got ${capturedUrl}`)
+})
+
 test('Temporal PATCH has address/namespace/taskQueue and no token', async () => {
   let capturedBody: string | undefined
   const mockFetch = async (url: string, init?: RequestInit) => {

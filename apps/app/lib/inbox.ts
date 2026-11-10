@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, ilike, inArray, or, sql } from 'drizzle-orm'
-import { clampListLimit, olderThanListCursor, takeListPage, type ListCursor } from './list-cursor'
+import { clampListLimit, decodeListCursor, olderThanListCursor, takeListPage, type ListCursor } from './list-cursor'
 import { CLOSED_APPROVAL_STATUSES, isDecision, type WorkspaceRole } from '@hitly/core'
 import { approvals, decisionRecords, projects, users } from '@hitly/db/schema'
 import { listVisibleProjectIds } from './rbac'
@@ -123,6 +123,37 @@ export async function listInboxItems(args: {
   const { page, nextCursor } = takeListPage(rows, limit)
   return { items: page.map(toInboxListItem), nextCursor }
   })
+}
+
+/**
+ * Cap for server-rendered inbox and project item lists. Each request uses
+ * INBOX_DEFAULT_LIMIT (100); this helper follows `nextCursor` until exhausted
+ * or this cap. `hasMore` is set when rows remain so the UI never silently truncates.
+ */
+export const WEB_INBOX_FETCH_CAP = 500
+
+export async function listInboxItemsForWeb(
+  args: Omit<Parameters<typeof listInboxItems>[0], 'limit' | 'cursor'>,
+  cap: number = WEB_INBOX_FETCH_CAP,
+): Promise<{ items: InboxListItem[]; nextCursor: string | null; hasMore: boolean }> {
+  const items: InboxListItem[] = []
+  let cursor: ListCursor | undefined
+  let nextCursor: string | null = null
+  const safeCap = Math.max(1, Math.trunc(cap))
+  while (items.length < safeCap) {
+    const page = await listInboxItems({
+      ...args,
+      limit: Math.min(INBOX_DEFAULT_LIMIT, safeCap - items.length),
+      cursor,
+    })
+    items.push(...page.items)
+    nextCursor = page.nextCursor
+    if (!nextCursor || page.items.length === 0) break
+    const decoded = decodeListCursor(nextCursor)
+    if (!decoded) break
+    cursor = decoded
+  }
+  return { items, nextCursor, hasMore: Boolean(nextCursor) }
 }
 
 export async function inboxSummary(args: {

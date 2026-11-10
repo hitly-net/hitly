@@ -24,38 +24,47 @@ export function WorkItemList({
   empty,
   hrefFor,
   showProjectName = false,
+  hasMore = false,
 }: {
   items: WorkItemRow[]
   empty: ReactNode
   hrefFor: (item: WorkItemRow) => string
   showProjectName?: boolean
+  hasMore?: boolean
 }) {
   if (items.length === 0) return empty
   return (
-    <ul className="mt-6 divide-y divide-zinc-200 dark:divide-zinc-800">
-      {items.map((item) => (
-        <li key={item.id}>
-          <Link href={hrefFor(item)} className="flex items-center gap-3 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900">
-            <PluginMark plugin={item.plugin as PluginId} className="h-8 w-8" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-medium">{item.actionName}</p>
-              {showProjectName ? <p className="text-xs text-zinc-500">{item.projectName}</p> : null}
-            </div>
-            <span className="text-xs text-zinc-500">{ageLabel(item.createdAt)}</span>
-            <Badge
-              variant={
-                item.status === 'pending' || item.status === 'failed_resume'
-                  ? 'warning'
-                  : item.status === 'decided'
-                    ? 'success'
-                    : 'secondary'
-              }
-            >
-              {formatStatusLabel(item.status, item.decision)}
-            </Badge>
-          </Link>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="mt-6 divide-y divide-zinc-200 dark:divide-zinc-800">
+        {items.map((item) => (
+          <li key={item.id}>
+            <Link href={hrefFor(item)} className="flex items-center gap-3 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900">
+              <PluginMark plugin={item.plugin as PluginId} className="h-8 w-8" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium">{item.actionName}</p>
+                {showProjectName ? <p className="text-xs text-zinc-500">{item.projectName}</p> : null}
+              </div>
+              <span className="text-xs text-zinc-500">{ageLabel(item.createdAt)}</span>
+              <Badge
+                variant={
+                  item.status === 'pending' || item.status === 'failed_resume'
+                    ? 'warning'
+                    : item.status === 'decided'
+                      ? 'success'
+                      : 'secondary'
+                }
+              >
+                {formatStatusLabel(item.status, item.decision)}
+              </Badge>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {hasMore ? (
+        <p className="mt-4 text-sm text-zinc-500">
+          More items remain beyond this list.
+        </p>
+      ) : null}
+    </>
   )
 }
