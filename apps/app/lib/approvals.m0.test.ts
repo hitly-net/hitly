@@ -988,6 +988,92 @@ test('pending list: cursor pages with equal createdAt never skip or repeat (drop
   assert.deepEqual(await invalid.json(), { error: 'Invalid cursor' })
 })
 
+test('GET /api/v1/approvals?status=pending is an exact alias of open; unknown status stays 400', async () => {
+  // Step 1 verification (pre-alias): status=pending returned HTTP 400
+  // { error: 'Unsupported status filter; only status=open is available' }
+  // and never listed open items. MCP list_pending sends status=pending.
+  //
+  // Mutant M-pending-alias: drop `status !== 'pending'` so only `open` is
+  // accepted. This test goes red (page 1 is 400, item 101 is unreachable).
+  const routeSrc = readFileSync(new URL('../app/api/v1/approvals/route.ts', import.meta.url), 'utf8')
+  assert.match(
+    routeSrc,
+    /status !== 'open' && status !== 'pending'/,
+    'host list must accept status=pending as an exact alias of status=open',
+  )
+
+  const unknown = await listRoute(
+    new Request('http://localhost/api/v1/approvals?status=closed', {
+      headers: { authorization: `Bearer ${keyP1.raw}` },
+    }),
+  )
+  assert.equal(unknown.status, 400, 'unknown status values must keep the pre-alias 400')
+  assert.deepEqual(await unknown.json(), { error: 'Unsupported status filter; only status=open is available' })
+
+  const projectPending = {
+    id: newId('prj'),
+    workspaceId: workspace.id,
+    name: 'Pending alias project',
+    plugin: 'mastra' as const,
+    credentials: {},
+    evidenceSinkType: 'none' as const,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }
+  await db.insert(projects).values(projectPending)
+  const k = await insertKey(projectPending.id, 'pending alias key')
+  const envelope = await encodeTenantJson(workspace.id, { action: { name: 'pay', args: {} } })
+  const origin = await encodeTenantJson(workspace.id, { runId: 'pending-alias' })
+  const total = 101
+  const pageSize = 50
+  const base = Date.now()
+  const rows = []
+  for (let i = 0; i < total; i++) {
+    rows.push({
+      id: newId('apr').slice(0, 36),
+      workspaceId: workspace.id,
+      projectId: projectPending.id,
+      plugin: 'mastra' as const,
+      status: 'pending' as const,
+      actionName: `reach-${i}`,
+      envelope,
+      origin,
+      requesterKeyId: k.id,
+      expiresAt: new Date(base + 3_600_000),
+      createdAt: new Date(base + i),
+    })
+  }
+  await db.insert(approvals).values(rows)
+  const oldestId = rows[0]!.id
+  const newestId = rows[total - 1]!.id
+
+  const seen: string[] = []
+  let cursor: string | null = null
+  let pages = 0
+  do {
+    const qs = new URLSearchParams({ projectId: projectPending.id, status: 'pending', limit: String(pageSize) })
+    if (cursor) qs.set('cursor', cursor)
+    const route = await listRoute(
+      new Request(`http://localhost/api/v1/approvals?${qs}`, { headers: { authorization: `Bearer ${k.raw}` } }),
+    )
+    assert.equal(route.status, 200, 'status=pending must list open items, not 400')
+    const body = (await route.json()) as {
+      status: string
+      items: Array<{ id: string }>
+      nextCursor: string | null
+    }
+    assert.equal(body.status, 'open', 'pending is an alias; the response status stays open')
+    seen.push(...body.items.map((item) => item.id))
+    cursor = body.nextCursor
+    pages += 1
+    assert.ok(pages <= 4, 'pending-alias pagination must terminate')
+  } while (cursor)
+
+  assert.equal(seen.length, total)
+  assert.equal(seen[0], newestId)
+  assert.equal(seen[total - 1], oldestId, 'item 101 must be reachable via status=pending + cursor')
+})
+
 test('inbox list: cursor pages with equal createdAt never skip or repeat; limit is clamped', async () => {
   const projectPage = {
     id: newId('prj'),

@@ -65,16 +65,17 @@ export async function POST(request: Request) {
 /**
  * GET /api/v1/approvals — the requester's open requests (project API key).
  * Only requests created by the calling key are listed. Query: `projectId`
- * (must be the key's project), `status=open` (the only value; default),
- * `limit` (1-200, default 50), `cursor` (opaque, from `nextCursor`).
- * Order is created_at DESC, id DESC (#107).
+ * (must be the key's project), `status=open` (the default; `status=pending`
+ * is an exact alias of `open`), `limit` (1-200, default 50), `cursor`
+ * (opaque, from `nextCursor`). Order is created_at DESC, id DESC (#107).
  */
 export async function GET(request: Request) {
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
   if (!apiKey) return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
   const url = new URL(request.url)
   const status = url.searchParams.get('status') ?? 'open'
-  if (status !== 'open') {
+  // MCP list_pending sends status=pending. Treat it as open; do not widen to other values.
+  if (status !== 'open' && status !== 'pending') {
     return NextResponse.json({ error: 'Unsupported status filter; only status=open is available' }, { status: 400 })
   }
   const limitParsed = parseLimitParam(url.searchParams.get('limit'))
