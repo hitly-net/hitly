@@ -83,6 +83,30 @@ describe('startup problems', () => {
     assert.ok(!short[0]!.includes('AAAA'))
   })
 
+  it('refuses a malformed HITLY_MFA_ENCRYPTION_KEY in production and never prints the value', () => {
+    const malformed = 'not-a-valid-mfa-key'
+    const problems = startupProblems(prod({ HITLY_MFA_ENCRYPTION_KEY: malformed }))
+    assert.equal(problems.length, 1)
+    assert.match(problems[0]!, /HITLY_MFA_ENCRYPTION_KEY/)
+    assert.match(problems[0]!, /32-byte standard base64/)
+    assert.ok(!problems[0]!.includes(malformed))
+  })
+
+  it('does not apply the MFA key check outside production', () => {
+    for (const NODE_ENV of [undefined, 'development', 'test', 'Production']) {
+      assert.deepEqual(
+        startupProblems({ NODE_ENV, HITLY_MFA_ENCRYPTION_KEY: '' }),
+        [],
+        `missing key in ${String(NODE_ENV)}`,
+      )
+      assert.deepEqual(
+        startupProblems({ NODE_ENV, HITLY_MFA_ENCRYPTION_KEY: 'not-a-valid-mfa-key' }),
+        [],
+        `malformed key in ${String(NODE_ENV)}`,
+      )
+    }
+  })
+
   it('refuses a malformed HITLY_TRUSTED_PROXIES in every environment', () => {
     for (const NODE_ENV of ['development', 'production']) {
       const problems = startupProblems({ ...prod({ NODE_ENV }), HITLY_TRUSTED_PROXIES: 'proxy.example' })
@@ -149,6 +173,22 @@ describe('server start (instrumentation register)', () => {
     assert.equal(result.status, 1, result.stderr)
     assert.match(result.stderr, /BETTER_AUTH_SECRET must be at least 32 characters/)
     assert.ok(!`${result.stdout}${result.stderr}`.includes('too-short-secret'))
+  })
+
+  it('exits with status 1 on a missing HITLY_MFA_ENCRYPTION_KEY in production', () => {
+    const result = startServer(prod({ HITLY_MFA_ENCRYPTION_KEY: '' }))
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /HITLY_MFA_ENCRYPTION_KEY/)
+    assert.ok(!result.stdout.includes('register returned'))
+  })
+
+  it('exits with status 1 on a malformed HITLY_MFA_ENCRYPTION_KEY in production and never prints it', () => {
+    const malformed = 'not-a-valid-mfa-key'
+    const result = startServer(prod({ HITLY_MFA_ENCRYPTION_KEY: malformed }))
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /HITLY_MFA_ENCRYPTION_KEY/)
+    assert.ok(!`${result.stdout}${result.stderr}`.includes(malformed))
+    assert.ok(!result.stdout.includes('register returned'))
   })
 
   it('exits with status 1 on a malformed HITLY_TRUSTED_PROXIES', () => {

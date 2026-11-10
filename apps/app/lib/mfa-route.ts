@@ -11,9 +11,10 @@
  * recovery code (consumed on success), using the same per-user/per-IP limiter
  * and lockout as login MFA verify.
  *
- * Successful disable and recovery-code regenerate write a value-free auth-log
- * line (event name plus user id only). Nothing here logs a password, TOTP
- * secret, otpauth URI, recovery code, or hash: failures use fixed lines.
+ * Successful disable, recovery-code regenerate, and confirm (other-session
+ * revoke) write a value-free auth-log line (event name plus user id only).
+ * Nothing here logs a password, TOTP secret, otpauth URI, recovery code, or
+ * hash: failures use fixed lines.
  */
 
 import { createHash, randomBytes } from 'node:crypto'
@@ -71,6 +72,7 @@ export const ACCOUNT_SECURITY_EVENT = {
   recoveryCodesRegenerated: 'mfa_recovery_codes_regenerated',
   recoveryCodeUsed: 'mfa_recovery_code_used',
   verificationLockout: 'mfa_verification_lockout',
+  otherSessionsRevoked: 'mfa_other_sessions_revoked',
 } as const
 
 export type AccountSecurityEventType = (typeof ACCOUNT_SECURITY_EVENT)[keyof typeof ACCOUNT_SECURITY_EVENT]
@@ -78,10 +80,13 @@ export type AccountSecurityEventType = (typeof ACCOUNT_SECURITY_EVENT)[keyof typ
 /** Auth-log lines: event name plus `user=<id>` only. Never codes or secrets. */
 export const MFA_DISABLED_LOG = `[hitly mfa] ${ACCOUNT_SECURITY_EVENT.disabled}`
 export const MFA_RECOVERY_CODES_REGENERATED_LOG = `[hitly mfa] ${ACCOUNT_SECURITY_EVENT.recoveryCodesRegenerated}`
+export const MFA_OTHER_SESSIONS_REVOKED_LOG = `[hitly mfa] ${ACCOUNT_SECURITY_EVENT.otherSessionsRevoked}`
 
 export interface MfaRouteDeps {
   getSessionUser?: (headers: Headers) => Promise<MfaSessionUser | null>
   verifyPassword?: (headers: Headers, password: string) => Promise<boolean>
+  /** Better Auth revoke-other-sessions; same helper password change uses. */
+  revokeOtherSessions?: (headers: Headers) => Promise<void>
   clientKey?: (headers: Headers) => string
   allowReauth?: (key: string) => boolean
   allowVerify?: (key: string) => boolean
@@ -148,6 +153,11 @@ async function defaultGetSessionUser(headers: Headers): Promise<MfaSessionUser |
   if (!auth) return null
   const session = await auth.api.getSession({ headers })
   return session?.user ? { id: session.user.id, email: session.user.email } : null
+}
+
+async function defaultRevokeOtherSessions(headers: Headers): Promise<void> {
+  if (!auth) return
+  await auth.api.revokeOtherSessions({ headers })
 }
 
 async function defaultVerifyPassword(headers: Headers, password: string): Promise<boolean> {
@@ -330,10 +340,15 @@ export async function handleMfaEnrol(request: ChangeRequest, deps: MfaRouteDeps 
 
 /**
  * POST /api/session/mfa/confirm — activate pending MFA with a valid TOTP code.
+ * On success, every other session for this user is revoked (current kept),
+ * using Better Auth's revokeOtherSessions helper. Revoke runs inside the
+ * confirm transaction: if it throws, enabled=true, lastUsedStep, and both
+ * audit rows roll back so enrolment stays pending and a retry can finish.
  */
 export async function handleMfaConfirm(request: ChangeRequest, deps: MfaRouteDeps = {}): Promise<NextResponse> {
   const log = deps.log ?? ((line: string) => console.warn(line))
   const getSessionUser = deps.getSessionUser ?? defaultGetSessionUser
+  const revokeOtherSessions = deps.revokeOtherSessions ?? defaultRevokeOtherSessions
   const allow = deps.allowVerify ?? mfaVerifyLimiter
   const clientKey = deps.clientKey ?? resetCheckClientKey
   const now = deps.now ?? Date.now
@@ -379,10 +394,16 @@ export async function handleMfaConfirm(request: ChangeRequest, deps: MfaRouteDep
         .set({ enabled: true, lastUsedStep: verified.step, failedVerifyCount: 0, lockedUntil: null, updatedAt: new Date() })
         .where(eq(userMfa.id, row.id))
       await writeAudit(tx, user.id, ACCOUNT_SECURITY_EVENT.enrolled)
+      // If revokeOtherSessions succeeds and this transaction later fails to
+      // commit, other sessions are already gone while MFA stays pending; the
+      // user retries confirm. That split is acceptable.
+      await revokeOtherSessions(request.headers)
+      await writeAudit(tx, user.id, ACCOUNT_SECURITY_EVENT.otherSessionsRevoked)
       return 'ok' as const
     })
     if (result === 'not_pending') return json({ error: 'not_pending' }, 409)
     if (result === 'invalid') return json({ error: 'invalid_code' }, 400)
+    log(`${MFA_OTHER_SESSIONS_REVOKED_LOG} user=${user.id}`)
     return json({ ok: true })
   } catch (error) {
     log(`[hitly mfa] Could not confirm MFA: ${error instanceof Error ? error.name : 'error'}`)
