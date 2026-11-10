@@ -88,7 +88,11 @@ export async function removeWorkspaceMember(memberId: string) {
     if (member.userId === user.id) throw new Error('You cannot remove yourself')
     if (member.role === 'owner') throw new Error('Cannot remove the owner')
     // Server-side backstop for the same rule (a workspace always keeps an
-    // owner), independent of the UI hiding the button.
+    // owner), independent of the UI hiding the button. Not reachable from
+    // this action for owners: the check above refuses every owner removal,
+    // a deliberately stricter policy. The guard is the backstop should any
+    // future path offer owner removal, and is covered directly by the
+    // last-owner tests in lib/member-guard.test.ts.
     await assertWorkspaceKeepsOwner({ membershipId: member.id, database })
     // A workspace removal strands the person's project admin seats: refuse
     // while they are the only admin of any project in this workspace.
