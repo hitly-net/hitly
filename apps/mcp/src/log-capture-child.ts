@@ -43,6 +43,7 @@ const control = createServer((req, res) => {
       response: 'SENTINEL_RESPONSE',
       reason: 'SENTINEL_REASON',
       editedArgs: { to: 'SENTINEL_EDITED' },
+      answer: { kind: 'free_text', value: 'SENTINEL_ANSWER_VALUE' },
     })
     res.writeHead(204).end()
   } catch {
