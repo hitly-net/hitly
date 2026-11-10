@@ -82,4 +82,40 @@ describe('MfaSetup', () => {
     const status = await screen.findByRole('status')
     assert.equal(status.textContent, MFA_ENROL_SUCCEEDED_MESSAGE)
   })
+
+  it('sends current password and a code when disabling or regenerating', async () => {
+    const bodies: Array<{ currentPassword?: string; code?: string }> = []
+    globalThis.fetch = (async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body ?? '{}')) as { currentPassword?: string; code?: string })
+      return new Response(JSON.stringify({ ok: true, recoveryCodes: ['WXYZ-ABCD'] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+
+    render(<MfaSetup status={{ enabled: true, pending: false, recoveryCodesRemaining: 10 }} />)
+    assert.equal(document.querySelectorAll('input[name="code"]').length, 2)
+
+    const regenForm = screen.getByRole('button', { name: 'Regenerate recovery codes' }).closest('form')!
+    fireEvent.change(regenForm.querySelector('input[name="currentPassword"]') as HTMLInputElement, {
+      target: { value: 'old-password-1' },
+    })
+    fireEvent.change(regenForm.querySelector('input[name="code"]') as HTMLInputElement, {
+      target: { value: '123456' },
+    })
+    fireEvent.submit(regenForm)
+    await waitFor(() => assert.equal(bodies.length, 1))
+    assert.deepEqual(bodies[0], { currentPassword: 'old-password-1', code: '123456' })
+
+    const disableForm = screen.getByRole('button', { name: 'Disable MFA' }).closest('form')!
+    fireEvent.change(disableForm.querySelector('input[name="currentPassword"]') as HTMLInputElement, {
+      target: { value: 'old-password-1' },
+    })
+    fireEvent.change(disableForm.querySelector('input[name="code"]') as HTMLInputElement, {
+      target: { value: 'ABCD-EFGH' },
+    })
+    fireEvent.submit(disableForm)
+    await waitFor(() => assert.equal(bodies.length, 2))
+    assert.deepEqual(bodies[1], { currentPassword: 'old-password-1', code: 'ABCD-EFGH' })
+  })
 })

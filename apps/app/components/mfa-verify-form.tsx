@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { MFA_CHALLENGE_REQUIRED_MESSAGE, submitMfaVerify } from '@/lib/mfa'
+import { MFA_CHALLENGE_REQUIRED_MESSAGE, MFA_FACTOR_FIELD_PLACEHOLDER, submitMfaVerify } from '@/lib/mfa'
 
 const INPUT_CLASS =
   'h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900'
@@ -32,7 +32,7 @@ export function MfaVerifyForm() {
         name="code"
         required
         autoComplete="one-time-code"
-        placeholder="Authenticator or recovery code"
+        placeholder={MFA_FACTOR_FIELD_PLACEHOLDER}
         className={INPUT_CLASS}
       />
       {error ? (

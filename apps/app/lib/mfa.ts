@@ -6,6 +6,7 @@
  *
  * Re-auth wording reuses CURRENT_PASSWORD_INCORRECT_MESSAGE from the
  * password-change flow; this module does not change that behaviour.
+ * Disable and recovery-code regenerate also send a TOTP or recovery code.
  */
 
 import { CURRENT_PASSWORD_INCORRECT_MESSAGE } from './password-change'
@@ -29,6 +30,7 @@ export const MFA_ALREADY_ENABLED_MESSAGE = 'Authenticator app MFA is already ena
 export const MFA_NOT_PENDING_MESSAGE = 'Start MFA enrolment before confirming a code.'
 export const MFA_INVALID_CODE_MESSAGE = 'That code is not valid.'
 export const MFA_CHALLENGE_REQUIRED_MESSAGE = 'Enter the code from your authenticator app or a recovery code to finish signing in.'
+export const MFA_FACTOR_FIELD_PLACEHOLDER = 'Authenticator or recovery code'
 export const MFA_VERIFY_FAILED_MESSAGE = 'Could not verify the code. Check it and try again.'
 export const MFA_ENROL_SUCCEEDED_MESSAGE = 'Authenticator app MFA is now enabled. Store your recovery codes somewhere safe.'
 export const MFA_DISABLED_MESSAGE = 'Authenticator app MFA has been turned off.'
@@ -110,13 +112,14 @@ export async function submitMfaConfirm(code: string, fetchImpl: typeof fetch = f
 
 export async function submitMfaDisable(
   currentPassword: string,
+  code: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<MfaOutcome> {
   try {
     const response = await fetchImpl(MFA_DISABLE_ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ currentPassword }),
+      body: JSON.stringify({ currentPassword, code }),
       credentials: 'include',
     })
     if (response.ok) return { ok: true }
@@ -128,13 +131,14 @@ export async function submitMfaDisable(
 
 export async function submitMfaRecoveryCodes(
   currentPassword: string,
+  code: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<MfaRecoveryOutcome> {
   try {
     const response = await fetchImpl(MFA_RECOVERY_CODES_ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ currentPassword }),
+      body: JSON.stringify({ currentPassword, code }),
       credentials: 'include',
     })
     if (response.ok) {

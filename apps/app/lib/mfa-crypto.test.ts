@@ -81,6 +81,24 @@ describe('TOTP verify', () => {
   })
 })
 
+describe('RFC 6238 Appendix B', () => {
+  it('matches the SHA-1 6-digit truncations of the Appendix B vectors', () => {
+    // Appendix B publishes 8-digit SHA-1 TOTP; HITLy uses 6 digits (mod 10^6).
+    const secret = Buffer.from('12345678901234567890', 'ascii')
+    const vectors: Array<[unixSeconds: number, digits: string]> = [
+      [59, '287082'],
+      [1111111109, '081804'],
+      [1111111111, '050471'],
+      [1234567890, '005924'],
+      [2000000000, '279037'],
+      [20000000000, '353130'],
+    ]
+    for (const [unixSeconds, digits] of vectors) {
+      assert.equal(totpCode(secret, unixSeconds * 1000), digits, `T=${unixSeconds}`)
+    }
+  })
+})
+
 describe('recovery codes', () => {
   it('hashes with HMAC and never equals the plaintext', () => {
     const codes = generateRecoveryCodes(10)

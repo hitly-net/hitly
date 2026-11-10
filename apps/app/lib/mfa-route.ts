@@ -6,10 +6,14 @@
  *
  * Re-auth for enrol, disable, and recovery-code regenerate uses Better Auth's
  * verifyPassword helper the same way signed-in email change does. A wrong
- * current password answers INVALID_PASSWORD and changes nothing.
+ * current password answers INVALID_PASSWORD and changes nothing. Disable and
+ * recovery-code regenerate also require a valid current TOTP code or an unused
+ * recovery code (consumed on success), using the same per-user/per-IP limiter
+ * and lockout as login MFA verify.
  *
- * Nothing here logs a password, TOTP secret, otpauth URI, or recovery code:
- * failures are logged as fixed lines only.
+ * Successful disable and recovery-code regenerate write a value-free auth-log
+ * line (event name plus user id only). Nothing here logs a password, TOTP
+ * secret, otpauth URI, recovery code, or hash: failures use fixed lines.
  */
 
 import { createHash, randomBytes } from 'node:crypto'
@@ -70,6 +74,10 @@ export const ACCOUNT_SECURITY_EVENT = {
 } as const
 
 export type AccountSecurityEventType = (typeof ACCOUNT_SECURITY_EVENT)[keyof typeof ACCOUNT_SECURITY_EVENT]
+
+/** Auth-log lines: event name plus `user=<id>` only. Never codes or secrets. */
+export const MFA_DISABLED_LOG = `[hitly mfa] ${ACCOUNT_SECURITY_EVENT.disabled}`
+export const MFA_RECOVERY_CODES_REGENERATED_LOG = `[hitly mfa] ${ACCOUNT_SECURITY_EVENT.recoveryCodesRegenerated}`
 
 export interface MfaRouteDeps {
   getSessionUser?: (headers: Headers) => Promise<MfaSessionUser | null>
@@ -228,7 +236,7 @@ type ChangeRequest = { headers: Headers; json: () => Promise<unknown> }
 async function requireReauthUser(
   request: ChangeRequest,
   deps: MfaRouteDeps,
-): Promise<{ user: MfaSessionUser; database: Database; key: Buffer } | NextResponse> {
+): Promise<{ user: MfaSessionUser; database: Database; key: Buffer; body: Record<string, unknown> } | NextResponse> {
   const log = deps.log ?? ((line: string) => console.warn(line))
   const getSessionUser = deps.getSessionUser ?? defaultGetSessionUser
   const verifyPassword = deps.verifyPassword ?? defaultVerifyPassword
@@ -265,7 +273,7 @@ async function requireReauthUser(
   try {
     const database = requireDatabase(deps.database)
     const key = requireKey(deps.encryptionKey)
-    return { user, database, key }
+    return { user, database, key, body }
   } catch (error) {
     if (error instanceof MfaUnavailableError) {
       log('[hitly mfa] Encryption key is not configured')
@@ -383,20 +391,32 @@ export async function handleMfaConfirm(request: ChangeRequest, deps: MfaRouteDep
 }
 
 /**
- * POST /api/session/mfa/disable — turn MFA off after a current-password check.
+ * POST /api/session/mfa/disable — turn MFA off after a current-password check
+ * plus a valid TOTP or unused recovery code (the recovery code is consumed).
  */
 export async function handleMfaDisable(request: ChangeRequest, deps: MfaRouteDeps = {}): Promise<NextResponse> {
   const log = deps.log ?? ((line: string) => console.warn(line))
   const prepared = await requireReauthUser(request, deps)
   if (prepared instanceof NextResponse) return prepared
-  const { user, database } = prepared
+  const { user, database, key, body } = prepared
+  const now = deps.now ?? Date.now
 
   try {
     const existing = await database.select().from(userMfa).where(eq(userMfa.userId, user.id)).limit(1)
     if (!existing[0]) return json({ ok: true })
 
-    const held = await database.select().from(userMfaChallenges).where(eq(userMfaChallenges.userId, user.id))
-    await database.transaction(async (tx) => {
+    const code = presentedCode(body)
+    if (!code) return json({ error: 'invalid_code' }, 400)
+    const limited = rateLimitVerify(user.id, request.headers, deps, log)
+    if (limited) return limited
+
+    const result = await database.transaction(async (tx) => {
+      const rows = await tx.select().from(userMfa).where(eq(userMfa.userId, user.id)).for('update').limit(1)
+      const row = rows[0]
+      if (!row) return 'ok' as const
+      const factor = await applyPresentedMfaFactor(tx, row, code, key, now(), log)
+      if (factor.kind !== 'ok') return factor.kind
+      const held = await tx.select().from(userMfaChallenges).where(eq(userMfaChallenges.userId, user.id))
       for (const challenge of held) {
         await tx.delete(sessions).where(eq(sessions.id, challenge.sessionId))
       }
@@ -404,7 +424,11 @@ export async function handleMfaDisable(request: ChangeRequest, deps: MfaRouteDep
       await tx.delete(userMfaRecoveryCodes).where(eq(userMfaRecoveryCodes.userId, user.id))
       await tx.delete(userMfa).where(eq(userMfa.userId, user.id))
       await writeAudit(tx, user.id, ACCOUNT_SECURITY_EVENT.disabled)
+      return 'ok' as const
     })
+    if (result === 'locked') return json({ error: 'too_many_attempts' }, 429)
+    if (result === 'invalid') return json({ error: 'invalid_code' }, 400)
+    log(`${MFA_DISABLED_LOG} user=${user.id}`)
     return json({ ok: true })
   } catch (error) {
     log(`[hitly mfa] Could not disable MFA: ${error instanceof Error ? error.name : 'error'}`)
@@ -414,28 +438,64 @@ export async function handleMfaDisable(request: ChangeRequest, deps: MfaRouteDep
 
 /**
  * POST /api/session/mfa/recovery-codes — replace unused recovery codes after
- * a current-password check. Plaintext is returned once.
+ * a current-password check plus a valid TOTP or unused recovery code (the
+ * presented recovery code is consumed). Plaintext of the new set is returned
+ * once.
  */
 export async function handleMfaRecoveryCodes(request: ChangeRequest, deps: MfaRouteDeps = {}): Promise<NextResponse> {
   const log = deps.log ?? ((line: string) => console.warn(line))
   const prepared = await requireReauthUser(request, deps)
   if (prepared instanceof NextResponse) return prepared
-  const { user, database, key } = prepared
+  const { user, database, key, body } = prepared
+  const now = deps.now ?? Date.now
 
   try {
     const existing = await database.select().from(userMfa).where(eq(userMfa.userId, user.id)).limit(1)
     if (!existing[0]?.enabled) return json({ error: 'not_enabled' }, 409)
 
-    const recoveryCodes = await database.transaction(async (tx) => {
+    const code = presentedCode(body)
+    if (!code) return json({ error: 'invalid_code' }, 400)
+    const limited = rateLimitVerify(user.id, request.headers, deps, log)
+    if (limited) return limited
+
+    const result = await database.transaction(async (tx) => {
+      const rows = await tx.select().from(userMfa).where(eq(userMfa.userId, user.id)).for('update').limit(1)
+      const row = rows[0]
+      if (!row?.enabled) return 'not_enabled' as const
+      const factor = await applyPresentedMfaFactor(tx, row, code, key, now(), log)
+      if (factor.kind !== 'ok') return factor.kind
       const codes = await replaceRecoveryCodes(tx, user.id, key)
       await writeAudit(tx, user.id, ACCOUNT_SECURITY_EVENT.recoveryCodesRegenerated)
-      return codes
+      return { kind: 'ok' as const, codes }
     })
-    return json({ recoveryCodes })
+    if (result === 'not_enabled') return json({ error: 'not_enabled' }, 409)
+    if (result === 'locked') return json({ error: 'too_many_attempts' }, 429)
+    if (result === 'invalid') return json({ error: 'invalid_code' }, 400)
+    log(`${MFA_RECOVERY_CODES_REGENERATED_LOG} user=${user.id}`)
+    return json({ recoveryCodes: result.codes })
   } catch (error) {
     log(`[hitly mfa] Could not regenerate recovery codes: ${error instanceof Error ? error.name : 'error'}`)
     return json({ error: 'mfa_failed' }, 500)
   }
+}
+
+function presentedCode(body: Record<string, unknown>): string {
+  return typeof body.code === 'string' ? body.code : ''
+}
+
+function rateLimitVerify(
+  userId: string,
+  headers: Headers,
+  deps: MfaRouteDeps,
+  log: (line: string) => void,
+): NextResponse | null {
+  const allow = deps.allowVerify ?? mfaVerifyLimiter
+  const clientKey = deps.clientKey ?? resetCheckClientKey
+  if (!allow(`user:${userId}`) || !allow(clientKey(headers))) {
+    log(MFA_VERIFY_LIMITED_LOG)
+    return json({ error: 'too_many_attempts' }, 429)
+  }
+  return null
 }
 
 async function recordVerifyFailure(
@@ -461,13 +521,82 @@ async function recordVerifyFailure(
 }
 
 /**
+ * Shared TOTP / recovery-code check used by login verify, disable, and
+ * recovery-code regenerate. Applies per-user lockout and consumes a matching
+ * unused recovery code. Caller must already have passed the verify limiter.
+ */
+async function applyPresentedMfaFactor(
+  tx: Tx,
+  row: typeof userMfa.$inferSelect,
+  code: string,
+  key: Buffer,
+  nowMs: number,
+  log: (line: string) => void,
+): Promise<{ kind: 'ok'; usedRecovery: boolean } | { kind: 'invalid' } | { kind: 'locked' }> {
+  const lockedUntil = row.lockedUntil?.getTime() ?? 0
+  if (lockedUntil > nowMs) return { kind: 'locked' }
+  if (lockedUntil && lockedUntil <= nowMs && row.failedVerifyCount) {
+    await tx
+      .update(userMfa)
+      .set({ failedVerifyCount: 0, lockedUntil: null, updatedAt: new Date() })
+      .where(eq(userMfa.id, row.id))
+    row.failedVerifyCount = 0
+    row.lockedUntil = null
+  }
+
+  const totpDigits = normaliseTotpCode(code)
+  if (totpDigits) {
+    const secret = fromBase32(decryptUtf8(row.totpCiphertext, key))
+    const verified = verifyTotpCode(secret, totpDigits, nowMs, row.lastUsedStep)
+    if (!verified.ok) {
+      await recordVerifyFailure(tx, row, nowMs, log)
+      return { kind: 'invalid' }
+    }
+    await tx
+      .update(userMfa)
+      .set({ lastUsedStep: verified.step, failedVerifyCount: 0, lockedUntil: null, updatedAt: new Date() })
+      .where(eq(userMfa.id, row.id))
+    return { kind: 'ok', usedRecovery: false }
+  }
+
+  if (!recoveryCodeLooksWellFormed(code)) {
+    await recordVerifyFailure(tx, row, nowMs, log)
+    return { kind: 'invalid' }
+  }
+
+  const codeHash = hashRecoveryCode(code, key)
+  const matches = await tx
+    .select()
+    .from(userMfaRecoveryCodes)
+    .where(
+      and(
+        eq(userMfaRecoveryCodes.userId, row.userId),
+        eq(userMfaRecoveryCodes.codeHash, codeHash),
+        isNull(userMfaRecoveryCodes.usedAt),
+      ),
+    )
+    .for('update')
+    .limit(1)
+  const match = matches[0]
+  if (!match) {
+    await recordVerifyFailure(tx, row, nowMs, log)
+    return { kind: 'invalid' }
+  }
+  await tx.update(userMfaRecoveryCodes).set({ usedAt: new Date() }).where(eq(userMfaRecoveryCodes.id, match.id))
+  await tx
+    .update(userMfa)
+    .set({ failedVerifyCount: 0, lockedUntil: null, updatedAt: new Date() })
+    .where(eq(userMfa.id, row.id))
+  await writeAudit(tx, row.userId, ACCOUNT_SECURITY_EVENT.recoveryCodeUsed)
+  return { kind: 'ok', usedRecovery: true }
+}
+
+/**
  * POST /api/session/mfa/verify — second login step. Requires the
  * half-auth challenge cookie, not a full session.
  */
 export async function handleMfaVerify(request: ChangeRequest, deps: MfaRouteDeps = {}): Promise<NextResponse> {
   const log = deps.log ?? ((line: string) => console.warn(line))
-  const allow = deps.allowVerify ?? mfaVerifyLimiter
-  const clientKey = deps.clientKey ?? resetCheckClientKey
   const now = deps.now ?? Date.now
   const secure = process.env.NODE_ENV === 'production'
 
@@ -475,7 +604,7 @@ export async function handleMfaVerify(request: ChangeRequest, deps: MfaRouteDeps
   if (!token) return json({ error: 'unauthorized' }, 401)
 
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>
-  const code = typeof body.code === 'string' ? body.code : ''
+  const code = presentedCode(body)
   if (!code) return json({ error: 'invalid_code' }, 400)
 
   let database: Database
@@ -504,76 +633,15 @@ export async function handleMfaVerify(request: ChangeRequest, deps: MfaRouteDeps
     return expired
   }
 
-  if (!allow(`user:${challenge.userId}`) || !allow(clientKey(request.headers))) {
-    log(MFA_VERIFY_LIMITED_LOG)
-    return json({ error: 'too_many_attempts' }, 429)
-  }
+  const limited = rateLimitVerify(challenge.userId, request.headers, deps, log)
+  if (limited) return limited
 
   try {
     const outcome = await database.transaction(async (tx) => {
       const rows = await tx.select().from(userMfa).where(eq(userMfa.userId, challenge.userId)).for('update').limit(1)
       const row = rows[0]
       if (!row?.enabled) return { kind: 'unauthorized' as const }
-
-      const lockedUntil = row.lockedUntil?.getTime() ?? 0
-      if (lockedUntil > now()) return { kind: 'locked' as const }
-      if (lockedUntil && lockedUntil <= now() && row.failedVerifyCount) {
-        await tx
-          .update(userMfa)
-          .set({ failedVerifyCount: 0, lockedUntil: null, updatedAt: new Date() })
-          .where(eq(userMfa.id, row.id))
-        row.failedVerifyCount = 0
-        row.lockedUntil = null
-      }
-
-      const totpDigits = normaliseTotpCode(code)
-      if (totpDigits) {
-        const secret = fromBase32(decryptUtf8(row.totpCiphertext, key))
-        const verified = verifyTotpCode(secret, totpDigits, now(), row.lastUsedStep)
-        if (!verified.ok) {
-          await recordVerifyFailure(tx, row, now(), log)
-          return { kind: 'invalid' as const }
-        }
-        await tx
-          .update(userMfa)
-          .set({ lastUsedStep: verified.step, failedVerifyCount: 0, lockedUntil: null, updatedAt: new Date() })
-          .where(eq(userMfa.id, row.id))
-        return { kind: 'ok' as const, recovery: false }
-      }
-
-      if (!recoveryCodeLooksWellFormed(code)) {
-        await recordVerifyFailure(tx, row, now(), log)
-        return { kind: 'invalid' as const }
-      }
-
-      const codeHash = hashRecoveryCode(code, key)
-      const matches = await tx
-        .select()
-        .from(userMfaRecoveryCodes)
-        .where(
-          and(
-            eq(userMfaRecoveryCodes.userId, challenge.userId),
-            eq(userMfaRecoveryCodes.codeHash, codeHash),
-            isNull(userMfaRecoveryCodes.usedAt),
-          ),
-        )
-        .for('update')
-        .limit(1)
-      const match = matches[0]
-      if (!match) {
-        await recordVerifyFailure(tx, row, now(), log)
-        return { kind: 'invalid' as const }
-      }
-      await tx
-        .update(userMfaRecoveryCodes)
-        .set({ usedAt: new Date() })
-        .where(eq(userMfaRecoveryCodes.id, match.id))
-      await tx
-        .update(userMfa)
-        .set({ failedVerifyCount: 0, lockedUntil: null, updatedAt: new Date() })
-        .where(eq(userMfa.id, row.id))
-      await writeAudit(tx, challenge.userId, ACCOUNT_SECURITY_EVENT.recoveryCodeUsed)
-      return { kind: 'ok' as const, recovery: true }
+      return applyPresentedMfaFactor(tx, row, code, key, now(), log)
     })
 
     if (outcome.kind === 'unauthorized') return json({ error: 'unauthorized' }, 401)

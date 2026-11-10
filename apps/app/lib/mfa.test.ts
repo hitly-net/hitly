@@ -50,10 +50,13 @@ import {
   handleMfaEnrol,
   handleMfaRecoveryCodes,
   handleMfaVerify,
+  hashMfaChallengeToken,
+  MFA_DISABLED_LOG,
+  MFA_RECOVERY_CODES_REGENERATED_LOG,
   type MfaRouteDeps,
 } from './mfa-route'
 import { holdPasswordSignInIfMfa } from './mfa-sign-in'
-import { fromBase32, totpCode } from './mfa-crypto'
+import { fromBase32, hashRecoveryCode, resolveMfaEncryptionKey, totpCode } from './mfa-crypto'
 import { MFA_VERIFY_FAILURE_LIMIT } from './mfa-limit'
 
 if (!db || !auth) throw new Error('DATABASE_URL and BETTER_AUTH_SECRET required for tests')
@@ -131,6 +134,36 @@ function post(endpoint: string, cookie: string | undefined, body: unknown, extra
 
 function routeMocks(overrides: Partial<MfaRouteDeps> = {}): MfaRouteDeps {
   return { log: () => {}, now: () => NOW, allowReauth: () => true, allowVerify: () => true, ...overrides }
+}
+
+const STEP_MS = 30_000
+
+function totpAt(secret: string, steps = 1) {
+  return totpCode(fromBase32(secret), NOW + steps * STEP_MS)
+}
+
+function mocksAt(steps = 1, overrides: Partial<MfaRouteDeps> = {}): MfaRouteDeps {
+  return routeMocks({ now: () => NOW + steps * STEP_MS, ...overrides })
+}
+
+async function enableMfa(address: string, deps: MfaRouteDeps = routeMocks()) {
+  await createUser(address)
+  const cookie = await signInCookie(address)
+  const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookie, { currentPassword: PASSWORD }), deps)
+  const payload = (await enrolled.json()) as { secret: string; recoveryCodes: string[]; otpauthUri: string }
+  const totp = totpCode(fromBase32(payload.secret), NOW)
+  const confirmed = await handleMfaConfirm(post(MFA_CONFIRM_ENDPOINT, cookie, { code: totp }), deps)
+  assert.equal(confirmed.status, 200)
+  const user = await userByEmail(address)
+  assert.ok(user)
+  return {
+    cookie,
+    secret: payload.secret,
+    recoveryCodes: payload.recoveryCodes,
+    otpauthUri: payload.otpauthUri,
+    totp,
+    user,
+  }
 }
 
 async function sessionFromCookie(cookie: string) {
@@ -231,17 +264,6 @@ describe('MFA enrolment', () => {
 })
 
 describe('MFA login second step', () => {
-  async function enableMfa(address: string) {
-    await createUser(address)
-    const cookie = await signInCookie(address)
-    const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookie, { currentPassword: PASSWORD }), routeMocks())
-    const payload = (await enrolled.json()) as { secret: string; recoveryCodes: string[] }
-    const code = totpCode(fromBase32(payload.secret), NOW)
-    const confirmed = await handleMfaConfirm(post(MFA_CONFIRM_ENDPOINT, cookie, { code }), routeMocks())
-    assert.equal(confirmed.status, 200)
-    return { cookie, secret: payload.secret, recoveryCodes: payload.recoveryCodes, totp: code }
-  }
-
   it('blocks a full session until TOTP succeeds, and rejects a replayed code', async () => {
     const address = email('login-totp')
     const { secret, totp } = await enableMfa(address)
@@ -383,52 +405,256 @@ describe('MFA login second step', () => {
 })
 
 describe('MFA disable and recovery regenerate', () => {
-  it('requires a current password for disable and regenerate, and writes audit events', async () => {
-    const address = email('disable-ok')
-    await createUser(address)
-    const cookie = await signInCookie(address)
-    const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookie, { currentPassword: PASSWORD }), routeMocks())
-    const payload = (await enrolled.json()) as { secret: string }
-    const confirm = await handleMfaConfirm(
-      post(MFA_CONFIRM_ENDPOINT, cookie, { code: totpCode(fromBase32(payload.secret), NOW) }),
-      routeMocks(),
-    )
-    assert.equal(confirm.status, 200)
-
-    const noPassword = await handleMfaRecoveryCodes(post(MFA_RECOVERY_CODES_ENDPOINT, cookie, {}), routeMocks())
-    assert.equal(noPassword.status, 400)
-    const wrongRegen = await handleMfaRecoveryCodes(
-      post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: 'not-the-password' }),
-      routeMocks(),
-    )
-    assert.equal(wrongRegen.status, 400)
-
+  it('refuses disable and regenerate with only the current password', async () => {
+    const { cookie, user } = await enableMfa(email('factor-password-only'))
     const regen = await handleMfaRecoveryCodes(
       post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD }),
-      routeMocks(),
+      mocksAt(1),
+    )
+    assert.equal(regen.status, 400)
+    assert.deepEqual(await regen.json(), { error: 'invalid_code' })
+    const disable = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD }),
+      mocksAt(1),
+    )
+    assert.equal(disable.status, 400)
+    assert.deepEqual(await disable.json(), { error: 'invalid_code' })
+    assert.equal((await database.select().from(userMfa).where(eq(userMfa.userId, user.id)))[0]?.enabled, true)
+  })
+
+  it('refuses disable with a missing or wrong TOTP and counts the wrong code toward lockout', async () => {
+    const { cookie, user } = await enableMfa(email('factor-wrong-totp'))
+    const missing = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code: '' }),
+      mocksAt(1),
+    )
+    assert.equal(missing.status, 400)
+    const wrong = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code: '000000' }),
+      mocksAt(1),
+    )
+    assert.equal(wrong.status, 400)
+    assert.deepEqual(await wrong.json(), { error: 'invalid_code' })
+    const row = (await database.select().from(userMfa).where(eq(userMfa.userId, user.id)))[0]
+    assert.equal(row?.enabled, true)
+    assert.equal(row?.failedVerifyCount, 1)
+  })
+
+  it('disables MFA with password and a valid TOTP', async () => {
+    const { cookie, secret, user } = await enableMfa(email('disable-totp'))
+    const disabled = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code: totpAt(secret, 1) }),
+      mocksAt(1),
+    )
+    assert.equal(disabled.status, 200)
+    assert.equal((await database.select().from(userMfa).where(eq(userMfa.userId, user.id))).length, 0)
+    const types = (await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))).map(
+      (event) => event.type,
+    )
+    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.disabled))
+  })
+
+  it('disables MFA with password and an unused recovery code, which is consumed', async () => {
+    const { cookie, recoveryCodes, user } = await enableMfa(email('disable-recovery'))
+    const code = recoveryCodes[0]!
+    const disabled = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code }),
+      mocksAt(1),
+    )
+    assert.equal(disabled.status, 200)
+    assert.equal((await database.select().from(userMfa).where(eq(userMfa.userId, user.id))).length, 0)
+    assert.equal((await database.select().from(userMfaRecoveryCodes).where(eq(userMfaRecoveryCodes.userId, user.id))).length, 0)
+    const types = (await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))).map(
+      (event) => event.type,
+    )
+    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.recoveryCodeUsed))
+    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.disabled))
+  })
+
+  it('refuses a reused recovery code on disable', async () => {
+    const { cookie, recoveryCodes, secret, user } = await enableMfa(email('disable-reuse'))
+    const code = recoveryCodes[0]!
+    const first = await handleMfaRecoveryCodes(
+      post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD, code }),
+      mocksAt(1),
+    )
+    assert.equal(first.status, 200)
+    const reused = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code }),
+      mocksAt(2),
+    )
+    assert.equal(reused.status, 400)
+    assert.equal((await database.select().from(userMfa).where(eq(userMfa.userId, user.id)))[0]?.enabled, true)
+    const disabled = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code: totpAt(secret, 2) }),
+      mocksAt(2),
+    )
+    assert.equal(disabled.status, 200)
+  })
+
+  it('regenerates recovery codes with password and a valid TOTP', async () => {
+    const { cookie, secret, recoveryCodes, user } = await enableMfa(email('regen-totp'))
+    const regen = await handleMfaRecoveryCodes(
+      post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD, code: totpAt(secret, 1) }),
+      mocksAt(1),
     )
     assert.equal(regen.status, 200)
     const body = (await regen.json()) as { recoveryCodes: string[] }
     assert.equal(body.recoveryCodes.length, 10)
-
-    const wrongDisable = await handleMfaDisable(
-      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: 'not-the-password' }),
-      routeMocks(),
+    assert.ok(!body.recoveryCodes.includes(recoveryCodes[0]!))
+    const types = (await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))).map(
+      (event) => event.type,
     )
-    assert.equal(wrongDisable.status, 400)
-    const user = await userByEmail(address)
-    assert.ok(user)
+    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.recoveryCodesRegenerated))
+  })
+
+  it('regenerates recovery codes with password and an unused recovery code, which is consumed', async () => {
+    const { cookie, recoveryCodes, user } = await enableMfa(email('regen-recovery'))
+    const code = recoveryCodes[0]!
+    const regen = await handleMfaRecoveryCodes(
+      post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD, code }),
+      mocksAt(1),
+    )
+    assert.equal(regen.status, 200)
+    const body = (await regen.json()) as { recoveryCodes: string[] }
+    assert.equal(body.recoveryCodes.length, 10)
+    assert.ok(!body.recoveryCodes.includes(code))
+    const unused = await database
+      .select()
+      .from(userMfaRecoveryCodes)
+      .where(and(eq(userMfaRecoveryCodes.userId, user.id), eq(userMfaRecoveryCodes.codeHash, hashRecoveryCode(code, resolveMfaEncryptionKey()))))
+    assert.equal(unused.length, 0)
+  })
+
+  it('refuses a reused recovery code on regenerate', async () => {
+    const { cookie, recoveryCodes } = await enableMfa(email('regen-reuse'))
+    const code = recoveryCodes[0]!
+    const first = await handleMfaRecoveryCodes(
+      post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD, code }),
+      mocksAt(1),
+    )
+    assert.equal(first.status, 200)
+    const reused = await handleMfaRecoveryCodes(
+      post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD, code }),
+      mocksAt(2),
+    )
+    assert.equal(reused.status, 400)
+    assert.deepEqual(await reused.json(), { error: 'invalid_code' })
+  })
+
+  it('applies the login MFA verify rate limit and lockout to disable and regenerate', async () => {
+    const { cookie, secret, user } = await enableMfa(email('factor-limit'))
+    const limitedDisable = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code: totpAt(secret, 1) }),
+      mocksAt(1, { allowVerify: () => false }),
+    )
+    assert.equal(limitedDisable.status, 429)
     assert.equal((await database.select().from(userMfa).where(eq(userMfa.userId, user.id)))[0]?.enabled, true)
 
-    const disabled = await handleMfaDisable(post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD }), routeMocks())
-    assert.equal(disabled.status, 200)
-    assert.equal((await database.select().from(userMfa).where(eq(userMfa.userId, user.id))).length, 0)
+    const limitedRegen = await handleMfaRecoveryCodes(
+      post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD, code: totpAt(secret, 1) }),
+      mocksAt(1, { allowVerify: () => false }),
+    )
+    assert.equal(limitedRegen.status, 429)
 
-    const events = await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))
-    const types = events.map((event) => event.type)
-    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.enrolled))
-    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.recoveryCodesRegenerated))
-    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.disabled))
+    for (let i = 0; i < MFA_VERIFY_FAILURE_LIMIT; i += 1) {
+      const failed = await handleMfaRecoveryCodes(
+        post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD, code: '000000' }),
+        mocksAt(1),
+      )
+      assert.equal(failed.status, 400)
+    }
+    const locked = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code: totpAt(secret, 1) }),
+      mocksAt(1),
+    )
+    assert.equal(locked.status, 429)
+    const types = (await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))).map(
+      (event) => event.type,
+    )
+    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.verificationLockout))
+  })
+})
+
+describe('MFA secrets stay out of logs', () => {
+  it('deps.log and console never receive TOTP secrets, codes, recovery codes, otpauth URIs or hashes across enrol, confirm, verify, disable and recovery-codes', async () => {
+    const lines: string[] = []
+    const deps = routeMocks({ log: (line) => lines.push(line) })
+    const address = email('log-capture')
+    const { cookie, secret, recoveryCodes, otpauthUri, totp, user } = await enableMfa(address, deps)
+    const master = resolveMfaEncryptionKey()
+    const recoveryHashes = recoveryCodes.map((code) => hashRecoveryCode(code, master))
+    const stored = await database.select().from(userMfa).where(eq(userMfa.userId, user.id)).limit(1)
+    const ciphertext = stored[0]?.totpCiphertext ?? ''
+
+    const signIn = (await authApi.signInEmail({
+      body: { email: address, password: PASSWORD },
+      asResponse: true,
+    })) as unknown as Response
+    const gated = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' }),
+      signIn,
+      deps,
+    )
+    const challengeHeader = gated.headers.getSetCookie().find((value) => value.startsWith(`${MFA_CHALLENGE_COOKIE}=`))!
+    const challengeToken = decodeURIComponent(challengeHeader.split(';')[0]!.slice(`${MFA_CHALLENGE_COOKIE}=`.length))
+    const challengeHash = hashMfaChallengeToken(challengeToken)
+    const nextCode = totpAt(secret, 1)
+    const verified = await handleMfaVerify(post(MFA_VERIFY_ENDPOINT, challengeHeader.split(';')[0]!, { code: nextCode }), {
+      ...deps,
+      now: () => NOW + STEP_MS,
+    })
+    assert.equal(verified.status, 200)
+
+    const regenCode = totpAt(secret, 2)
+    const regen = await handleMfaRecoveryCodes(
+      post(MFA_RECOVERY_CODES_ENDPOINT, cookie, { currentPassword: PASSWORD, code: regenCode }),
+      { ...deps, now: () => NOW + 2 * STEP_MS },
+    )
+    assert.equal(regen.status, 200)
+    const fresh = ((await regen.json()) as { recoveryCodes: string[] }).recoveryCodes
+    const disableCode = totpAt(secret, 3)
+    const disabled = await handleMfaDisable(
+      post(MFA_DISABLE_ENDPOINT, cookie, { currentPassword: PASSWORD, code: disableCode }),
+      { ...deps, now: () => NOW + 3 * STEP_MS },
+    )
+    assert.equal(disabled.status, 200)
+
+    const joined = `${lines.join('\n')}\n${logged.join('\n')}`
+    const longSecrets = [
+      secret,
+      otpauthUri,
+      challengeToken,
+      challengeHash,
+      ciphertext,
+      ...recoveryCodes,
+      ...recoveryHashes,
+      ...fresh,
+      ...fresh.map((code) => hashRecoveryCode(code, master)),
+    ]
+    for (const value of longSecrets) {
+      if (!value) continue
+      assert.ok(!joined.includes(value), 'MFA secret must not appear in deps.log or console')
+    }
+    const capturedLog = lines.join('\n')
+    for (const value of [totp, nextCode, regenCode, disableCode]) {
+      assert.ok(!capturedLog.includes(value), 'deps.log must not receive the raw TOTP code')
+    }
+    assert.ok(
+      lines.some((line) => line.startsWith(MFA_DISABLED_LOG) && line.includes(`user=${user.id}`)),
+      'disable auth-log event name plus user id',
+    )
+    assert.ok(
+      lines.some((line) => line.startsWith(MFA_RECOVERY_CODES_REGENERATED_LOG) && line.includes(`user=${user.id}`)),
+      'regenerate auth-log event name plus user id',
+    )
+    for (const line of lines) {
+      assert.ok(!line.includes(secret) && !line.includes(otpauthUri))
+      assert.match(line, /^\[hitly mfa]/)
+      if (line.startsWith(MFA_DISABLED_LOG) || line.startsWith(MFA_RECOVERY_CODES_REGENERATED_LOG)) {
+        assert.equal(line, `${line.startsWith(MFA_DISABLED_LOG) ? MFA_DISABLED_LOG : MFA_RECOVERY_CODES_REGENERATED_LOG} user=${user.id}`)
+      }
+    }
   })
 })
 
@@ -452,6 +678,10 @@ describe('MFA client helpers and static wiring', () => {
     const emailChange = fs.readFileSync(path.join(__dirname, 'email-change-route.ts'), 'utf-8')
     assert.ok(passwordChange.includes('verifyPassword') || passwordChange.includes('changePassword'))
     assert.ok(emailChange.includes('verifyPassword'))
+    for (const name of ['disable', 'recovery-codes'] as const) {
+      const route = fs.readFileSync(path.join(__dirname, `../app/api/session/mfa/${name}/route.ts`), 'utf-8')
+      assert.ok(route.includes('isSameOrigin'))
+    }
   })
 
   it('per-user and per-IP keys are both consumed by the verify limiter', () => {

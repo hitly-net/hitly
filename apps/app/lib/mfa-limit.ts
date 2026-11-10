@@ -1,7 +1,8 @@
 /**
  * Limits for MFA password re-auth (enrol / disable / regenerate) and for
- * TOTP / recovery-code verification. In-process calls skip Better Auth's
- * request limiter, so these use the shared factory (lib/reset-check-limit.ts).
+ * TOTP / recovery-code verification (login second step, disable, and
+ * recovery-code regenerate). In-process calls skip Better Auth's request
+ * limiter, so these use the shared factory (lib/reset-check-limit.ts).
  *
  * Per-user lockout lives in user_mfa (failed_verify_count / locked_until).
  * The limiters here are per client address (or the shared bucket). Nothing

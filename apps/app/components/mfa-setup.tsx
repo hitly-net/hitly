@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react'
 import {
   MFA_DISABLED_MESSAGE,
   MFA_ENROL_SUCCEEDED_MESSAGE,
+  MFA_FACTOR_FIELD_PLACEHOLDER,
   MFA_RECOVERY_REGENERATED_MESSAGE,
   submitMfaConfirm,
   submitMfaDisable,
@@ -75,10 +76,12 @@ export function MfaSetup({ status }: { status: MfaStatus }) {
   async function onDisable(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = event.currentTarget
-    const currentPassword = String(new FormData(form).get('currentPassword') ?? '')
+    const data = new FormData(form)
+    const currentPassword = String(data.get('currentPassword') ?? '')
+    const code = String(data.get('code') ?? '')
     setPending(true)
     setError(null)
-    const outcome = await submitMfaDisable(currentPassword)
+    const outcome = await submitMfaDisable(currentPassword, code)
     setPending(false)
     if (!outcome.ok) {
       form.reset()
@@ -94,10 +97,12 @@ export function MfaSetup({ status }: { status: MfaStatus }) {
   async function onRegenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = event.currentTarget
-    const currentPassword = String(new FormData(form).get('currentPassword') ?? '')
+    const data = new FormData(form)
+    const currentPassword = String(data.get('currentPassword') ?? '')
+    const code = String(data.get('code') ?? '')
     setPending(true)
     setError(null)
-    const outcome = await submitMfaRecoveryCodes(currentPassword)
+    const outcome = await submitMfaRecoveryCodes(currentPassword, code)
     setPending(false)
     if (!outcome.ok) {
       form.reset()
@@ -181,6 +186,13 @@ export function MfaSetup({ status }: { status: MfaStatus }) {
             autoComplete="current-password"
             className={INPUT_CLASS}
           />
+          <input
+            name="code"
+            required
+            autoComplete="one-time-code"
+            placeholder={MFA_FACTOR_FIELD_PLACEHOLDER}
+            className={INPUT_CLASS}
+          />
           <button
             type="submit"
             disabled={pending}
@@ -196,6 +208,13 @@ export function MfaSetup({ status }: { status: MfaStatus }) {
             required
             placeholder="Current password"
             autoComplete="current-password"
+            className={INPUT_CLASS}
+          />
+          <input
+            name="code"
+            required
+            autoComplete="one-time-code"
+            placeholder={MFA_FACTOR_FIELD_PLACEHOLDER}
             className={INPUT_CLASS}
           />
           <button
