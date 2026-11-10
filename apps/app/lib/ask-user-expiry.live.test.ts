@@ -7,8 +7,14 @@
  *   stored 24h and echoed-deadline assertions go red
  * - dropping the read-time settle (or the gte filter) in any pending surface
  *   -> the "expired everywhere" assertions go red
+ * - dropping a gte backstop filter while KEEPING the settle -> the settle-
+ *   skipped backstop test goes red (the settle-dependent tests stay green)
  * - firing the expiry callback outside the guarded flip -> the exactly-once
  *   callback assertion goes red
+ * - sweeping callbacks for every SELECTed row instead of only the guarded-
+ *   UPDATE winners -> the sweep-window and 20x forced-race callback-once
+ *   tests go red (the sweep keeps its afterSelect test barrier so the
+ *   interleaving is forced, never timing luck)
  * - hard-coding kind 'approval' or dropping prompt/question in the host list
  *   -> the list_pending item assertions go red
  * - restoring the pre-#136 min(explicit deadline, rule/project SLA) clamp in
@@ -422,38 +428,156 @@ test('each pending surface excludes a past-deadline row on its FIRST read - no o
   assert.equal(row?.status, 'expired', 'the summary read itself settled the count-first row')
 })
 
-test('the expiry callback fires exactly once even when several read surfaces settle the same row (real host, PG)', async () => {
-  const before = receiver.hits.length
+test('the sweep delivers NO expired callback for a row another surface settles inside its select->flip window (real host, PG)', async () => {
+  // M2 mutant target: delivering the `expired` callback for every SELECTed
+  // row (instead of only the guarded-UPDATE winners) makes the sweep add a
+  // second POST here, because the row is settled through the read path while
+  // the sweep is held between its SELECT and its flip.
   const created = await ingestHttpAsk(fixture, receiver.url, {
     actionName: 'ask_user',
-    prompt: 'Expired with callback?',
-    expiresAt: new Date(Date.now() + 300).toISOString(),
+    prompt: 'Swept while a reviewer settles it?',
     lifecycleEvents: ['expired'],
   })
   const id = created.id
-  await sleep(600)
+  await fixture.db
+    .update(approvals)
+    .set({ expiresAt: new Date(Date.now() - 5_000) })
+    .where(eq(approvals.id, id))
+  assert.equal((await storedRow(id)).status, 'pending', 'row starts raw pending')
+  const before = receiver.hits.length
 
-  // A real race: every surface that settles rows (two origin reads, the
-  // requester list, the inbox open scope, the pending count, the sweeper)
-  // reads the still-`pending` row CONCURRENTLY, so several callers attempt
-  // the guarded flip at once. Exactly one may win, so exactly one expired
-  // callback may fire.
+  let sweptPendingRow = false
+  await expireOverdueApprovals({
+    afterSelect: async (_spaceId, rows) => {
+      if (!rows.some((row) => row.id === id)) return
+      sweptPendingRow = true
+      // A read surface wins the guarded flip INSIDE the sweep's window:
+      // that surface is the single callback winner.
+      const origin = await getApprovalForOrigin({ apiKey: fixture.apiKey, approvalId: id })
+      assert.ok(origin.ok)
+      assert.equal(origin.status, 'expired')
+    },
+  })
+  assert.ok(sweptPendingRow, 'the sweep must have selected the row as pending before the settle')
+  assert.equal((await storedRow(id)).status, 'expired')
+  const expiryHits = receiver.hits
+    .slice(before)
+    .filter((hit) => String(hit.body.request_id ?? hit.body.id) === id && hit.body.type === 'expired')
+  assert.equal(
+    expiryHits.length,
+    1,
+    `only the read-path flip winner may callback; the sweep must stay silent, got ${expiryHits.length}`,
+  )
+})
+
+const RACE_ITERATIONS = 20
+
+test(`the expired callback fires exactly once under a forced six-surface race, ${RACE_ITERATIONS}x (real host, PG)`, async () => {
   const inboxArgs = {
     workspaceId: fixture.workspaceId,
     userId: fixture.reviewerId,
     workspaceRole: 'member' as const,
     projectId: fixture.projectId,
   }
-  await Promise.all([
-    getApprovalForOrigin({ apiKey: fixture.apiKey, approvalId: id }),
-    getApprovalForOrigin({ apiKey: fixture.apiKey, approvalId: id }),
-    listRequesterPending({ apiKey: fixture.apiKey, projectId: fixture.projectId }),
-    listInboxItems({ ...inboxArgs, scope: 'open' }),
-    inboxSummary(inboxArgs),
-    expireOverdueApprovals(),
-  ])
+  for (let iteration = 1; iteration <= RACE_ITERATIONS; iteration += 1) {
+    const created = await ingestHttpAsk(fixture, receiver.url, {
+      actionName: 'ask_user',
+      prompt: `Expired with callback #${iteration}?`,
+      lifecycleEvents: ['expired'],
+    })
+    const id = created.id
+    // Raw pending row already past its deadline. The interleaving is forced
+    // by the sweep's afterSelect barrier, not by timing luck: the sweep is
+    // held between its SELECT (row still pending) and its guarded flip while
+    // all five read surfaces attempt their own settle concurrently. One flip
+    // winner may exist, so exactly one expired callback may fire per row.
+    await fixture.db
+      .update(approvals)
+      .set({ expiresAt: new Date(Date.now() - 5_000) })
+      .where(eq(approvals.id, id))
+    assert.equal((await storedRow(id)).status, 'pending', 'race row must start raw pending')
 
-  const expiryHits = receiver.hits.slice(before).filter((hit) => hit.body.type === 'expired')
-  assert.equal(expiryHits.length, 1, `the expired callback must fire exactly once, got ${expiryHits.length}`)
-  assert.ok(expiryHits[0]?.headers?.['x-hitly-event-id'], 'the expiry callback carries a stable event id for receiver dedupe')
+    const before = receiver.hits.length
+    let sawRowInSweep = false
+    let releaseSweeper: () => void = () => {}
+    const sweeperReleased = new Promise<void>((resolve) => {
+      releaseSweeper = resolve
+    })
+    let markSelected: () => void = () => {}
+    const rowSelectedBySweep = new Promise<void>((resolve) => {
+      markSelected = resolve
+    })
+
+    const sweeper = expireOverdueApprovals({
+      afterSelect: async (_spaceId, rows) => {
+        if (!rows.some((row) => row.id === id)) return
+        sawRowInSweep = true
+        markSelected()
+        await sweeperReleased
+      },
+    })
+    const selected = await Promise.race([
+      rowSelectedBySweep.then(() => true),
+      sleep(10_000).then(() => false),
+    ])
+    if (!selected) {
+      releaseSweeper()
+      await sweeper
+      assert.fail(`iteration ${iteration}: the sweep never selected the past-deadline row`)
+    }
+
+    await Promise.all([
+      getApprovalForOrigin({ apiKey: fixture.apiKey, approvalId: id }),
+      getApprovalForOrigin({ apiKey: fixture.apiKey, approvalId: id }),
+      listRequesterPending({ apiKey: fixture.apiKey, projectId: fixture.projectId }),
+      listInboxItems({ ...inboxArgs, scope: 'open' }),
+      inboxSummary(inboxArgs),
+    ])
+    releaseSweeper()
+    await sweeper
+
+    assert.ok(sawRowInSweep, `iteration ${iteration}: the sweep must have entered its window holding the selected row`)
+    assert.equal((await storedRow(id)).status, 'expired')
+    const expiryHits = receiver.hits
+      .slice(before)
+      .filter((hit) => String(hit.body.request_id ?? hit.body.id) === id && hit.body.type === 'expired')
+    assert.equal(
+      expiryHits.length,
+      1,
+      `iteration ${iteration}: exactly one expired callback (the guarded-flip winner), got ${expiryHits.length}`,
+    )
+    assert.ok(expiryHits[0]?.headers?.['x-hitly-event-id'], 'the expiry callback carries a stable event id for receiver dedupe')
+  }
+})
+
+test('the expiresAt >= now backstop excludes an unsettled past-deadline row even when the settle is skipped (real host, PG)', async () => {
+  // S3 mutant target: removing either gte backstop filter (open scope,
+  // pending count) while keeping the settle leaves the OTHER tests green
+  // (their first read settles the row anyway). This test reads the surfaces
+  // with the settle disabled, so the exclusion can only come from the SQL
+  // backstop itself.
+  const inboxArgs = {
+    workspaceId: fixture.workspaceId,
+    userId: fixture.reviewerId,
+    workspaceRole: 'member' as const,
+    projectId: fixture.projectId,
+  }
+  // Baseline BEFORE the row exists; every read below skips the settle.
+  const baseline = await inboxSummary({ ...inboxArgs, skipExpirySettleForTests: true })
+  const created = await ingestHttpAsk(fixture, receiver.url, { actionName: 'ask_user', prompt: 'Backstop-only ask?' })
+  const id = created.id
+  await fixture.db
+    .update(approvals)
+    .set({ expiresAt: new Date(Date.now() - 70 * 60_000) })
+    .where(eq(approvals.id, id))
+  assert.equal((await storedRow(id)).status, 'pending', 'row starts raw pending')
+
+  const open = await listInboxItems({ ...inboxArgs, scope: 'open', skipExpirySettleForTests: true })
+  assert.ok(
+    !open.items.some((item) => item.id === id),
+    'the open-scope expiresAt >= now backstop must exclude the raw-pending past-deadline row without any settle',
+  )
+  const after = await inboxSummary({ ...inboxArgs, skipExpirySettleForTests: true })
+  assert.equal(after.pending, baseline.pending, 'the pending-count backstop must not count the row without any settle')
+  assert.equal((await storedRow(id)).status, 'pending', 'settle stayed disabled: the exclusion came from the filters alone')
 })

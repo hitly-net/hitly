@@ -87,6 +87,11 @@ export async function listInboxItems(args: {
   q?: string
   limit?: number
   cursor?: ListCursor
+  /**
+   * Test-only: skip the bounded settle so a test can pin the `expiresAt >= now`
+   * backstop filter independently of it (hitly#136 S3). Never set in app code.
+   */
+  skipExpirySettleForTests?: boolean
 }): Promise<{ items: InboxListItem[]; nextCursor: string | null }> {
   return withTenant(args.workspaceId, async () => {
     const visibleIds = await listVisibleProjectIds(args)
@@ -100,7 +105,9 @@ export async function listInboxItems(args: {
   // rows first (one flip + one expiry callback each), then the status
   // filters below do their normal job.
   const nowDate = new Date()
-  await settleExpiredApprovalsInProjects(args.workspaceId, projectIds, nowDate.getTime())
+  if (!args.skipExpirySettleForTests) {
+    await settleExpiredApprovalsInProjects(args.workspaceId, projectIds, nowDate.getTime())
+  }
   const scope = isInboxScope(args.scope) ? args.scope : 'all'
   if (scope === 'open') {
     // Pending inbox (web + mobile): only items still awaiting a human.
@@ -214,6 +221,12 @@ export async function inboxSummary(args: {
   userId: string
   workspaceRole: WorkspaceRole
   projectId?: string
+  /**
+   * Test-only: skip the bounded settle so a test can pin the `expiresAt >= now`
+   * backstop on the pending count independently of it (hitly#136 S3). Never
+   * set in app code.
+   */
+  skipExpirySettleForTests?: boolean
 }) {
   return withTenant(args.workspaceId, async () => {
     const visibleIds = await listVisibleProjectIds(args)
@@ -224,7 +237,9 @@ export async function inboxSummary(args: {
   // Same read-time expiry rule as the lists: an expired request is never
   // counted as pending (Needs attention card, favicon and mobile badges).
   const nowDate = new Date()
-  await settleExpiredApprovalsInProjects(args.workspaceId, projectIds, nowDate.getTime())
+  if (!args.skipExpirySettleForTests) {
+    await settleExpiredApprovalsInProjects(args.workspaceId, projectIds, nowDate.getTime())
+  }
   const database = requireDb()
   const pendingRows = await database
     .select({ count: sql<number>`count(*)` })
