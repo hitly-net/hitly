@@ -24,6 +24,8 @@ import {
 export type DecideExtra = {
   editedArgs?: Record<string, unknown>
   response?: string
+  /** Typed ask_user answer {kind, value}; `kind` is the stored spec answerType. */
+  answer?: { kind: string; value: unknown }
   editReason?: string
   editReasonText?: string
   /** Reviewer reason for the answer (hitl-spec 3.6). Sent as `reason` in the decide body. */
@@ -156,10 +158,11 @@ export function DecisionBar({
         ) : null}
         <RespondSheet
           visible={respondOpen}
+          schema={envelope?.answerSchema}
           value={response}
           onChange={setResponse}
           onClose={() => setRespondOpen(false)}
-          onSubmit={() => gate('respond', { response })}
+          onSubmit={(payload) => gate('respond', payload)}
         />
         <ReasonSheet
           visible={reasonFlow !== null}

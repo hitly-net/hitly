@@ -119,7 +119,7 @@ export function createHitlyClient(options: ClientOptions) {
         method: 'POST',
       })
     },
-    decide(id: string, body: { decision: Decision; editedArgs?: Record<string, unknown>; response?: string; reason?: string }) {
+    decide(id: string, body: { decision: Decision; editedArgs?: Record<string, unknown>; response?: string; answer?: { kind: string; value: unknown }; reason?: string }) {
       return request(`/api/v1/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify(body) })
     },
     /** Record that this reviewer opened a context item (hitl-spec 3.7, client-reported opens). */

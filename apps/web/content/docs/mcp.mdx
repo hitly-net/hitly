@@ -125,7 +125,7 @@ Response (immediate):
 
 Ask a question and get a typed answer later. The `prompt` is the headline the reviewer sees (one sentence, at most 160 characters, ending with `?`); optional markdown `detail` (at most 8000 characters) renders under it. `answerSchema.type` is `free_text`, `single_choice` (needs `options`) or `multi_choice` (needs `options`).
 
-**Ask one question per `ask_user` request.** In hitl/v0 the reviewer answers exactly one ask, so a form with several fields gets you one answer, not per-field answers - issue one `ask_user` per field instead. `simple_form` is on its way out; don't build on it.
+**Ask one question per `ask_user` request.** In hitl/v0 the reviewer answers exactly one ask, so a form with several fields gets you one answer, not per-field answers - issue one `ask_user` per field instead. `simple_form` is refused with an error: `ask_user` accepts only `text`, `single`, `multi` and `number` answer schemas, so send a separate `ask_user` for each field.
 
 ```json
 { "name": "ask_user", "arguments": {

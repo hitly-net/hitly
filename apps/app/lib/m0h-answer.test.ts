@@ -11,7 +11,9 @@
 import assert from 'node:assert/strict'
 import { test, before, after } from 'node:test'
 import { and, desc, eq } from 'drizzle-orm'
-import { decisionRecords } from '@hitly/db/schema'
+import { approvals, decisionRecords } from '@hitly/db/schema'
+import { POST as ingestRoute } from '../app/api/v1/approvals/route'
+import { newId } from './ids'
 import { decideApproval, parseDecisionBody } from './approvals'
 import { decodeTenantJson } from './tenant-crypto'
 import {
@@ -114,4 +116,121 @@ test('an approval without an answer sends decided with the answer key OMITTED, n
   // PM ruling on hitl-spec 4.2 (Test M1): no answer means NO answer key -
   // a decided callback must never carry `answer: null`.
   assert.ok(!('answer' in hit.body), `decided callback must OMIT answer, got ${JSON.stringify(hit.body.answer)}`)
+})
+
+test('ask_user with a stored schema: persisted spec type, host-validated answer, answered callback', async () => {
+  const approval = await ingestHttpAsk(fixture, receiver.url, {
+    kind: 'question',
+    actionName: 'ask_user',
+    args: {},
+    prompt: 'Which venue?',
+    answerSchema: { type: 'single_choice', options: ['Hall A', 'Hall B'] },
+    allowedActions: { accept: false, reject: false, respond: true, ignore: true },
+  })
+
+  // Ingest persisted the schema (mapped to the SPEC name) and the prompt.
+  const [row] = await fixture.db
+    .select({ envelope: approvals.envelope })
+    .from(approvals)
+    .where(eq(approvals.id, approval.id))
+  const envelope = (await decodeTenantJson(fixture.workspaceId, row!.envelope)) as {
+    prompt?: string
+    answerSchema: { type: string; options?: Array<{ value: string; label: string }> }
+  }
+  assert.equal(envelope.prompt, 'Which venue?')
+  assert.equal(envelope.answerSchema.type, 'single', 'stored type is the spec name, not the MCP alias')
+  assert.deepEqual(envelope.answerSchema.options, [
+    { value: 'Hall A', label: 'Hall A' },
+    { value: 'Hall B', label: 'Hall B' },
+  ])
+
+  const decide = (payload: Record<string, unknown>) =>
+    decideApproval({
+      approvalId: approval.id,
+      actorUserId: fixture.reviewerId,
+      payload: parseDecisionBody(payload) as never,
+      workspaceId: fixture.workspaceId,
+    })
+
+  // Host refusals (spec 7) while the request is still open.
+  const bare = (await decide({ decision: 'respond', response: 'Hall A' })) as { error?: string; status?: number }
+  assert.equal(bare.status, 400, 'a bare response is refused when a schema is stored')
+  assert.match(String(bare.error), /response/)
+  const wrongKind = (await decide({ decision: 'respond', answer: { kind: 'single_choice', value: 'Hall A' } })) as {
+    status?: number
+    error?: string
+  }
+  assert.equal(wrongKind.status, 400, 'the alias kind is refused: kind must equal the stored spec type')
+  assert.match(String(wrongKind.error), /answer.kind/)
+  const unknown = (await decide({ decision: 'respond', answer: { kind: 'single', value: 'Hall C' } })) as { status?: number }
+  assert.equal(unknown.status, 400, 'option not in the stored options')
+
+  // The exact payload the web form POSTs.
+  const before = receiver.hits.length
+  const decided = (await decide({ decision: 'respond', answer: { kind: 'single', value: 'Hall B' } })) as {
+    error?: string
+    status?: string
+  }
+  assert.equal(decided.error, undefined, `valid typed answer must decide, got ${decided.error}`)
+  assert.equal(decided.status, 'decided')
+
+  assert.equal(receiver.hits.length, before + 1, 'exactly one callback')
+  const hit = receiver.hits[before]!
+  assert.equal(hit.body.type, 'answered')
+  assert.equal(hit.body.state, 'answered')
+  assert.equal(hit.body.decision, 'respond')
+  assert.deepEqual(hit.body.answer, { kind: 'single', value: 'Hall B' }, 'typed answer reaches the sink verbatim')
+  assert.equal(hit.body.response, undefined, 'no free-text substitute alongside the typed answer')
+})
+
+test('HTTP ingest refuses ask_user with a binary answerSchema: 400, nothing created', async () => {
+  const rowsBefore = await fixture.db
+    .select({ id: approvals.id })
+    .from(approvals)
+    .where(and(eq(approvals.projectId, fixture.projectId), eq(approvals.workspaceId, fixture.workspaceId)))
+  // binary is the request_approval approve/reject shape; ask_user must not
+  // accept it over HTTP either (MCP ask_user already refuses it identically).
+  const askBinary = await ingestRoute(
+    new Request('http://localhost/api/v1/approvals', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${fixture.apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        runId: newId('run'),
+        projectId: fixture.projectId,
+        kind: 'question',
+        actionName: 'ask_user',
+        prompt: 'Ship it?',
+        answerSchema: { type: 'binary' },
+        allowedActions: { accept: false, reject: false, respond: true, ignore: true },
+      }),
+    }),
+  )
+  assert.equal(askBinary.status, 400, 'ask_user + binary is refused at the HTTP route')
+  const body = (await askBinary.json()) as { error?: string }
+  assert.match(String(body.error), /answerSchema\.type must be one of: text, single, multi, number/)
+  const rowsAfterRefusal = await fixture.db
+    .select({ id: approvals.id })
+    .from(approvals)
+    .where(and(eq(approvals.projectId, fixture.projectId), eq(approvals.workspaceId, fixture.workspaceId)))
+  assert.equal(rowsAfterRefusal.length, rowsBefore.length, 'the refused ask created no row')
+
+  // request_approval keeps its binary approve/reject shape over the same route.
+  const approvalBinary = await ingestRoute(
+    new Request('http://localhost/api/v1/approvals', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${fixture.apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        runId: newId('run'),
+        projectId: fixture.projectId,
+        actionName: 'request_approval',
+        answerSchema: { type: 'binary' },
+      }),
+    }),
+  )
+  assert.equal(approvalBinary.status, 200, 'request_approval with binary still ingests')
+  const created = await fixture.db
+    .select({ id: approvals.id })
+    .from(approvals)
+    .where(and(eq(approvals.projectId, fixture.projectId), eq(approvals.workspaceId, fixture.workspaceId)))
+  assert.equal(created.length, rowsBefore.length + 1, 'only the request_approval row was added')
 })

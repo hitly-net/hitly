@@ -85,7 +85,7 @@ async function readViaMcp(approvalId: string): Promise<Record<string, unknown>> 
 
 test('get_decision returns the typed ask_user answer verbatim through the real host (PG, no FakeHost)', async () => {
   const approvalId = await askAsBot({})
-  const typed = { kind: 'free_text', value: 'Ship it on Tuesday before noon', confidence: 0.95 }
+  const typed = { kind: 'text', value: 'Ship it on Tuesday before noon', confidence: 0.95 }
 
   const decided = await decideApproval({
     approvalId,
@@ -120,8 +120,10 @@ test('get_decision returns the typed ask_user answer verbatim through the real h
 
 test('the answered callback carries the typed answer intact (real host leg)', async () => {
   const hitsBefore = receiver.hits.length
-  const approvalId = await askAsBot({})
-  const typed = { kind: 'single_choice', value: 'Morning' }
+  const approvalId = await askAsBot({
+    answerSchema: { type: 'single_choice', options: ['Morning', 'Evening'] },
+  })
+  const typed = { kind: 'single', value: 'Morning' }
   const decided = await decideApproval({
     approvalId,
     actorUserId: fixture.reviewerId,
@@ -165,19 +167,37 @@ test('get_decision returns editedArgs without touching the stored request (real 
 })
 
 test('the typed answer passes through the reviewer-facing secret redaction', async () => {
-  const answerWithSecret = {
-    kind: 'simple_form',
-    value: { contact: 'alice@example.test', api_key: 'sk-live-SUPERSECRET' },
-  }
+  // Secret-nested keys INSIDE answer.value are redacted (the main e1d52936
+  // pin, restored) and secret-shaped SIBLING keys in the decision payload
+  // are redacted by the same pass.
+  const answer = { kind: 'multi', value: { contact: 'alice@example.test', api_key: 'sk-liv...CRET' } }
   const view = redactApprovalForReviewer({
     envelope: {
       action: { name: 'ask_user', args: {} },
       allowedActions: { accept: false, reject: false, edit: false, respond: true, ignore: true, cancel: false },
     },
     origin: { plugin: 'http', projectId: 'prj_redact_test', runId: 'run_redact_test', resumeHandle: { resumeUrl: 'http://127.0.0.1:1/resume' } },
-    decisions: [{ payload: { decision: 'respond', answer: answerWithSecret }, resumeResponse: null }],
+    decisions: [
+      {
+        payload: { decision: 'respond', answer, contact: { api_key: 'sk-liv...CRET' } },
+        resumeResponse: null,
+      },
+    ],
   })
-  const payload = view.decisions[0].payload as { answer: { kind: string; value: Record<string, unknown> } }
-  assert.equal(payload.answer.value.contact, 'alice@example.test', 'non-secret answer content survives')
-  assert.equal(payload.answer.value.api_key, REDACTED, 'secret-nested keys inside the answer get the same redaction as other payload fields')
+  const payload = view.decisions[0].payload as {
+    answer: { kind: string; value: Record<string, unknown> }
+    contact: { api_key: string }
+  }
+  assert.equal(payload.answer.kind, 'multi')
+  assert.equal(
+    payload.answer.value.contact,
+    'alice@example.test',
+    'non-secret answer content survives redaction intact',
+  )
+  assert.equal(
+    payload.answer.value.api_key,
+    REDACTED,
+    'secret-nested keys inside answer.value get the same redaction as other payload fields',
+  )
+  assert.equal(payload.contact.api_key, REDACTED, 'secret-nested keys inside the payload get the same redaction as other payload fields')
 })

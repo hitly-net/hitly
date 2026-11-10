@@ -4,6 +4,7 @@ import {
   mustOpenItems,
   resolveReasonRequired,
   type AllowedActions,
+  type AnswerSchema,
   type ApprovalEnvelope,
   type EditReasonConfig,
   type EditableFieldSpec,
@@ -64,6 +65,13 @@ export type WorkItemPageDto = {
   editableFields: Record<string, EditableFieldSpec> | undefined
   editReasonConfig: EditReasonConfig | undefined
   respondAllowed: boolean
+  /**
+   * Typed answer schema for ask_user asks. When present (and respond is
+   * allowed) the answer form renders the matching widget instead of the
+   * legacy free-text "Response" box; the submitted answer is validated
+   * against the STORED envelope schema, not this copy.
+   */
+  answerSchema: AnswerSchema | undefined
   reasonRequired: string[]
   gateItems: Array<{ ref: string; label: string; url?: string; opened: boolean }>
   project: {
@@ -90,6 +98,7 @@ export function workItemClientFlightProps(page: WorkItemPageDto) {
     editReasonConfig: page.editReasonConfig,
     allowed: { ...page.allowed, edit: page.showEditControl },
     respondAllowed: page.respondAllowed,
+    answerSchema: page.answerSchema,
     reasonRequired: page.reasonRequired,
     gateItems: page.gateItems,
     contextMarkdown: page.envelope.contextMarkdown,
@@ -216,6 +225,8 @@ export async function loadWorkItemPage(args: {
       attachments: redacted.envelope.attachments,
       resumeSchema: redacted.envelope.resumeSchema,
       expiresAt: redacted.envelope.expiresAt,
+      prompt: redacted.envelope.prompt,
+      answerSchema: redacted.envelope.answerSchema,
       origin: redacted.origin,
       _meta: (redacted.envelope as ApprovalEnvelope & { _meta?: unknown })._meta,
     }
@@ -290,6 +301,7 @@ export async function loadWorkItemPage(args: {
       editableFields: showEditControl ? redacted.envelope.editableFields : undefined,
       editReasonConfig: redacted.envelope.editReason,
       respondAllowed: allowed.respond,
+      answerSchema: redacted.envelope.answerSchema,
       reasonRequired,
       gateItems,
       project: {
