@@ -212,7 +212,7 @@ function WorkItemDetailView({ page, errorMessage }: { page: WorkItemPageDto; err
           </p>
         </section>
       ) : null}
-      {page.expired && page.status === 'pending' ? (
+      {page.expired && (page.status === 'pending' || page.status === 'expired') ? (
         <p className="mt-4 text-sm text-amber-700">This work item has expired.</p>
       ) : null}
       {page.canAct && !page.expired ? (

@@ -9,7 +9,24 @@ import { registerHousekeepingJob } from './scheduler'
 
 const DELETE_CHUNK = 200
 
-export async function expireOverdueApprovals() {
+/** Row shape the expiry sweep carries from its SELECT to the callback step. */
+export type ExpireSweepRow = {
+  id: string
+  projectId: string
+  plugin: string
+  origin: Record<string, unknown>
+}
+
+export type ExpireSweepOptions = {
+  /**
+   * Test-only seam: awaited between the sweep's SELECT and its guarded flip,
+   * so a test can settle rows through another surface inside the race window
+   * or hold the sweep there (hitly#136 M2). Never set outside tests.
+   */
+  afterSelect?: (spaceId: string, rows: ExpireSweepRow[]) => Promise<void> | void
+}
+
+export async function expireOverdueApprovals(options?: ExpireSweepOptions) {
   const database = requireDb()
   const now = new Date()
   const spaces = await database.select({ id: workspaces.id }).from(workspaces)
@@ -31,7 +48,13 @@ export async function expireOverdueApprovals() {
           ),
         )
       if (rows.length === 0) return 0
-      const result = await tenantDb
+      await options?.afterSelect?.(space.id, rows)
+      // Guarded flip, returning the ids this sweep actually won: a row a
+      // concurrent read-path settle already flipped matches nothing here.
+      // The `expired` callback goes ONLY to flip winners (same guarded-UPDATE
+      // winner rule as settleExpiredApproval) - delivering it for every
+      // SELECTed row double-fired it whenever a read settled in between.
+      const flipped = await tenantDb
         .update(approvals)
         .set({ status: 'expired', updatedAt: now })
         .where(
@@ -42,7 +65,10 @@ export async function expireOverdueApprovals() {
             lt(approvals.expiresAt, now),
           ),
         )
+        .returning({ id: approvals.id })
+      const won = new Set(flipped.map((row) => row.id))
       for (const row of rows) {
+        if (!won.has(row.id)) continue
         // Best-effort, per item: no-op unless the request opted in.
         await deliverApprovalLifecycleEvent({
           approval: { id: row.id, projectId: row.projectId, plugin: row.plugin, origin: row.origin },
@@ -50,7 +76,7 @@ export async function expireOverdueApprovals() {
           type: 'expired',
         })
       }
-      return affectedRows(result)
+      return flipped.length
     })
   }
   return { expired }

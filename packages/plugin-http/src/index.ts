@@ -185,6 +185,9 @@ export const httpPlugin: HitlyPlugin = {
     // refused, never silently dropped (spec 7). Absent stays absent: legacy
     // in-flight asks keep the free-text "Response" fallback in the inbox.
     const prompt = optionalString(body.prompt)
+    // Explicit caller deadline (hitl-spec 3.3): persists onto the envelope so
+    // applyRules honours it (an absent value means "host default rules").
+    const expiresAt = optionalString(body.expiresAt)
     const parsedAnswerSchema = parseAnswerSchema(body.answerSchema)
     if (!parsedAnswerSchema.ok) throw new Error(parsedAnswerSchema.error)
     const answerSchema: AnswerSchema | undefined = parsedAnswerSchema.schema
@@ -218,7 +221,14 @@ export const httpPlugin: HitlyPlugin = {
       attachments: attachmentList(body.attachments),
       ...(reasonRequired ? { reasonRequired } : {}),
       ...(prompt ? { prompt } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
       ...(answerSchema ? { answerSchema } : {}),
+      // The requester-visible headline of a request_approval (hitl-spec
+      // section-12 extension namespace): survives ingest so key-scoped
+      // pending lists can show WHICH question is open, not just that one is.
+      ...(typeof body.question === 'string' && body.question.trim()
+        ? { _meta: { 'net.hitly/question': body.question.trim() } }
+        : {}),
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       editableFields: editableFields as any,
       editReason: editReason as any,

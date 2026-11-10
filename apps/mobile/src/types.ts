@@ -36,6 +36,10 @@ export type WorkItemRow = {
   createdAt: string
   expiresAt: string | null
   decision?: Decision | string | null
+  /** 'question' for ask_user rows (host list), 'approval' otherwise. */
+  kind?: 'question' | 'approval'
+  /** ask_user headline; titles the row when present. */
+  prompt?: string | null
 }
 
 export type OriginField = { key: string; label: string; value: string }

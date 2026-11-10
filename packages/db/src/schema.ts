@@ -208,7 +208,7 @@ export const workspaces = pgTable('workspaces', {
   name: varchar('name', { length: 255 }).notNull(),
   slug: varchar('slug', { length: 255 }).notNull().unique(),
   timezone: varchar('timezone', { length: 64 }).notNull().default('UTC'),
-  defaultSlaMinutes: varchar('default_sla_minutes', { length: 16 }).notNull().default('60'),
+  defaultSlaMinutes: varchar('default_sla_minutes', { length: 16 }).notNull().default('1440'),
   /**
    * Cloud-only until moved to a private billing table. The OSS server ignores these columns.
    */
@@ -276,7 +276,7 @@ export const projects = pgTable(
     defaultAssigneeUserId: id('default_assignee_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
-    defaultSlaMinutes: varchar('default_sla_minutes', { length: 16 }).notNull().default('60'),
+    defaultSlaMinutes: varchar('default_sla_minutes', { length: 16 }).notNull().default('1440'),
     evidenceSinkType: varchar('evidence_sink_type', { length: 16 }).notNull().default('none'),
     evidenceSinkConfig: jsonb('evidence_sink_config').$type<Record<string, unknown>>(),
     createdAt: createdAt(),

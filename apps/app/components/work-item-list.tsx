@@ -17,6 +17,8 @@ export type WorkItemRow = {
   projectName: string
   createdAt: Date
   decision?: Decision | string | null
+  kind?: 'question' | 'approval'
+  prompt?: string | null
 }
 
 export function WorkItemList({
@@ -41,8 +43,15 @@ export function WorkItemList({
             <Link href={hrefFor(item)} className="flex items-center gap-3 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900">
               <PluginMark plugin={item.plugin as PluginId} className="h-8 w-8" />
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{item.actionName}</p>
-                {showProjectName ? <p className="text-xs text-zinc-500">{item.projectName}</p> : null}
+                {/* ask_user rows are titled by the question itself (truncated);
+                    request_approval rows keep the action name, unchanged. */}
+                <p className="truncate font-medium">{item.prompt || item.actionName}</p>
+                <div className="flex items-center gap-2">
+                  {item.kind === 'question' ? (
+                    <Badge variant="secondary">ask_user</Badge>
+                  ) : null}
+                  {showProjectName ? <p className="text-xs text-zinc-500">{item.projectName}</p> : null}
+                </div>
               </div>
               <span className="text-xs text-zinc-500">{ageLabel(item.createdAt)}</span>
               <Badge

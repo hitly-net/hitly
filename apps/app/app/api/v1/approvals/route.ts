@@ -45,11 +45,14 @@ export async function POST(request: Request) {
       )
     }
 
-    const envelope = result.approval.envelope as { action?: { args?: Record<string, unknown> } }
+    const envelope = result.approval.envelope as { action?: { args?: Record<string, unknown> }; expiresAt?: string }
     return NextResponse.json({
       id: result.approval.id,
       status: result.approval.status,
       replayed: result.replayed,
+      // The expiry the host actually stored (rule/project defaults included),
+      // so requester clients never echo a deadline that differs from the row.
+      expiresAt: envelope.expiresAt ?? result.approval.expiresAt?.toISOString() ?? null,
       envelope: result.approval.envelope,
       // hitl-spec 3.8 over the stored original args (JCS, b64url SHA-256).
       argsHash: await argsHash(envelope.action?.args ?? {}),

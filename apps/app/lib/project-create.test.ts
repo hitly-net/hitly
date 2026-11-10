@@ -229,3 +229,110 @@ describe('existing OpenShell project', () => {
     assert.equal(records.length, 1)
   })
 })
+
+describe('project config save (LP: Config tab)', () => {
+  let projectId: string
+
+  before(async () => {
+    projectId = newId('prj').slice(0, 36)
+    await database.insert(projects).values({
+      id: projectId,
+      workspaceId,
+      name: 'Mastra demo',
+      plugin: 'mastra',
+      credentials: await encodeTenantJson(workspaceId, {
+        plugin: 'mastra',
+        baseUrl: 'http://origin.invalid',
+        token: 'stored-token',
+        resumeSecret: 'stored-resume-secret',
+      }),
+      defaultSlaMinutes: '60',
+      evidenceSinkType: 's3',
+      evidenceSinkConfig: await encodeTenantJson(workspaceId, {
+        endpoint: 'http://s3.invalid',
+        region: 'local',
+        bucket: 'evidence',
+        accessKeyId: 'stored-access-key',
+        secretAccessKey: 'stored-secret-key',
+        prefix: 'hitly/',
+        forcePathStyle: true,
+      }),
+    })
+    await database.insert(projectMemberships).values({ id: newId('pm').slice(0, 36), workspaceId, projectId, userId, role: 'admin' })
+  })
+
+  async function savedRow() {
+    const [row] = await database.select().from(projects).where(eq(projects.id, projectId))
+    return row
+  }
+
+  it('creates new projects with the 24h (1440) default timeout', async () => {
+    const created = await create('http', 'Fresh project')
+    const [row] = await database.select().from(projects).where(eq(projects.id, created))
+    assert.equal(row.defaultSlaMinutes, '1440')
+  })
+
+  it('parses the timeout: blank = 24h, number kept, junk refused', () => {
+    const blank = parseProjectConfig({ name: 'p', sla: '' })
+    assert.ok(!('error' in blank))
+    assert.equal(blank.sla, '1440')
+    const number = parseProjectConfig({ name: 'p', sla: '45' })
+    assert.ok(!('error' in number))
+    assert.equal(number.sla, '45')
+    const bad = parseProjectConfig({ name: 'p', sla: 'abc' })
+    assert.ok('error' in bad)
+  })
+
+  it('saves an edit: name, timeout with units semantics, and S3 fields persist', async () => {
+    const parsed = parseProjectConfig({
+      name: 'Mastra demo (edited)',
+      description: 'demo',
+      sla: '45',
+      baseUrl: 'http://origin.invalid',
+      token: '',
+      evidenceSinkType: 's3',
+      evidenceSinkS3Endpoint: 'http://s3-new.invalid',
+      evidenceSinkS3Region: 'auto',
+      evidenceSinkS3Bucket: 'evidence',
+      evidenceSinkS3AccessKeyId: '',
+      evidenceSinkS3SecretAccessKey: '',
+      evidenceSinkS3Prefix: 'hitly/v2/',
+      evidenceSinkS3ForcePathStyle: false,
+    })
+    assert.ok(!('error' in parsed))
+    const result = await withTenant(workspaceId, () => saveProjectConfig(projectId, parsed))
+    assert.deepEqual(result, { ok: true })
+    const row = await savedRow()
+    assert.equal(row.name, 'Mastra demo (edited)')
+    assert.equal(row.defaultSlaMinutes, '45')
+    const sink = await decodeTenantJson(workspaceId, row.evidenceSinkConfig as Record<string, unknown>)
+    assert.equal(sink.endpoint, 'http://s3-new.invalid')
+    assert.equal(sink.region, 'auto')
+    assert.equal(sink.prefix, 'hitly/v2/')
+    assert.equal(sink.forcePathStyle, false, 'an explicit uncheck persists')
+  })
+
+  it('never overwrites stored secrets when the leave-blank-to-keep fields are blank', async () => {
+    const parsed = parseProjectConfig({
+      name: 'Mastra demo (edited)',
+      description: 'demo',
+      sla: '',
+      baseUrl: 'http://origin.invalid',
+      token: '',
+      evidenceSinkType: 's3',
+      evidenceSinkS3AccessKeyId: '',
+      evidenceSinkS3SecretAccessKey: '',
+    })
+    assert.ok(!('error' in parsed))
+    const result = await withTenant(workspaceId, () => saveProjectConfig(projectId, parsed))
+    assert.deepEqual(result, { ok: true })
+    const row = await savedRow()
+    assert.equal(row.defaultSlaMinutes, '1440', 'blank timeout means the 24h default')
+    const credentials = await decodeTenantJson(workspaceId, row.credentials)
+    assert.equal(credentials.token, 'stored-token', 'a blank token must never clear the stored secret')
+    assert.equal(credentials.resumeSecret, 'stored-resume-secret')
+    const sink = await decodeTenantJson(workspaceId, row.evidenceSinkConfig as Record<string, unknown>)
+    assert.equal(sink.accessKeyId, 'stored-access-key', 'a blank S3 access key must never clear the stored one')
+    assert.equal(sink.secretAccessKey, 'stored-secret-key', 'a blank S3 secret must never clear the stored one')
+  })
+})

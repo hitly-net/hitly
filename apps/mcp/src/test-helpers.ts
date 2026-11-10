@@ -11,6 +11,17 @@ export const TEST_KEY = 'hitly_testkey_AAAAAAAAAAAAAAAAAAAAAAAA'
 export const OTHER_KEY = 'hitly_otherkey_BBBBBBBBBBBBBBBBBBBBBBBB'
 export const FIXED_NOW = Date.parse('2026-11-09T13:00:00.000Z')
 
+/**
+ * Mirrors the real host: the stored expiry is the explicit body.expiresAt if
+ * present, else the host-side 24h default from (fixed) now. The MCP server
+ * must never synthesise the default itself.
+ */
+export function storedExpiry(body: Record<string, unknown>): string {
+  const explicit = body.expiresAt
+  if (typeof explicit === 'string' && explicit.length > 0) return explicit
+  return new Date(FIXED_NOW + 24 * 60 * 60 * 1000).toISOString()
+}
+
 type Row = { id: string; key: string; idempotencyKey: string; body: Record<string, unknown>; read: ApprovalRead }
 
 /**
@@ -36,10 +47,10 @@ export class FakeHost {
         auth<IngestResponse>(() => {
           this.ingests.push({ key, idempotencyKey, body })
           const existing = [...this.rows.values()].find((row) => row.key === key && row.idempotencyKey === idempotencyKey)
-          if (existing) return { ok: true, status: 200, data: { id: existing.id, status: existing.read.status, replayed: true, expiresAt: existing.body.expiresAt } }
+          if (existing) return { ok: true, status: 200, data: { id: existing.id, status: existing.read.status, replayed: true, expiresAt: storedExpiry(existing.body) } }
           const id = `apr_${String(++this.seq).padStart(4, '0')}`
           this.rows.set(id, { id, key, idempotencyKey, body, read: { id, status: 'pending', presentedAt: null } })
-          return { ok: true, status: 200, data: { id, status: 'pending', replayed: false } }
+          return { ok: true, status: 200, data: { id, status: 'pending', replayed: false, expiresAt: storedExpiry(body) } }
         }),
       getApproval: (id) =>
         auth<ApprovalRead>(() => {
@@ -54,7 +65,7 @@ export class FakeHost {
           if (this.mode === 'today') return { ok: false, status: 405, error: 'Method Not Allowed', code: 'not_supported_by_host' }
           const items = [...this.rows.values()]
             .filter((row) => row.key === key && row.read.status === 'pending')
-            .map((row) => ({ id: row.id, kind: row.body.kind, question: row.body.question, prompt: row.body.prompt, createdAt: '2026-11-09T13:00:00.000Z', deadline: row.body.expiresAt }))
+            .map((row) => ({ id: row.id, kind: row.body.kind, question: row.body.question, prompt: row.body.prompt, createdAt: '2026-11-09T13:00:00.000Z', deadline: storedExpiry(row.body) }))
           return { ok: true, status: 200, data: { items } }
         }),
       cancel: (id, reason) => {

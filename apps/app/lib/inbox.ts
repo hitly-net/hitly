@@ -4,6 +4,9 @@ import { AWAITING_HUMAN_APPROVAL_STATUSES, CLOSED_APPROVAL_STATUSES, isDecision,
 import { approvals, decisionRecords, projects, users } from '@hitly/db/schema'
 import { listVisibleProjectIds } from './rbac'
 import { requireDb, withTenant } from './tenant'
+import { decodeTenantJson } from './tenant-crypto'
+import { settleExpiredApprovalsInProjects } from './approvals'
+import { effectiveApprovalStatus } from './approval-expiry'
 import { INBOX_SCOPES, isInboxScope, type InboxScope } from './list-filters'
 
 export const AUDIT_SORTS = ['createdAt', 'decision', 'actionName', 'projectName', 'actorName'] as const
@@ -32,6 +35,8 @@ export const INBOX_LIST_KEYS = [
   'createdAt',
   'expiresAt',
   'decision',
+  'kind',
+  'prompt',
 ] as const
 
 export type InboxListItem = {
@@ -44,6 +49,10 @@ export type InboxListItem = {
   createdAt: Date
   expiresAt: Date | null
   decision: string | null
+  /** 'question' for ask_user rows, 'approval' otherwise. */
+  kind: 'question' | 'approval'
+  /** ask_user headline (truncated for display by the UI); absent otherwise. */
+  prompt?: string | null
 }
 
 export function toInboxListItem(row: InboxListItem): InboxListItem {
@@ -57,6 +66,8 @@ export function toInboxListItem(row: InboxListItem): InboxListItem {
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
     decision: row.decision,
+    kind: row.kind,
+    prompt: row.prompt ?? null,
   }
 }
 
@@ -76,6 +87,11 @@ export async function listInboxItems(args: {
   q?: string
   limit?: number
   cursor?: ListCursor
+  /**
+   * Test-only: skip the bounded settle so a test can pin the `expiresAt >= now`
+   * backstop filter independently of it (hitly#136 S3). Never set in app code.
+   */
+  skipExpirySettleForTests?: boolean
 }): Promise<{ items: InboxListItem[]; nextCursor: string | null }> {
   return withTenant(args.workspaceId, async () => {
     const visibleIds = await listVisibleProjectIds(args)
@@ -84,11 +100,24 @@ export async function listInboxItems(args: {
     const database = requireDb()
     const limit = clampListLimit(args.limit, INBOX_DEFAULT_LIMIT, INBOX_MAX_LIMIT)
     const filters = [eq(approvals.workspaceId, args.workspaceId), inArray(approvals.projectId, projectIds)]
+  // Pending surfaces (open scope, and every status-based count) must never
+  // show or count an already-expired request as pending: settle past-deadline
+  // rows first (one flip + one expiry callback each), then the status
+  // filters below do their normal job.
+  const nowDate = new Date()
+  if (!args.skipExpirySettleForTests) {
+    await settleExpiredApprovalsInProjects(args.workspaceId, projectIds, nowDate.getTime())
+  }
   const scope = isInboxScope(args.scope) ? args.scope : 'all'
   if (scope === 'open') {
     // Pending inbox (web + mobile): only items still awaiting a human.
     // failed_resume rows already carry a human decision and must not appear.
     filters.push(inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES]))
+    // Same expiresAt >= now backstop as listRequesterPending: the settle
+    // above is bounded (200 rows per call), and even a row the settle
+    // skipped must never surface as pending.
+    const notPastDeadline = or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, nowDate))
+    if (notPastDeadline) filters.push(notPastDeadline)
   } else if (scope === 'closed') {
     filters.push(inArray(approvals.status, [...CLOSED_APPROVAL_STATUSES]))
   }
@@ -109,6 +138,7 @@ export async function listInboxItems(args: {
       projectName: projects.name,
       createdAt: approvals.createdAt,
       expiresAt: approvals.expiresAt,
+      envelope: approvals.envelope,
       decision: sql<string | null>`(
         select ${decisionRecords.decision}
         from ${decisionRecords}
@@ -123,7 +153,35 @@ export async function listInboxItems(args: {
     .orderBy(desc(approvals.createdAt), desc(approvals.id))
     .limit(limit + 1)
   const { page, nextCursor } = takeListPage(rows, limit)
-  return { items: page.map(toInboxListItem), nextCursor }
+  const now = Date.now()
+  const items = await Promise.all(
+    page.map(async (row) => {
+      // ask_user rows carry their headline so the web and mobile lists can
+      // title the row with the question itself (the envelope itself never
+      // leaves this function - toInboxListItem allowlists the row fields).
+      let prompt: string | null = null
+      if (row.actionName === 'ask_user') {
+        const envelope = (await decodeTenantJson(args.workspaceId, row.envelope)) as unknown as
+          | { prompt?: unknown }
+          | undefined
+        if (envelope && typeof envelope.prompt === 'string') prompt = envelope.prompt
+      }
+      return toInboxListItem({
+        id: row.id,
+        status: effectiveApprovalStatus(row, now),
+        actionName: row.actionName,
+        plugin: row.plugin,
+        projectId: row.projectId,
+        projectName: row.projectName,
+        createdAt: row.createdAt,
+        expiresAt: row.expiresAt,
+        decision: row.decision,
+        kind: row.actionName === 'ask_user' ? 'question' : 'approval',
+        prompt,
+      })
+    }),
+  )
+  return { items, nextCursor }
   })
 }
 
@@ -163,6 +221,12 @@ export async function inboxSummary(args: {
   userId: string
   workspaceRole: WorkspaceRole
   projectId?: string
+  /**
+   * Test-only: skip the bounded settle so a test can pin the `expiresAt >= now`
+   * backstop on the pending count independently of it (hitly#136 S3). Never
+   * set in app code.
+   */
+  skipExpirySettleForTests?: boolean
 }) {
   return withTenant(args.workspaceId, async () => {
     const visibleIds = await listVisibleProjectIds(args)
@@ -170,6 +234,12 @@ export async function inboxSummary(args: {
     if (projectIds.length === 0) {
       return { pending: 0, failedResume: 0, decidedToday: 0, projectCount: 0 }
     }
+  // Same read-time expiry rule as the lists: an expired request is never
+  // counted as pending (Needs attention card, favicon and mobile badges).
+  const nowDate = new Date()
+  if (!args.skipExpirySettleForTests) {
+    await settleExpiredApprovalsInProjects(args.workspaceId, projectIds, nowDate.getTime())
+  }
   const database = requireDb()
   const pendingRows = await database
     .select({ count: sql<number>`count(*)` })
@@ -179,6 +249,9 @@ export async function inboxSummary(args: {
         inArray(approvals.projectId, projectIds),
         eq(approvals.workspaceId, args.workspaceId),
         inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES]),
+        // expiresAt >= now backstop, mirroring listRequesterPending and the
+        // open scope: the bounded settle may skip rows past its 200-row cap.
+        or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, nowDate)),
       ),
     )
   const failedRows = await database

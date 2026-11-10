@@ -35,7 +35,7 @@ export async function insertNewProject(args: {
     plugin,
     credentials: await encodeTenantJson(workspaceId, { plugin, resumeSecret: generateResumeSecret() }),
     defaultAssigneeUserId: args.userId,
-    defaultSlaMinutes: '60',
+    defaultSlaMinutes: '1440',
   })
   await database.insert(projectMemberships).values({
     id: newId('pm').slice(0, 36),

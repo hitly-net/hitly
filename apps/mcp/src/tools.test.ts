@@ -76,8 +76,8 @@ test('default deadline is 24h from now; an explicit deadline is kept; past deadl
     const first = structured(await client.callTool({ name: 'request_approval', arguments: baseApproval }))
     const expected = new Date(FIXED_NOW + 24 * 60 * 60 * 1000).toISOString()
     assert.equal(DEFAULT_DEADLINE_MS, 86_400_000)
-    assert.equal(first.deadline, expected)
-    assert.equal(h.host.ingests[0].body.expiresAt, expected)
+    assert.equal(first.deadline, expected, 'the host-stored 24h default is echoed back')
+    assert.equal('expiresAt' in h.host.ingests[0].body, false, 'MCP sends no expiry when the caller gave no deadline; the host owns the default')
 
     const asked = structured(
       await client.callTool({
@@ -86,11 +86,13 @@ test('default deadline is 24h from now; an explicit deadline is kept; past deadl
       }),
     )
     assert.equal(asked.deadline, expected)
+    assert.equal('expiresAt' in h.host.ingests[1].body, false, 'ask_user also leaves the default to the host')
 
     const explicit = structured(
       await client.callTool({ name: 'request_approval', arguments: { ...baseApproval, idempotencyKey: 'bot-task-0002', deadline: '2026-11-09T15:00:00+00:00' } }),
     )
     assert.equal(explicit.deadline, '2026-11-09T15:00:00.000Z')
+    assert.equal(h.host.ingests[2].body.expiresAt, '2026-11-09T15:00:00.000Z', 'an explicit deadline is sent verbatim')
 
     const past = await client.callTool({ name: 'request_approval', arguments: { ...baseApproval, idempotencyKey: 'bot-task-0003', deadline: '2026-11-09T12:00:00Z' } })
     assert.equal(past.isError, true)

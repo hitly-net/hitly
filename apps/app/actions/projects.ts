@@ -74,7 +74,22 @@ export async function createProject(formData: FormData) {
   })
 }
 
-export async function updateProjectConfig(projectId: string, formData: FormData) {
+async function formFlag(formData: FormData, name: string): Promise<boolean | undefined> {
+  // A checkbox submits nothing when unchecked (the hidden 'false' pre-value
+  // covers the explicit uncheck); getAll survives the hidden+checkbox pair.
+  const values = formData.getAll(name).map((value) => String(value))
+  if (values.some((value) => value === 'true')) return true
+  if (values.some((value) => value === 'false')) return false
+  return undefined
+}
+
+export type ProjectConfigSaveState = { status: 'idle' | 'saved' | 'error'; error?: string }
+
+export async function updateProjectConfig(
+  projectId: string,
+  _prev: ProjectConfigSaveState,
+  formData: FormData,
+): Promise<ProjectConfigSaveState> {
   return withAppTenant(async () => {
     await requireProjectAdmin(projectId)
     const parsed = parseProjectConfig({
@@ -92,12 +107,20 @@ export async function updateProjectConfig(projectId: string, formData: FormData)
       evidenceSinkAuthHeader: formData.get('evidenceSinkAuthHeader'),
       evidenceSinkHeaders: formData.get('evidenceSinkHeaders'),
       evidenceSinkMetadata: formData.get('evidenceSinkMetadata'),
+      evidenceSinkS3Endpoint: formData.get('evidenceSinkS3Endpoint'),
+      evidenceSinkS3Region: formData.get('evidenceSinkS3Region'),
+      evidenceSinkS3Bucket: formData.get('evidenceSinkS3Bucket'),
+      evidenceSinkS3AccessKeyId: formData.get('evidenceSinkS3AccessKeyId'),
+      evidenceSinkS3SecretAccessKey: formData.get('evidenceSinkS3SecretAccessKey'),
+      evidenceSinkS3Prefix: formData.get('evidenceSinkS3Prefix'),
+      evidenceSinkS3ForcePathStyle: await formFlag(formData, 'evidenceSinkS3ForcePathStyle'),
     })
-    if ('error' in parsed) throw new Error(parsed.error)
+    if ('error' in parsed) return { status: 'error', error: parsed.error }
     const result = await saveProjectConfig(projectId, parsed)
-    if ('error' in result) throw new Error(result.error)
+    if ('error' in result) return { status: 'error', error: result.error }
     revalidatePath(`/projects/${projectId}`)
     revalidatePath(`/projects/${projectId}/config`)
+    return { status: 'saved' }
   })
 }
 
