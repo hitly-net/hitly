@@ -731,9 +731,10 @@ test('pending list: scoped to the calling key, open and unexpired only', async (
   assert.equal(badLimit.status, 400)
 })
 
-test('pending list: failed_resume rows are included in GET /api/v1/approvals open list', async () => {
-  // A8d: failed_resume is an open status. Dropping it from the list filter
-  // (or treating it like overdue pending) must go red here.
+test('pending list: failed_resume rows are excluded from GET /api/v1/approvals open list', async () => {
+  // A8d (revised): failed_resume already carries a human decision, so the
+  // pending list must NOT include it. Re-adding it to the list filter must
+  // go red here.
   const k = await insertKey(projectP.id, 'failed-resume list key')
   const failed = await ingest(k)
   await setRow(failed.approval.id, { status: 'failed_resume', expiresAt: new Date(Date.now() - 1000) })
@@ -742,7 +743,7 @@ test('pending list: failed_resume rows are included in GET /api/v1/approvals ope
   const list = await listRequesterPending({ apiKey: k.raw })
   if (!list.ok) throw new Error(list.error)
   const byId = new Map(list.items.map((item) => [item.id, item]))
-  assert.equal(byId.get(failed.approval.id)?.status, 'failed_resume')
+  assert.equal(byId.has(failed.approval.id), false, 'failed_resume rows must not be listed as pending')
   assert.equal(byId.get(pending.approval.id)?.status, 'pending')
 
   const route = await listRoute(
@@ -753,7 +754,7 @@ test('pending list: failed_resume rows are included in GET /api/v1/approvals ope
   assert.equal(route.status, 200)
   const body = (await route.json()) as { status: string; items: Array<{ id: string; status: string }> }
   assert.equal(body.status, 'open')
-  assert.equal(body.items.find((item) => item.id === failed.approval.id)?.status, 'failed_resume')
+  assert.equal(body.items.some((item) => item.id === failed.approval.id), false)
   assert.equal(body.items.find((item) => item.id === pending.approval.id)?.status, 'pending')
 })
 

@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, gte, inArray, or, sql } from 'drizzle-orm'
 import { edition } from '@hitly/cloud'
 import {
+  AWAITING_HUMAN_APPROVAL_STATUSES,
   isDecision,
   isOpenApprovalStatus,
   isPluginId,
@@ -1184,7 +1185,10 @@ export const REQUESTER_PENDING_MAX_LIMIT = 200
 
 /**
  * The requester's open requests: created by this API key, in its project,
- * still `pending` (and not past their deadline) or `failed_resume`. Newest first.
+ * still awaiting a human (`pending` and not past their deadline). Newest first.
+ * `failed_resume` rows already carry a human decision, so they are excluded
+ * here (shared definition: AWAITING_HUMAN_APPROVAL_STATUSES in @hitly/core).
+ * The resume failure stays visible via get_decision / the operator REST status.
  */
 export async function listRequesterPending(args: {
   apiKey: string
@@ -1203,9 +1207,9 @@ export async function listRequesterPending(args: {
       eq(approvals.workspaceId, workspaceId),
       eq(approvals.projectId, authn.project.id),
       eq(approvals.requesterKeyId, authn.key.id),
-      or(
-        eq(approvals.status, 'failed_resume'),
-        and(eq(approvals.status, 'pending'), or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, now))),
+      and(
+        inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES]),
+        or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, now)),
       ),
     ]
     const cursorWhere = args.cursor ? olderThanListCursor(approvals.createdAt, approvals.id, args.cursor) : undefined

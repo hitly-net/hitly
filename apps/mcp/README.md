@@ -9,7 +9,7 @@ Remote [MCP](https://modelcontextprotocol.io) server that lets a bot ask a human
 | `request_approval` | Approve / Reject / Ignore an action. Returns `requestId`, `state`, `replayed`, `argsHash`, `deadline`, `reviewUrl`. | `POST /api/v1/approvals` (HTTP plugin; `callback_url` → `resumeUrl`; `Idempotency-Key` = `idempotencyKey`) |
 | `ask_user` | Ask a question with an `answerSchema` (`free_text`, `single_choice`, `multi_choice`). One ask per request: hitl/v0 answers exactly one ask, so ask one `ask_user` per field; `simple_form` is going away - do not build on it. Optional markdown `detail` (≤8000 chars) renders under the headline. | same ingest, `kind: "question"` |
 | `get_decision` | Non-blocking read as `hitl/response/v0`. Returns `editedArgs` when the reviewer amended the action. | `GET /api/v1/approvals/:id` |
-| `list_pending` | Open requests created with this key. | `GET /api/v1/approvals?status=pending` (M0) |
+| `list_pending` | Requests created with this key that still await a human (human-decided `failed_resume` rows are excluded; read them with `get_decision`). | `GET /api/v1/approvals?status=pending` (M0) |
 | `cancel` | Withdraw an open request. | `POST /api/v1/approvals/:id/cancel` (M0 requester cancel) |
 
 There is **no decide tool**. Requester credentials can request, read and cancel only; decisions come from a signed-in human on web or mobile.
