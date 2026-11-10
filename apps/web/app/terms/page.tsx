@@ -1,8 +1,14 @@
 import { SiteFooter, SiteHeader } from '@/components/marketing/site-chrome'
 import { HitlyWordmark } from '@hitly/ui'
 import Link from 'next/link'
+import { marketingMeta } from '@/lib/site'
 
-export const metadata = { title: 'Terms' }
+export const metadata = marketingMeta({
+  title: 'Terms',
+  description:
+    'Terms for HITLy Cloud and the self-hosted Apache-2.0 server: what you run, what we host, and who owns the decisions.',
+  path: '/terms',
+})
 
 export default function TermsPage() {
   return (

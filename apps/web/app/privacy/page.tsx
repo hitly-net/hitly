@@ -1,7 +1,13 @@
 import { SiteFooter, SiteHeader } from '@/components/marketing/site-chrome'
 import { HitlyWordmark } from '@hitly/ui'
+import { marketingMeta } from '@/lib/site'
 
-export const metadata = { title: 'Privacy' }
+export const metadata = marketingMeta({
+  title: 'Privacy',
+  description:
+    'How HITLy stores approval envelopes, decisions, and workspace membership — and what it never does with your payloads.',
+  path: '/privacy',
+})
 
 export default function PrivacyPage() {
   return (
