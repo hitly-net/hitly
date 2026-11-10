@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ingestApproval, listRequesterPending } from '@/lib/approvals'
 import { createOncePolicy } from '@/lib/create-once'
+import { parseCursorParam, parseLimitParam } from '@/lib/list-cursor'
 import { argsHash } from '@hitly/core'
 
 export async function POST(request: Request) {
@@ -65,7 +66,8 @@ export async function POST(request: Request) {
  * GET /api/v1/approvals — the requester's open requests (project API key).
  * Only requests created by the calling key are listed. Query: `projectId`
  * (must be the key's project), `status=open` (the only value; default),
- * `limit` (1-200, default 50).
+ * `limit` (1-200, default 50), `cursor` (opaque, from `nextCursor`).
+ * Order is created_at DESC, id DESC (#107).
  */
 export async function GET(request: Request) {
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
@@ -75,13 +77,21 @@ export async function GET(request: Request) {
   if (status !== 'open') {
     return NextResponse.json({ error: 'Unsupported status filter; only status=open is available' }, { status: 400 })
   }
-  const limitParam = url.searchParams.get('limit')
-  let limit: number | undefined
-  if (limitParam !== null) {
-    if (!/^\d+$/.test(limitParam)) return NextResponse.json({ error: 'limit must be a whole number' }, { status: 400 })
-    limit = Number(limitParam)
-  }
-  const result = await listRequesterPending({ apiKey, projectId: url.searchParams.get('projectId') ?? undefined, limit })
+  const limitParsed = parseLimitParam(url.searchParams.get('limit'))
+  if (!limitParsed.ok) return NextResponse.json({ error: limitParsed.error }, { status: 400 })
+  const cursorParsed = parseCursorParam(url.searchParams.get('cursor'))
+  if (!cursorParsed.ok) return NextResponse.json({ error: cursorParsed.error }, { status: 400 })
+  const result = await listRequesterPending({
+    apiKey,
+    projectId: url.searchParams.get('projectId') ?? undefined,
+    limit: limitParsed.limit,
+    cursor: cursorParsed.cursor,
+  })
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
-  return NextResponse.json({ projectId: result.projectId, status: 'open', items: result.items })
+  return NextResponse.json({
+    projectId: result.projectId,
+    status: 'open',
+    items: result.items,
+    nextCursor: result.nextCursor,
+  })
 }

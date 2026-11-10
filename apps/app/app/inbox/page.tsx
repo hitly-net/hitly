@@ -17,7 +17,7 @@ export default async function InboxPage({
   const query = await searchParams
   const { scope, q, projectId } = parseListFilters(query)
   const { workspace, user, role } = await getAppContext()
-  const items = await listInboxItems({
+  const { items } = await listInboxItems({
     workspaceId: workspace.id,
     userId: user.id,
     workspaceRole: role,

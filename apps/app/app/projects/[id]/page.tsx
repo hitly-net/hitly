@@ -21,7 +21,7 @@ export default async function ProjectItemsPage({
   const query = await searchParams
   const { scope, q } = parseListFilters(query)
   const { project, workspace, user, role } = await requireVisibleProject(id)
-  const items = await listInboxItems({
+  const { items } = await listInboxItems({
     workspaceId: workspace.id,
     userId: user.id,
     workspaceRole: role,

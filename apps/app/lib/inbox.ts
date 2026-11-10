@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, ilike, inArray, or, sql } from 'drizzle-orm'
+import { clampListLimit, olderThanListCursor, takeListPage, type ListCursor } from './list-cursor'
 import { CLOSED_APPROVAL_STATUSES, isDecision, type WorkspaceRole } from '@hitly/core'
 import { approvals, decisionRecords, projects, users } from '@hitly/db/schema'
 import { listVisibleProjectIds } from './rbac'
@@ -63,6 +64,9 @@ export function serializeInboxList(items: InboxListItem[]): string {
   return JSON.stringify(items)
 }
 
+export const INBOX_DEFAULT_LIMIT = 100
+export const INBOX_MAX_LIMIT = 200
+
 export async function listInboxItems(args: {
   workspaceId: string
   userId: string
@@ -70,12 +74,15 @@ export async function listInboxItems(args: {
   projectId?: string
   scope?: string
   q?: string
-}): Promise<InboxListItem[]> {
+  limit?: number
+  cursor?: ListCursor
+}): Promise<{ items: InboxListItem[]; nextCursor: string | null }> {
   return withTenant(args.workspaceId, async () => {
     const visibleIds = await listVisibleProjectIds(args)
     const projectIds = args.projectId ? visibleIds.filter((id) => id === args.projectId) : visibleIds
-    if (projectIds.length === 0) return []
+    if (projectIds.length === 0) return { items: [], nextCursor: null }
     const database = requireDb()
+    const limit = clampListLimit(args.limit, INBOX_DEFAULT_LIMIT, INBOX_MAX_LIMIT)
     const filters = [eq(approvals.workspaceId, args.workspaceId), inArray(approvals.projectId, projectIds)]
   const scope = isInboxScope(args.scope) ? args.scope : 'all'
   if (scope === 'open') {
@@ -88,6 +95,8 @@ export async function listInboxItems(args: {
     const search = or(ilike(approvals.actionName, term), ilike(projects.name, term))
     if (search) filters.push(search)
   }
+  const cursorWhere = args.cursor ? olderThanListCursor(approvals.createdAt, approvals.id, args.cursor) : undefined
+  if (cursorWhere) filters.push(cursorWhere)
   const rows = await database
     .select({
       id: approvals.id,
@@ -109,9 +118,10 @@ export async function listInboxItems(args: {
     .from(approvals)
     .innerJoin(projects, eq(approvals.projectId, projects.id))
     .where(and(...filters))
-    .orderBy(desc(approvals.createdAt))
-    .limit(100)
-  return rows.map(toInboxListItem)
+    .orderBy(desc(approvals.createdAt), desc(approvals.id))
+    .limit(limit + 1)
+  const { page, nextCursor } = takeListPage(rows, limit)
+  return { items: page.map(toInboxListItem), nextCursor }
   })
 }
 

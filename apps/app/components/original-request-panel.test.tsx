@@ -112,6 +112,30 @@ describe('OriginalRequestPanel', () => {
     assert.equal(downloaded.includes(HANDLE), false)
   })
 
+  it('redacts a secret-like canary when canonicalPayload is invalid JSON (fallback bypass must go red)', async () => {
+    const canary = ['raw', 'json', 'fallback', 'canary', 'value'].join('-')
+    const invalid = `{"apiKey":"${canary}","tokenCount":9,"amount":1`
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          requestId: 'apr_1',
+          canonicalPayload: invalid,
+          payloadSha256: 'deadbeef',
+          argsSha256: 'cafebabe',
+          payloadHash: PAYLOAD_HASH,
+          argsHash: ARGS_HASH,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )) as typeof fetch
+    await openPanel()
+    const shown = screen.getByTestId('original-request-json').textContent ?? ''
+    assert.equal(shown.includes(canary), false, 'invalid-JSON fallback must redact the canary')
+    assert.ok(shown.includes(REDACTED))
+    assert.ok(shown.includes('tokenCount'))
+    assert.ok(shown.includes('9'))
+  })
+
   it('never shows editedArgs as the original request', async () => {
     await openPanel()
     const shown = JSON.parse(screen.getByTestId('original-request-json').textContent ?? '') as {

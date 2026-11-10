@@ -105,7 +105,7 @@ The JSON response includes `resumeResponse`: the payload sent to the origin (`re
 
 `GET /api/v1/inbox` (session cookie or `Authorization: Bearer <session token>`)
 
-Query: `scope=all|open|closed`, `q`, `projectId`. `open` is pending + failed resume. `closed` is decided + expired + cancelled.
+Query: `scope=all|open|closed`, `q`, `projectId`, `limit` (1–200, default 100), `cursor` (opaque; pass the previous page's `nextCursor`). `open` is pending + failed resume. `closed` is decided + expired + cancelled. Newest first (`created_at DESC, id DESC`). A page that has more rows returns `nextCursor`; the last page returns `nextCursor: null`. Invalid `cursor` is `400`.
 
 `GET /api/v1/inbox/summary` returns `{ pending, failedResume, decidedToday, projectCount }`.
 
@@ -129,9 +129,9 @@ Any key on the request's project can read it; keys on other projects get 404.
 
 ## Pending requests
 
-`GET /api/v1/approvals` with a project API key lists the open requests **that key created**: `pending` (not past its deadline) and `failed_resume`, newest first.
+`GET /api/v1/approvals` with a project API key lists the open requests **that key created**: `pending` (not past its deadline) and `failed_resume`, newest first (`created_at DESC, id DESC`).
 
-Query: `projectId` (optional; must be the key's project), `status=open` (the default and only value), `limit` (1–200, default 50).
+Query: `projectId` (optional; must be the key's project), `status=open` (the default and only value), `limit` (1–200, default 50), `cursor` (opaque; pass the previous page's `nextCursor`). Invalid `cursor` is `400`. `limit` is clamped to 200.
 
 ```json
 {
@@ -139,7 +139,8 @@ Query: `projectId` (optional; must be the key's project), `status=open` (the def
   "status": "open",
   "items": [
     { "id": "apr_...", "kind": "approval", "status": "pending", "actionName": "send-refund", "idempotencyKey": "run_...:refund", "createdAt": "…", "deadline": "…", "presentedAt": null }
-  ]
+  ],
+  "nextCursor": null
 }
 ```
 

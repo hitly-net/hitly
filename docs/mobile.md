@@ -179,7 +179,9 @@ Hosted URL validation: GET this path; require `ok === true` and `product === "hi
 
 ### Inbox list
 
-`GET /api/v1/inbox?scope=open&q=refund&projectId=prj_…`
+`GET /api/v1/inbox?scope=open&q=refund&projectId=prj_…&limit=50`
+
+Query: `scope`, `q`, `projectId`, `limit` (1–200, default 100), `cursor` (opaque; pass `nextCursor` from the previous page). Invalid `cursor` is `400`. Order is `created_at DESC, id DESC`.
 
 ```json
 {

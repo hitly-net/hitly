@@ -212,11 +212,83 @@ export function redactedRequestJson(value: unknown): string {
   return JSON.stringify(redactRequestPayload(value), null, 2)
 }
 
+/**
+ * Walk raw (possibly invalid) JSON text and replace values of secret-like keys
+ * using the same `isSecretRequestKey` matcher as the parsed view. Truncated
+ * strings/objects still have their canary values replaced.
+ */
+export function redactRawJsonText(raw: string): string {
+  const keyRe = /"((?:\\.|[^"\\])*)"\s*:/g
+  let out = ''
+  let last = 0
+  let match: RegExpExecArray | null
+  while ((match = keyRe.exec(raw))) {
+    let key: string
+    try {
+      key = JSON.parse(`"${match[1]}"`) as string
+    } catch {
+      continue
+    }
+    if (!isSecretRequestKey(key)) continue
+    const valueStart = match.index + match[0].length
+    const valueEnd = skipJsonValue(raw, valueStart)
+    out += raw.slice(last, valueStart) + JSON.stringify(REDACTED)
+    last = valueEnd
+    keyRe.lastIndex = valueEnd
+  }
+  return out + raw.slice(last)
+}
+
+function skipWs(raw: string, i: number): number {
+  while (i < raw.length && (raw[i] === ' ' || raw[i] === '\t' || raw[i] === '\n' || raw[i] === '\r')) i++
+  return i
+}
+
+function skipJsonString(raw: string, start: number): number {
+  let i = start + 1
+  while (i < raw.length) {
+    const c = raw[i]
+    if (c === '\\') {
+      i += 2
+      continue
+    }
+    if (c === '"') return i + 1
+    i++
+  }
+  return raw.length
+}
+
+function skipJsonValue(raw: string, start: number): number {
+  let i = skipWs(raw, start)
+  if (i >= raw.length) return i
+  const c = raw[i]
+  if (c === '"') return skipJsonString(raw, i)
+  if (c === '{' || c === '[') {
+    const open = c
+    const close = c === '{' ? '}' : ']'
+    i += 1
+    let depth = 1
+    while (i < raw.length && depth > 0) {
+      const ch = raw[i]!
+      if (ch === '"') {
+        i = skipJsonString(raw, i)
+        continue
+      }
+      if (ch === open) depth += 1
+      else if (ch === close) depth -= 1
+      i += 1
+    }
+    return i
+  }
+  while (i < raw.length && !/[,\s}\]]/.test(raw[i]!)) i += 1
+  return i
+}
+
 /** Pretty-print + redact a canonical JSON string from the original-request read. */
 export function redactedRequestJsonFromCanonical(canonicalPayload: string): string {
   try {
     return redactedRequestJson(JSON.parse(canonicalPayload) as unknown)
   } catch {
-    return canonicalPayload
+    return redactRawJsonText(canonicalPayload)
   }
 }
