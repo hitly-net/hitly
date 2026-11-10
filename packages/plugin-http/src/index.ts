@@ -131,9 +131,14 @@ export type HttpDecisionPayload = DecisionPayload & {
 }
 
 /**
- * http plugin: caller supplies resumeUrl.
- * Resume POSTs decision JSON (+ optional Bearer / HMAC / lifecycle). Default remains a
- * single final-decision POST so n8n Wait ($execution.resumeUrl) keeps working.
+ * http plugin: caller supplies resumeUrl — or none at all.
+ * With a resumeUrl, resume POSTs decision JSON (+ optional Bearer / HMAC /
+ * lifecycle). Default remains a single final-decision POST so n8n Wait
+ * ($execution.resumeUrl) keeps working.
+ *
+ * Without a resumeUrl (created without callback_url) HITLy attempts NO
+ * callback: ingest stores no resumeUrl and resume() is skipped entirely —
+ * zero outbound calls, the decision stays decided/answered, never failed_resume.
  *
  * Optional ingest fields (M0h):
  * - cb_auth_token / cbAuthToken: stored on resumeHandle (tenant-encrypted with origin),
@@ -147,8 +152,9 @@ export const httpPlugin: HitlyPlugin = {
   id: 'http',
   ingest(raw: unknown): ApprovalEnvelope & { origin: OriginRef } {
     const body = (raw ?? {}) as Record<string, unknown>
-    const resumeUrl = String(body.resumeUrl ?? '')
-    if (!resumeUrl) throw new Error('HTTP ingest requires resumeUrl')
+    // Optional: created without callback_url => no resumeUrl is stored and
+    // resume() later skips delivery entirely (no callback is ever attempted).
+    const resumeUrl = optionalString(body.resumeUrl)
     const executionId = optionalString(body.executionId)
     const runId = optionalString(body.runId) ?? executionId ?? ''
     if (!runId) throw new Error('HTTP ingest requires runId or executionId')
@@ -175,7 +181,8 @@ export const httpPlugin: HitlyPlugin = {
     const cbAuthToken = optionalString(body.cb_auth_token) ?? optionalString(body.cbAuthToken)
     const lifecycleEvents = parseLifecycleEvents(body.lifecycleEvents ?? body.lifecycle_events)
 
-    const resumeHandle: Record<string, unknown> = { resumeUrl, metadata }
+    const resumeHandle: Record<string, unknown> = { metadata }
+    if (resumeUrl) resumeHandle.resumeUrl = resumeUrl
     if (cbAuthToken) resumeHandle[CB_AUTH_TOKEN_KEY] = cbAuthToken
     if (lifecycleEvents.length > 0) resumeHandle.lifecycleEvents = lifecycleEvents
     const idempotencyKey = optionalString(body.idempotencyKey) ?? optionalString(body.idempotency_key)
@@ -214,9 +221,16 @@ export const httpPlugin: HitlyPlugin = {
     origin: OriginRef,
     payload: DecisionPayload,
     credentials?: ConnectionCredentials,
-  ): Promise<ResumeResponse> {
-    const resumeUrl = String(origin.resumeHandle.resumeUrl ?? '')
+  ): Promise<ResumeResponse | void> {
     const handle = origin.resumeHandle
+    const resumeUrl = String(handle.resumeUrl ?? '')
+    if (!resumeUrl) {
+      // Created without callback_url: no resumeUrl was stored, so HITLy
+      // attempts NO callback. Skip resume() entirely - no POST, no auth,
+      // no HMAC. Returning void means no resume error: the decision stays
+      // decided/answered, never failed_resume.
+      return undefined
+    }
     const approvalId = optionalString(handle.approvalId)
     // Logical key mirrors buildDecidedBody's type derivation: an ask_user answer
     // and the final decision are distinct logical deliveries of one approval.
