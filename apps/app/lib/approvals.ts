@@ -1567,7 +1567,9 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
       // text; without this field the typed answer the human entered would be
       // invisible to the requester's get_decision. Carried on the response
       // only - the stored request and decision payload are never mutated.
-      ...(payload.answer !== undefined ? { answer: payload.answer } : {}),
+      // Absent means OMITTED, never null: a stored literal null (legacy rows)
+      // is treated as no answer, matching MCP toResponseV0's null drop.
+      ...(payload.answer !== undefined && payload.answer !== null ? { answer: payload.answer } : {}),
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
       ...read,

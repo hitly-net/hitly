@@ -11,7 +11,12 @@ import { argsHash as computeArgsHash, contextItems, jcsHash, type ApprovalEnvelo
  *                       (`_meta["net.hitly/editedArgs"]`, full merged args).
  *                       The stored request and `argsHash` stay the original.
  * - reject           -> answered, value "reject"
- * - respond          -> answered, value = the reviewer's reply text
+ * - respond          -> answered; when the host holds a typed ask_user answer
+ *                       that answer is the ONLY carrier (top-level `answer`,
+ *                       hitl-spec 4.2 PM ruling) and `value` is OMITTED;
+ *                       without a typed answer, `value` = the reviewer's reply
+ *                       text, and a respond with no reply text OMITS `value`
+ *                       (never `value: ""`), matching MCP get_decision
  * - ignore           -> declined (no value)
  * - cancel           -> cancelled (`_meta["net.hitly/cancelledBy"]` says whether
  *                       the requester or a reviewer withdrew it)
@@ -39,6 +44,22 @@ export type HitlResponseV0 = {
   argsHash: string
   signature: null
   activity: HitlActivity
+  /**
+   * The reviewer's typed ask_user answer (hitl-spec 7), verbatim from the
+   * stored decision payload, at the SAME place and shape MCP get_decision
+   * returns it (top level of the hitl/response/v0 view). Present exactly when
+   * the host holds a typed answer; when none, this key is simply ABSENT -
+   * never `answer: null` (a stored literal null is treated as absent).
+   */
+  answer?: unknown
+  /**
+   * Extension namespace (hitl-spec section 12).
+   *
+   * @deprecated key `net.hitly/answer` is a deprecated HITLy vendor alias kept
+   * for backward compatibility. It carries exactly the same value as top-level
+   * `answer` and is omitted whenever `answer` is. Top-level `answer` is the
+   * authoritative field; hosts and clients SHOULD NOT rely on the alias.
+   */
   _meta?: Record<string, unknown>
 }
 
@@ -106,19 +127,37 @@ export async function buildHitlRead(input: HitlReadInput) {
     const decidedBy: HitlDecidedBy | undefined = decision.actorUserId ? { kind: 'human', id: decision.actorUserId } : undefined
     const decidedAt = decision.createdAt.toISOString()
     const meta: Record<string, unknown> = { 'net.hitly/decision': decision.decision }
-    // Typed ask_user answer (hitl-spec 7): carried verbatim into the hitl view
-    // under the section-12 extension namespace. Never invented, never dropped
-    // when present, and the stored request/payload are untouched.
-    if (payload.answer !== undefined) meta['net.hitly/answer'] = payload.answer
+    // Typed ask_user answer (hitl-spec 7): a first-class top-level `answer` on
+    // the hitl/response/v0 view - the same place and shape MCP get_decision
+    // returns it. Never invented; when absent the key is OMITTED, never
+    // `answer: null` (a stored literal null is treated as absent). The stored
+    // request and decision payload are never mutated.
+    const answer: unknown = payload.answer !== undefined && payload.answer !== null ? payload.answer : undefined
+    if (answer !== undefined) {
+      // @deprecated HITLy vendor alias (section-12 extension namespace) kept
+      // for backward compatibility only: it carries exactly the same value as
+      // top-level `answer` and is omitted whenever `answer` is omitted.
+      // Top-level `answer` is authoritative; hosts and clients SHOULD NOT
+      // rely on this key.
+      meta['net.hitly/answer'] = answer
+    }
     switch (decision.decision) {
       case 'accept':
       case 'reject':
       case 'edit':
       case 'respond': {
-        let value: string
-        if (decision.decision === 'reject') value = 'reject'
-        else if (decision.decision === 'respond') value = typeof payload.response === 'string' ? payload.response : ''
-        else value = 'approve'
+        // PM ruling on hitl-spec 4.2 (Test M1): when the host holds a typed
+        // answer, top-level `answer` is the ONLY carrier of the answer and
+        // `value` MUST NOT be present alongside it - on REST and MCP alike.
+        // Without a typed answer, respond with no reply text OMITS `value`
+        // (never `value: ""`), matching MCP toResponseV0, which maps respond
+        // value only from a string `response` and leaves the key out otherwise.
+        let value: string | undefined
+        if (answer === undefined) {
+          if (decision.decision === 'reject') value = 'reject'
+          else if (decision.decision === 'respond') value = typeof payload.response === 'string' ? payload.response : undefined
+          else value = 'approve'
+        }
         if (decision.decision === 'edit' && payload.editedArgs && typeof payload.editedArgs === 'object') {
           const raw = payload.editedArgs as Record<string, unknown>
           editedArgs = input.mergeEdits?.(raw) ?? { ...originalArgs, ...raw }
@@ -128,7 +167,7 @@ export async function buildHitlRead(input: HitlReadInput) {
         hitl = {
           ...base,
           status: 'answered',
-          value,
+          ...(value !== undefined ? { value } : {}),
           ...(reason ? { reason } : {}),
           ...(decidedBy ? { decidedBy } : {}),
           decidedAt,
@@ -155,6 +194,11 @@ export async function buildHitlRead(input: HitlReadInput) {
         }
         break
     }
+    // First-class top-level `answer` on the hitl/response/v0 view, at the same
+    // place and shape MCP get_decision returns it (see toResponseV0). Omitted
+    // when there is no typed answer - never `answer: null`. The deprecated
+    // _meta["net.hitly/answer"] alias above always mirrors this value exactly.
+    if (hitl && answer !== undefined) hitl.answer = answer
     // spec 4.2: answered and declined need decidedBy; a decision whose reviewer
     // account was deleted (actor set null) is reported as a service decision.
     if (hitl && (hitl.status === 'answered' || hitl.status === 'declined') && !hitl.decidedBy) {
