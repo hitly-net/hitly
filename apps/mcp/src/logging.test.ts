@@ -21,6 +21,7 @@ const SENTINELS = {
   reason: 'SENTINEL_REASON',
   response: 'SENTINEL_RESPONSE',
   edited: 'SENTINEL_EDITED',
+  answer: 'SENTINEL_ANSWER_VALUE',
 }
 
 test('logs carry only ids, status, latency and client id - never payload, key or token', async () => {
@@ -62,7 +63,7 @@ test('logs carry only ids, status, latency and client id - never payload, key or
         callback_url: SENTINELS.callback,
       },
     })
-    host.decide(id, { status: 'decided', decision: 'edit', response: SENTINELS.response, reason: SENTINELS.reason, editedArgs: { to: SENTINELS.edited } })
+    host.decide(id, { status: 'decided', decision: 'edit', response: SENTINELS.response, reason: SENTINELS.reason, editedArgs: { to: SENTINELS.edited }, answer: { kind: 'free_text', value: SENTINELS.answer } })
     await client.callTool({ name: 'get_decision', arguments: { requestId: id } })
     await client.callTool({ name: 'list_pending', arguments: {} })
     await client.callTool({ name: 'cancel', arguments: { requestId: id, reason: SENTINELS.reason } })

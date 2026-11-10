@@ -368,6 +368,42 @@ test('toResponseV0 omits empty editedArgs and flags failed callback delivery', (
   assert.deepEqual(toResponseV0({ id: 'apr_1', status: 'decided', decision: 'edit', editedArgs: { a: 1 } }).editedArgs, { a: 1 })
 })
 
+test('get_decision returns the typed ask_user answer exactly as the host stored it [ask_user]', async () => {
+  const h = await startHarness({ host: new FakeHost('m0') })
+  try {
+    const client = await h.client()
+    const created = structured(
+      await client.callTool({
+        name: 'ask_user',
+        arguments: {
+          idempotencyKey: 'bot-ask-answer-0001',
+          prompt: 'Which hall?',
+          answerSchema: { type: 'single_choice', options: ['Hall A', 'Hall B'] },
+          callback_url: baseApproval.callback_url,
+        },
+      }),
+    )
+    const id = created.requestId as string
+    const stored = { kind: 'single_choice', value: 'Hall B', note: { confidence: 0.9 } }
+    h.host.decide(id, { status: 'decided', decision: 'respond', answer: stored })
+    const got = structured(await client.callTool({ name: 'get_decision', arguments: { requestId: id } }))
+    assert.equal(got.status, 'answered')
+    assert.deepEqual(got.answer, stored, 'the answer must come back verbatim, extra keys included')
+    // The reviewer's typed answer must never reach the tool logs.
+    assert.equal(h.logs.join('\n').includes('Hall B'), false, 'answer must not leak into logs')
+  } finally {
+    await h.close()
+  }
+})
+
+test('toResponseV0 passes the typed answer through and omits it when absent', () => {
+  const withAnswer = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'respond', answer: { kind: 'free_text', value: 'Tuesday' } })
+  assert.equal(withAnswer.status, 'answered')
+  assert.deepEqual(withAnswer.answer, { kind: 'free_text', value: 'Tuesday' })
+  const withoutAnswer = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'accept' })
+  assert.equal('answer' in withoutAnswer, false, 'no answer, no field')
+})
+
 test('list_pending reports not_supported_by_host on today\u2019s host', async () => {
   const h = await startHarness()
   try {

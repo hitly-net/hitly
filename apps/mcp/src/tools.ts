@@ -396,7 +396,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Get decision',
       description:
-        'Non-blocking read of a request as hitl/response/v0 (status pending | answered | declined | cancelled | expired). If editedArgs is present the human amended the action: use editedArgs, not the original args. Poll politely (30-60s, backing off).',
+        'Non-blocking read of a request as hitl/response/v0 (status pending | answered | declined | cancelled | expired). If editedArgs is present the human amended the action: use editedArgs, not the original args. If answer is present it is the reviewer\'s typed ask_user answer exactly as the host stored it ({kind, value}): use it verbatim. Poll politely (30-60s, backing off).',
       inputSchema: { requestId: z.string().min(1).max(64) },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
