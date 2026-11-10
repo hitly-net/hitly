@@ -24,7 +24,9 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   // Verification identifiers such as reset-password:<token>.
   [/\b([a-z][a-z0-9-]*):([A-Za-z0-9_-]{8,})/g, '$1:[redacted]'],
   // Tokens in URLs or query strings.
-  [/\b(token|code|state)=([^&\s"']+)/gi, '$1=[redacted]'],
+  [/\b(token|code|state|secret)=([^&\s"']+)/gi, '$1=[redacted]'],
+  // Authenticator-app otpauth URIs carry the TOTP secret.
+  [/otpauth:\/\/[^\s"']+/gi, 'otpauth://[redacted]'],
 ]
 
 export function redactSecrets(text: string): string {

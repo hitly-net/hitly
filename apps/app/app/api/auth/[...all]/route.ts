@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth'
 import { withNativeAuthOrigin } from '@/lib/cors'
+import { holdPasswordSignInIfMfa } from '@/lib/mfa-sign-in'
 import { toNextJsHandler } from 'better-auth/next-js'
 import { NextResponse } from 'next/server'
 
@@ -38,5 +39,6 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const next = handlers()
   if (!next) return NextResponse.json({ error: 'Database not configured' }, { status: 503 })
-  return handleAuthRequest(request, next.POST)
+  const response = await handleAuthRequest(request, next.POST)
+  return holdPasswordSignInIfMfa(request, response)
 }
