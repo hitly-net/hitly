@@ -94,11 +94,12 @@ export function createHitlyClient(options: ClientOptions) {
       })
       return data
     },
-    inbox(query?: { scope?: string; q?: string; projectId?: string }) {
+    inbox(query?: { scope?: string; q?: string; projectId?: string; cursor?: string }) {
       const params = new URLSearchParams()
       if (query?.scope) params.set('scope', query.scope)
       if (query?.q) params.set('q', query.q)
       if (query?.projectId) params.set('projectId', query.projectId)
+      if (query?.cursor) params.set('cursor', query.cursor)
       const suffix = params.toString() ? `?${params}` : ''
       return request<{ items: WorkItemRow[]; nextCursor: string | null }>(`/api/v1/inbox${suffix}`)
     },

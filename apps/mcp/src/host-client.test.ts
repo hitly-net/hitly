@@ -42,6 +42,13 @@ test('reads, list and cancel hit the plural REST paths', async () => {
   assert.equal(calls[2].init.body, JSON.stringify({ reason: 'stop' }))
 })
 
+test('listPending forwards optional cursor on later pages', async () => {
+  const calls: Call[] = []
+  const client = new HttpHostClient('https://hitly.example', TEST_KEY, fakeFetch(200, { items: [], nextCursor: 'page-2' }, calls))
+  await client.listPending('prj_1', 'opaque-cursor')
+  assert.match(calls[0].url, /cursor=opaque-cursor/, 'listPending must pass cursor through to the host')
+})
+
 test('host errors map to codes; network failure is unreachable', async () => {
   const cases: [number, string][] = [
     [401, 'unauthorized'],

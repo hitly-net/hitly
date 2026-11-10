@@ -4,7 +4,7 @@ import { AppShell } from '@/components/app-shell'
 import { ProjectTabs } from '@/components/project-tabs'
 import { WorkItemFilters } from '@/components/work-item-filters'
 import { WorkItemList } from '@/components/work-item-list'
-import { listInboxItems } from '@/lib/inbox'
+import { listInboxItemsForWeb } from '@/lib/inbox'
 import { parseListFilters, projectItemsFilterStorageKey } from '@/lib/list-filters'
 import { requireVisibleProject } from '@/lib/project-page'
 
@@ -21,7 +21,7 @@ export default async function ProjectItemsPage({
   const query = await searchParams
   const { scope, q } = parseListFilters(query)
   const { project, workspace, user, role } = await requireVisibleProject(id)
-  const { items } = await listInboxItems({
+  const { items, hasMore } = await listInboxItemsForWeb({
     workspaceId: workspace.id,
     userId: user.id,
     workspaceRole: role,
@@ -46,6 +46,7 @@ export default async function ProjectItemsPage({
       </Suspense>
       <WorkItemList
         items={items}
+        hasMore={hasMore}
         hrefFor={(item) => `/projects/${id}/item/${item.id}`}
         empty={
           <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500">

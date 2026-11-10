@@ -4,7 +4,7 @@ import { AppShell } from '@/components/app-shell'
 import { WorkItemFilters } from '@/components/work-item-filters'
 import { WorkItemList } from '@/components/work-item-list'
 import { getAppContext } from '@/lib/context'
-import { listInboxItems } from '@/lib/inbox'
+import { listInboxItemsForWeb } from '@/lib/inbox'
 import { inboxFilterStorageKey, parseListFilters } from '@/lib/list-filters'
 
 export const metadata = { title: 'Inbox' }
@@ -17,7 +17,7 @@ export default async function InboxPage({
   const query = await searchParams
   const { scope, q, projectId } = parseListFilters(query)
   const { workspace, user, role } = await getAppContext()
-  const { items } = await listInboxItems({
+  const { items, hasMore } = await listInboxItemsForWeb({
     workspaceId: workspace.id,
     userId: user.id,
     workspaceRole: role,
@@ -46,6 +46,7 @@ export default async function InboxPage({
       </Suspense>
       <WorkItemList
         items={items}
+        hasMore={hasMore}
         showProjectName
         hrefFor={(item) => `/inbox/${item.id}`}
         empty={

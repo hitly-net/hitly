@@ -415,13 +415,17 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     'list_pending',
     {
       title: 'List pending requests',
-      description: 'List open requests created with this credential (id, kind, question or prompt, createdAt, deadline).',
-      inputSchema: { projectId: z.string().min(1).max(64).optional() },
+      description:
+        'List open requests created with this credential (id, kind, question or prompt, createdAt, deadline). Optional cursor pages through the host list; the result includes nextCursor when more items remain.',
+      inputSchema: {
+        projectId: z.string().min(1).max(64).optional(),
+        cursor: z.string().min(1).max(512).optional().describe('Opaque nextCursor from a previous list_pending page.'),
+      },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (input) =>
       timed(ctx, 'list_pending', async () => {
-        const listed = await ctx.host.listPending(input.projectId)
+        const listed = await ctx.host.listPending(input.projectId, input.cursor)
         if (!listed.ok) {
           if (listed.code === 'not_supported_by_host') {
             return { result: fail('not_supported_by_host', 'This HITLy host has no key-scoped pending list yet'), status: listed.code }
@@ -429,7 +433,12 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
           return { result: hostFail(listed), status: listed.code }
         }
         const items = normaliseList(listed.data)
-        return { status: 'ok', result: ok({ items }) }
+        const rawCursor =
+          listed.data && typeof listed.data === 'object' && !Array.isArray(listed.data)
+            ? (listed.data as { nextCursor?: unknown }).nextCursor
+            : undefined
+        const nextCursor = typeof rawCursor === 'string' && rawCursor ? rawCursor : null
+        return { status: 'ok', result: ok({ items, nextCursor }) }
       }),
   )
 
