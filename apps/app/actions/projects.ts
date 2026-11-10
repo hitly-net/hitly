@@ -13,6 +13,7 @@ import {
   users,
 } from '@hitly/db/schema'
 import { getAppContext, withAppTenant } from '@/lib/context'
+import { parseAnswerField } from '@/lib/answer-form-helpers'
 import { generateApiKey } from '@/lib/keys'
 import { newId } from '@/lib/ids'
 import { insertNewProject } from '@/lib/project-create'
@@ -399,6 +400,11 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     if (!canDecide(access)) throw new Error('You cannot decide this work item')
     const decision = String(formData.get('decision') ?? '')
     const response = String(formData.get('response') ?? '').trim()
+    // Typed ask_user answer (JSON written by the widget): refused on malformed
+    // JSON rather than dropped (spec 7); the host re-validates against the
+    // stored schema in decideApproval.
+    const parsedAnswer = parseAnswerField(formData.get('answer') as string | null)
+    if (!parsedAnswer.ok) throw new Error(parsedAnswer.error)
     // Trim only for the emptiness check: the reviewer's typed reason is stored and
     // forwarded verbatim so the audit trail shows exactly what was typed.
     const reason = String(formData.get('reason') ?? '')
@@ -417,6 +423,7 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
       editedArgs,
       editReason: editReason || undefined,
       editReasonText: editReasonText || undefined,
+      ...(parsedAnswer.answer !== undefined ? { answer: parsedAnswer.answer } : {}),
     })
     if (!payload) throw new Error('Invalid decision')
     // Evidence `client`: the web server action is, by definition, a cookie session.

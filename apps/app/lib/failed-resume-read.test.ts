@@ -140,7 +140,12 @@ test('failed_resume after a human reject reads the recorded reject outcome, not 
 })
 
 test('failed_resume after a typed ask_user answer reads answered with the answer verbatim (real host, PG)', async () => {
-  const typed = { kind: 'single_choice', value: 'Hall B', note: { confidence: 0.9 } }
+  // Merge adaptation (#132 into #134): the host now re-validates the answer at
+  // decide against the STORED schema (hitl-spec 7) - the alias `single_choice`
+  // is mapped at ingest and stored as `single`, the answer kind must be that
+  // stored type, and a stored-schema respond carries answer only, never a
+  // redundant `response` (this test already asserted it never surfaced as value).
+  const typed = { kind: 'single', value: 'Hall B', note: { confidence: 0.9 } }
   receiver.setMode('fail')
   const { id } = await ingestHttpAsk(fixture, receiver.url, {
     actionName: 'ask_user',
@@ -150,7 +155,7 @@ test('failed_resume after a typed ask_user answer reads answered with the answer
     answerSchema: { type: 'single_choice', options: ['Hall A', 'Hall B'] },
     allowedActions: { accept: false, reject: false, respond: true, ignore: true },
   })
-  const decided = await decide(id, { decision: 'respond', response: 'Hall B', answer: typed })
+  const decided = await decide(id, { decision: 'respond', answer: typed })
   assert.equal(decided.status, 'failed_resume', 'a dead receiver must land the ask in failed_resume')
 
   const rest = await readViaRest(id)

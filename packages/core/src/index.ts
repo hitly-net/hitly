@@ -1,3 +1,5 @@
+import type { AnswerSchema } from './answer-schema.ts'
+
 export const PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes', 'openshell'] as const
 
 export type PluginId = (typeof PLUGIN_IDS)[number]
@@ -134,6 +136,15 @@ export interface ApprovalEnvelope {
   editableFields?: Record<string, EditableFieldSpec>
   /** Edit reason capture (dropdown and/or text). Not merged into action.args. */
   editReason?: EditReasonConfig
+  /**
+   * Typed answer schema for ask_user (hitl-spec 3.3/3.4). Persisted at ingest;
+   * the reviewer client renders the matching widget and the host re-validates
+   * the submitted `answer` against THIS stored schema (spec 7). Absent means a
+   * legacy ask: the inbox falls back to the single free-text "Response" box.
+   */
+  answerSchema?: AnswerSchema
+  /** Headline question of an ask_user request (hitl-spec 3.3). */
+  prompt?: string
   /** Evidence fields for audit trail (optional at ingest) */
   traceId?: string
   spanId?: string
@@ -349,3 +360,4 @@ export type {
 export * from "./address-classify.ts"
 export * from "./answer-gates.ts"
 export * from "./typed-answer.ts"
+export * from "./answer-schema.ts"

@@ -223,6 +223,7 @@ function WorkItemDetailView({ page, errorMessage }: { page: WorkItemPageDto; err
           originalArgs={flight.originalArgs}
           editReasonConfig={flight.editReasonConfig}
           respondAllowed={flight.respondAllowed}
+          answerSchema={flight.answerSchema}
           reasonRequired={flight.reasonRequired}
           gateItems={flight.gateItems}
           returnTo={flight.returnTo}

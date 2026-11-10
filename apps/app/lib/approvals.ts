@@ -8,6 +8,7 @@ import {
   OPEN_APPROVAL_STATUSES,
   originResumeError,
   validateAnswerSubmission,
+  validateDecisionAnswer,
   validateRequestGating,
   validateTypedAnswer,
   type ApprovalEnvelope,
@@ -735,6 +736,21 @@ export async function decideApproval(args: {
         error: gatingErrors.map((error) => `${error.field}: ${error.message}`).join('; '),
         status: 400 as const,
         fields: gatingErrors,
+      }
+    }
+
+    // Typed answer re-validation (hitl-spec 3.4/7): when the request stored an
+    // answerSchema, the respond decision must carry `answer: {kind, value}`
+    // whose kind equals the STORED type and whose value satisfies the stored
+    // options/bounds. A bare `response` is refused as a substitute; the host
+    // never trims or coerces the value. No stored schema keeps the legacy
+    // free-text respond path (in-flight asks from before persistence landed).
+    const answerErrors = validateDecisionAnswer(envelope, args.payload)
+    if (answerErrors.length > 0) {
+      return {
+        error: answerErrors.map((error) => `${error.field}: ${error.message}`).join('; '),
+        status: 400 as const,
+        fields: answerErrors,
       }
     }
 

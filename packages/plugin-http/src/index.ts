@@ -1,5 +1,6 @@
 import {
   allowedActionsFor,
+  type AnswerSchema,
   type ApprovalAttachment,
   type ApprovalEnvelope,
   type ConnectionCredentials,
@@ -8,6 +9,7 @@ import {
   type HitlyPlugin,
   type OriginRef,
   type ResumeResponse,
+  parseAnswerSchema,
 } from '@hitly/core'
 import { deliverHttpCallback, resolveSigningKey } from './deliver.ts'
 import {
@@ -178,6 +180,23 @@ export const httpPlugin: HitlyPlugin = {
       body.editReason && typeof body.editReason === 'object' ? (body.editReason as Record<string, unknown>) : undefined
     const reasonRequired = reasonRequiredList(body.reasonRequired)
 
+    // ask_user persistence (hitl-spec 3.3/3.4): the headline and the typed
+    // answer schema survive ingest onto the envelope. A malformed schema is
+    // refused, never silently dropped (spec 7). Absent stays absent: legacy
+    // in-flight asks keep the free-text "Response" fallback in the inbox.
+    const prompt = optionalString(body.prompt)
+    const parsedAnswerSchema = parseAnswerSchema(body.answerSchema)
+    if (!parsedAnswerSchema.ok) throw new Error(parsedAnswerSchema.error)
+    const answerSchema: AnswerSchema | undefined = parsedAnswerSchema.schema
+    // binary is the request_approval approve/reject shape, never an ask_user
+    // answer type: MCP ask_user refuses it the same way, so HTTP ingest must
+    // not smuggle it past the widget rules. Refused here, nothing is created.
+    if (body.actionName === 'ask_user' && answerSchema?.type === 'binary') {
+      throw new Error(
+        'answerSchema.type must be one of: text, single, multi, number (legacy aliases free_text, single_choice, multi_choice are accepted)',
+      )
+    }
+
     const cbAuthToken = optionalString(body.cb_auth_token) ?? optionalString(body.cbAuthToken)
     const lifecycleEvents = parseLifecycleEvents(body.lifecycleEvents ?? body.lifecycle_events)
 
@@ -198,6 +217,8 @@ export const httpPlugin: HitlyPlugin = {
       externalUrls: externalLinkList(body.externalUrls),
       attachments: attachmentList(body.attachments),
       ...(reasonRequired ? { reasonRequired } : {}),
+      ...(prompt ? { prompt } : {}),
+      ...(answerSchema ? { answerSchema } : {}),
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       editableFields: editableFields as any,
       editReason: editReason as any,

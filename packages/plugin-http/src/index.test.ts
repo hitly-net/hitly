@@ -100,6 +100,84 @@ describe('@hitly/plugin-http M0h', () => {
       assert.deepEqual(env.origin.resumeHandle.lifecycleEvents, ['presented', 'expired'])
       assert.deepEqual(parseLifecycleEvents(['OPENED', 'cancelled']), ['opened', 'cancelled'])
     })
+
+    it('persists prompt + answerSchema (spec type, options, bounds) on the envelope', () => {
+      const env = httpPlugin.ingest({
+        resumeUrl: 'https://hooks.example/resume',
+        runId: 'exec_ask',
+        kind: 'question',
+        actionName: 'ask_user',
+        prompt: 'Which venue?',
+        answerSchema: { type: 'single_choice', options: ['Hall A', 'Hall B'] },
+      })
+      assert.equal(env.prompt, 'Which venue?')
+      assert.deepEqual(env.answerSchema, {
+        type: 'single',
+        options: [
+          { value: 'Hall A', label: 'Hall A' },
+          { value: 'Hall B', label: 'Hall B' },
+        ],
+      })
+      const numeric = httpPlugin.ingest({
+        resumeUrl: 'https://hooks.example/resume',
+        runId: 'exec_ask_number',
+        prompt: 'How many?',
+        answerSchema: { type: 'number', bounds: { min: 1, max: 10, step: 2, unit: 'days' } },
+      })
+      assert.deepEqual(numeric.answerSchema, { type: 'number', bounds: { min: 1, max: 10, step: 2, unit: 'days' } })
+    })
+
+    it('refuses malformed answerSchema at ingest (spec 7: never silently dropped)', () => {
+      assert.throws(
+        () => httpPlugin.ingest({ resumeUrl: 'https://hooks.example/resume', runId: 'r', answerSchema: { type: 'simple_form', fields: [{ name: 'a' }] } }),
+        /one request per field/,
+      )
+      assert.throws(
+        () => httpPlugin.ingest({ resumeUrl: 'https://hooks.example/resume', runId: 'r', answerSchema: { type: 'date' } }),
+        /answerSchema\.type/,
+      )
+      assert.throws(
+        () => httpPlugin.ingest({ resumeUrl: 'https://hooks.example/resume', runId: 'r', answerSchema: { type: 'single' } }),
+        /needs options/,
+      )
+    })
+
+    it('refuses binary as an ask_user answer type (binary stays request_approval-only)', () => {
+      assert.throws(
+        () =>
+          httpPlugin.ingest({
+            resumeUrl: 'https://hooks.example/resume',
+            runId: 'r_ask_binary',
+            kind: 'question',
+            actionName: 'ask_user',
+            prompt: 'Ship it?',
+            answerSchema: { type: 'binary' },
+          }),
+        /answerSchema\.type must be one of: text, single, multi, number/,
+      )
+      // MCP ask_user publishes the same refusal; HTTP must match it.
+      // request_approval (no ask_user actionName) keeps binary.
+      const approval = httpPlugin.ingest({
+        resumeUrl: 'https://hooks.example/resume',
+        runId: 'r_appr_binary',
+        actionName: 'request_approval',
+        answerSchema: { type: 'binary' },
+      })
+      assert.deepEqual(approval.answerSchema, { type: 'binary' })
+    })
+
+    it('unmapped extra keys are still dropped; absent schema/prompt stay absent', () => {
+      const env = httpPlugin.ingest({
+        resumeUrl: 'https://hooks.example/resume',
+        runId: 'exec_extra',
+        answerSchema: { type: 'text', wat: true },
+        notAField: 'gone',
+      })
+      assert.equal((env as unknown as Record<string, unknown>).notAField, undefined)
+      assert.equal((env.answerSchema as unknown as Record<string, unknown>).wat, undefined)
+      assert.equal(env.prompt, undefined)
+      assert.deepEqual(env.answerSchema, { type: 'text' })
+    })
   })
 
   describe('HMAC signature vectors', () => {
