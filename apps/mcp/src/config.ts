@@ -36,9 +36,10 @@ export interface McpConfig {
   /** Base URL used to build reviewer links (`/inbox/:id`). */
   appUrl: string
   /**
-   * Public origin of this MCP server (e.g. the URL the reverse proxy serves). When set,
-   * requests without callback_url get `${publicUrl}/callbacks/noop` as their resumeUrl,
-   * because HTTP ingest requires one. When unset, callback_url is required.
+   * Public origin of this MCP server (e.g. the URL the reverse proxy serves).
+   * Used only for the /mcp Origin allowlist (its origin is always allowed).
+   * It is never used to synthesise a resumeUrl: requests without callback_url
+   * store no resumeUrl and HITLy attempts no callback at all.
    */
   publicUrl?: string
   /** Origin of publicUrl, when set; auto-allowed on /mcp. */

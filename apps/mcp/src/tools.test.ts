@@ -120,23 +120,47 @@ test('request_approval validates the question and https-only callback and links'
   }
 })
 
-test('without callback_url: refused unless HITLY_MCP_PUBLIC_URL provides the no-op sink', async () => {
+test('without callback_url: no resumeUrl is sent and HITLy attempts no callback', async () => {
   const { callback_url: _drop, ...noCallback } = baseApproval
-  const strict = await startHarness()
+  // Even with HITLY_MCP_PUBLIC_URL set (the old no-op-sink config), no
+  // resumeUrl may be synthesised and no callback call is attempted.
+  const h = await startHarness({ env: { HITLY_MCP_PUBLIC_URL: 'https://mcp.hitly.example' } })
   try {
-    const result = await (await strict.client()).callTool({ name: 'request_approval', arguments: noCallback })
-    assert.equal(result.isError, true)
-    assert.match(JSON.stringify(structured(result)), /callback_url is required/)
-  } finally {
-    await strict.close()
-  }
-  const sink = await startHarness({ env: { HITLY_MCP_PUBLIC_URL: 'https://mcp.hitly.example' } })
-  try {
-    const result = structured(await (await sink.client()).callTool({ name: 'request_approval', arguments: noCallback }))
+    const client = await h.client()
+    const result = structured(await client.callTool({ name: 'request_approval', arguments: noCallback }))
+    assert.equal(result.state, 'pending')
     assert.equal(result.callback, false)
-    assert.equal(sink.host.ingests[0].body.resumeUrl, 'https://mcp.hitly.example/callbacks/noop')
+    assert.equal(h.host.ingests.length, 1)
+    assert.equal('resumeUrl' in h.host.ingests[0].body, false, 'no resumeUrl is sent at all')
+    assert.equal(JSON.stringify(h.host.ingests[0].body).includes('noop'), false, 'no synthesised no-op sink')
+
+    const asked = structured(
+      await client.callTool({
+        name: 'ask_user',
+        arguments: { idempotencyKey: 'bot-ask-nocb', prompt: 'Which day?', answerSchema: { type: 'free_text' } },
+      }),
+    )
+    assert.equal(asked.callback, false)
+    assert.equal('resumeUrl' in h.host.ingests[1].body, false)
+
+    // Zero outbound calls beyond the two ingests themselves.
+    assert.equal(h.host.ingests.length, 2)
+    assert.equal(h.host.reads.length, 0)
+    assert.equal(h.host.cancels.length, 0)
+    assert.equal(h.host.lists.length, 0)
   } finally {
-    await sink.close()
+    await h.close()
+  }
+  // Without HITLY_MCP_PUBLIC_URL the request is accepted too (it used to be
+  // refused): no callback_url simply means no callback.
+  const plain = await startHarness()
+  try {
+    const result = structured(await (await plain.client()).callTool({ name: 'request_approval', arguments: noCallback }))
+    assert.equal(result.state, 'pending')
+    assert.equal(result.callback, false)
+    assert.equal('resumeUrl' in plain.host.ingests[0].body, false)
+  } finally {
+    await plain.close()
   }
 })
 
@@ -491,6 +515,19 @@ test('toResponseV0 omits empty editedArgs and flags failed callback delivery', (
   assert.equal(out.editedArgs, undefined)
   assert.equal(out.callbackDelivery, 'failed')
   assert.deepEqual(toResponseV0({ id: 'apr_1', status: 'decided', decision: 'edit', editedArgs: { a: 1 } }).editedArgs, { a: 1 })
+})
+
+test('toResponseV0 reports callbackDelivery none for no-callback reads and stays silent for delivered ones', () => {
+  // Host marks decided requests created without callback_url (no resumeUrl
+  // stored, resume skipped) with callbackDelivery: 'none' - never 'failed'.
+  const none = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'accept', callbackDelivery: 'none' })
+  assert.equal(none.status, 'answered')
+  assert.equal(none.value, 'approve')
+  assert.equal(none.callbackDelivery, 'none')
+  // A decided request that had a working callback: unchanged read, no field.
+  assert.equal(toResponseV0({ id: 'apr_1', status: 'decided', decision: 'accept' }).callbackDelivery, undefined)
+  // failed_resume still reports failed even if a stale 'none' rode along.
+  assert.equal(toResponseV0({ id: 'apr_1', status: 'failed_resume', decision: 'accept', callbackDelivery: 'none' }).callbackDelivery, 'failed')
 })
 
 test('get_decision returns the typed ask_user answer exactly as the host stored it [ask_user]', async () => {
