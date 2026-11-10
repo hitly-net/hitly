@@ -66,11 +66,11 @@ JSON-RPC over Streamable HTTP at `/mcp`: `initialize` (POST `protocolVersion`, `
 
 `request_approval` and `ask_user` take optional `callback_url` (https) and `cb_auth_token` (16–512 chars). HITLy POSTs the outcome to `callback_url` with `content-type: application/json` and, when `cb_auth_token` was given, `Authorization: Bearer <cb_auth_token>` (the token is never echoed back). When the project has a webhook signing secret, delivery also carries `x-hitly-timestamp` (unix seconds), `x-hitly-signature` (hex HMAC-SHA256 over `"<timestamp>.<raw body>"`), `x-hitly-event-id` (stable across retries; dedupe on it) and `x-hitly-key-id`; otherwise only `x-hitly-event-id`. **Redirects are not followed** — a 3xx fails the delivery.
 
-The body is the HTTP-plugin decided/answered event: `event_id`, `type` (`decided`, or `answered` for an `ask_user` answer), `request_id`, `occurred_at`, `state`, `decision`, `answer` (the reviewer's typed `ask_user` answer as an object `{ kind, value }` - e.g. `{"kind": "single_choice", "value": "blue"}` - exactly as the host stored it; null when there is no typed answer), `reason`, `argsHash`, `editedArgs` (reviewer amendments — act on these), `response` (plain text reply), `metadata`, `idempotency_key`, `decisionDetail` (`outcome`, `reason`, `decidedBy`, `client`).
+The body is the HTTP-plugin decided/answered event: `event_id`, `type` (`decided`, or `answered` for an `ask_user` answer), `request_id`, `occurred_at`, `state`, `decision`, `answer` (the reviewer's typed `ask_user` answer as an object `{ kind, value }` - e.g. `{"kind": "single_choice", "value": "blue"}` - exactly as the host stored it; the key is OMITTED when there is no typed answer, never sent as `answer: null`), `reason`, `argsHash`, `editedArgs` (reviewer amendments — act on these), `response` (plain text reply), `metadata`, `idempotency_key`, `decisionDetail` (`outcome`, `reason`, `decidedBy`, `client`).
 
-The same outcome in spec form is what `get_decision` returns: a `hitl/response/v0` object (hitl-spec section 4) with `spec`, `requestId`, `status` (`answered` | `declined` | `cancelled` | `expired`), `value` (the decision value: `"approve"`, `"reject"`, or the reply text; the typed `ask_user` answer arrives as `answer` `{ kind, value }`), `reason`, `decidedBy`, `decidedAt`, `argsHash`, `signature`, `activity`.
+The same outcome in spec form is what `get_decision` returns: a `hitl/response/v0` object (hitl-spec section 4) with `spec`, `requestId`, `status` (`answered` | `declined` | `cancelled` | `expired`), `value` (the decision value: `"approve"`, `"reject"`, or the reply text; the typed `ask_user` answer arrives as `answer` `{ kind, value }`), `reason`, `decidedBy`, `decidedAt`, `argsHash`, `activity`. A decided response carries either `answer` (a typed `ask_user` reply) or the decision fields (`value` etc.), never both.
 
-The callback is a **hint**; `get_decision` is the source of truth. No `callback_url` means no callback: poll `get_decision` instead. Example: a Grok Bot agent passes its own agent webhook URL as `callback_url` (e.g. `https://example.com/hooks/hitly`) and a secret only it knows as `cb_auth_token`. `cb_auth_token` requires the host to advertise the `cb_auth_token` capability; the tool refuses with a clear error otherwise.
+The callback is a **hint**; `get_decision` is the source of truth. If you don't pass `callback_url` you won't receive a callback; poll `get_decision` instead. (Internally, an omitted `callback_url` still needs a `resumeUrl` for HTTP ingest: with `HITLY_MCP_PUBLIC_URL` set the host POSTs to a no-op sink on this server — see the env table — and with it unset the create is refused; either way, nothing reaches you.) Example: a Grok Bot agent passes its own agent webhook URL as `callback_url` (e.g. `https://example.com/hooks/hitly`) and a secret only it knows as `cb_auth_token`. `cb_auth_token` requires the host to advertise the `cb_auth_token` capability; the tool refuses with a clear error otherwise.
 
 ## Worked examples
 
@@ -108,7 +108,7 @@ The callback is a **hint**; `get_decision` is the source of truth. No `callback_
 { "spec": "hitl/response/v0", "requestId": "apr_…", "status": "answered",
   "answer": { "kind": "single_choice", "value": "blue" },
   "reason": "fine to ship", "decidedBy": { "kind": "human", "id": "usr_…", "display": "…" },
-  "decidedAt": "2026-11-10T10:02:00.000Z", "argsHash": "…", "signature": null,
+  "decidedAt": "2026-11-10T10:02:00.000Z", "argsHash": "…",
   "activity": { "presentedAt": "2026-11-10T09:58:00.000Z", "items": [] } }
 ```
 

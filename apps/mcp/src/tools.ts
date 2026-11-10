@@ -249,7 +249,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Request approval',
       description:
-        'Ask a human (on HITLy web or mobile) to Approve, Reject or Ignore an action. Returns immediately with requestId and state "pending"; it never waits. Pass callback_url (https) and optionally cb_auth_token to be POSTed when the human decides; the callback is only a hint - confirm with get_decision. With no callback_url there is no callback: poll get_decision politely (30-60s, backing off) until the deadline (default 24h). If get_decision returns editedArgs, act on those, not the original args. Expiry is never approval.',
+        'Ask a human (on HITLy web or mobile) to Approve, Reject or Ignore an action. Returns immediately with requestId and state "pending"; it never waits. Pass callback_url (https) and optionally cb_auth_token to be POSTed when the human decides; the callback is only a hint - confirm with get_decision. If you don\'t pass callback_url you won\'t receive a callback: poll get_decision politely (30-60s, backing off) until the deadline (default 24h). If get_decision returns editedArgs, act on those, not the original args. Expiry is never approval.',
       inputSchema: {
         ...common,
         question: z.string().describe('One sentence, at most 160 characters, ending with "?".'),

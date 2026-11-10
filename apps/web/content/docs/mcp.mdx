@@ -28,7 +28,7 @@ A Grok Bot agent connects over Streamable HTTP and uses its own agent webhook UR
   "mcpServers": {
     "hitly": {
       "url": "https://<mcp-host>/mcp",
-      "headers": { "Authorization": "***" }
+      "headers": { "Authorization": "Bearer <your-project-api-key>" }
     }
   }
 }
@@ -68,7 +68,7 @@ Project-level `.cursor/mcp.json` (or the global MCP settings):
   "mcpServers": {
     "hitly": {
       "url": "https://<mcp-host>/mcp",
-      "headers": { "Authorization": "***" }
+      "headers": { "Authorization": "Bearer <your-project-api-key>" }
     }
   }
 }
@@ -153,10 +153,10 @@ Answered example (an `ask_user` reply):
   "answer": { "kind": "single_choice", "value": "blue" },
   "reason": "fine to ship", "decidedBy": { "kind": "human", "id": "usr_…", "display": "A. Reviewer" },
   "decidedAt": "2026-11-10T10:02:00.000Z", "argsHash": "b64url-sha256-of-args",
-  "signature": null, "activity": { "presentedAt": "2026-11-10T09:58:00.000Z", "items": [] } }
+  "activity": { "presentedAt": "2026-11-10T09:58:00.000Z", "items": [] } }
 ```
 
-`status` is one of `pending`, `answered`, `declined`, `cancelled`, `expired`. The typed `answer` is an **object `{ kind, value }`**: `kind` is the answer type (e.g. `single_choice`, `free_text`) and `value` is the reviewer's reply for that type (a string, a number, or an array of strings for `multi_choice`). HITLy stores and returns it unmodified - use it verbatim. The top-level `value` carries the decision value for approve/reject/respond (`"approve"`, `"reject"`, or the reply text).
+`status` is one of `pending`, `answered`, `declined`, `cancelled`, `expired`. The typed `answer` is an **object `{ kind, value }`**: `kind` is the answer type (e.g. `single_choice`, `free_text`) and `value` is the reviewer's reply for that type (a string, a number, or an array of strings for `multi_choice`). HITLy stores and returns it unmodified - use it verbatim. The top-level `value` carries the decision value for approve/reject/respond (`"approve"`, `"reject"`, or the reply text). A decided response carries **either** `answer` (an `ask_user` reply) **or** the decision fields (`value` etc.) - never both.
 
 ### editedArgs
 
@@ -195,14 +195,13 @@ The JSON body:
   "occurred_at": "2026-11-10T12:00:00.000Z",
   "state": "decided",
   "decision": "accept",
-  "answer": null,
   "reason": "ok to send",
   "argsHash": "…",
   "decisionDetail": { "outcome": "accept", "reason": "ok to send", "decidedBy": "…" }
 }
 ```
 
-For an `ask_user` answer, `type` and `state` are `"answered"` and `answer` is the reviewer's typed reply as an **object `{ kind, value }`** (e.g. `{"kind": "single_choice", "value": "blue"}`), exactly as the host stored it. Reviewer amendments arrive as `editedArgs` (act on those); a plain text reply arrives as `response`.
+For an `ask_user` answer, `type` and `state` are `"answered"` and `answer` is the reviewer's typed reply as an **object `{ kind, value }`** (e.g. `{"kind": "single_choice", "value": "blue"}`), exactly as the host stored it. When there is no typed answer the `answer` key is omitted entirely - never sent as `answer: null`. Reviewer amendments arrive as `editedArgs` (act on those); a plain text reply arrives as `response`.
 
 **Redirects are not followed**: a `3xx` from your URL fails the delivery.
 
@@ -210,7 +209,7 @@ For an `ask_user` answer, `type` and `state` are `"answered"` and `answer` is th
 
 A callback tells you an outcome *may* exist. Always confirm with `get_decision` before acting - it is the source of truth, and callback delivery can fail (the read then reports `callbackDelivery: "failed"`).
 
-**No `callback_url` means no callback at all**: poll `get_decision` instead (every 30-60 s while pending, backing off).
+**If you don't pass `callback_url` you won't receive a callback**: poll `get_decision` instead (every 30-60 s while pending, backing off).
 
 Example: a Grok Bot agent passes its own agent webhook URL as `callback_url` (e.g. `https://example.com/hooks/hitly`) and a secret only it knows as `cb_auth_token`.
 
