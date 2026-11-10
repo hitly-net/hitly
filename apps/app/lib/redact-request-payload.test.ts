@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 import {
   REDACTED,
@@ -6,6 +9,7 @@ import {
   redactRequestPayload,
   redactedRequestJson,
   redactedRequestJsonFromCanonical,
+  redactRawJsonText,
 } from './redact-request-payload'
 
 describe('isSecretRequestKey', () => {
@@ -287,5 +291,24 @@ describe('redactedRequestJson', () => {
     assert.equal(json.includes(REDACTED), true)
     assert.equal(json.includes('\n'), true)
     assert.equal(json, redactedRequestJsonFromCanonical('{"amount":2,"cb_auth_token":"hidden"}'))
+  })
+
+  it('invalid JSON fallback redacts secret-like canary values with the same key matcher (bypass must go red)', () => {
+    const canary = ['raw', 'json', 'fallback', 'canary', 'value'].join('-')
+    const invalid = `{"apiKey":"${canary}","AWS_SECRET_ACCESS_KEY":"${canary}","tokenCount":9,"amount":1`
+    const shown = redactedRequestJsonFromCanonical(invalid)
+    assert.equal(shown.includes(canary), false, 'canary must not appear in the raw-JSON fallback')
+    assert.ok(shown.includes(REDACTED), 'fallback must use the parsed-view redaction marker')
+    assert.ok(shown.includes('"tokenCount":9'), 'non-secret keys must stay visible')
+    assert.ok(shown.includes('"amount":1'), 'fallback must not wipe the rest of the payload')
+    assert.equal(redactRawJsonText(invalid).includes(canary), false)
+  })
+
+  it('parse-failure catch must call redactRawJsonText (returning the raw string must go red)', () => {
+    const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'redact-request-payload.ts'), 'utf8')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+    const fn = code.split('export function redactedRequestJsonFromCanonical')[1] ?? ''
+    assert.match(fn, /return redactRawJsonText\(canonicalPayload\)/)
+    assert.doesNotMatch(fn, /catch\s*\{\s*return canonicalPayload/)
   })
 })

@@ -340,8 +340,19 @@ test('inbox detail / list / audit / mobile loaders redact on the server (source)
   )
 
   assert.match(inboxApiSrc, /listInboxItems/, 'mobile inbox list API must use listInboxItems')
+  assert.doesNotMatch(
+    code(inboxApiSrc),
+    /return NextResponse\.json\(\{\s*items,\s*nextCursor:\s*null\s*\}\)/,
+    'inbox list API must not hard-code nextCursor: null',
+  )
   assert.match(detailApiSrc, /createApprovalDetailGet/, 'GET /api/v1/approvals/:id must use the injectable factory')
+  assert.match(detailApiSrc, /requireApiWorkspace/, 'mobile detail API must authenticate through requireApiWorkspace')
   assert.match(detailApiSrc, /getApprovalDetail/, 'mobile detail API must wire getApprovalDetail')
+  assert.match(
+    detailRouteFactoryCode,
+    /deps\.requireApiWorkspace/,
+    'session path must authenticate through requireApiWorkspace (removing it must go red)',
+  )
   assert.match(detailRouteFactoryCode, /deps\.getApprovalDetail/, 'session path must call getApprovalDetail')
   assert.match(
     detailRouteFactoryCode,
@@ -473,7 +484,7 @@ test('inbox list and audit/history loaders omit planted secrets from serialised 
   await plantCanaries(approval.id)
   await plantDecisionCanaries(approval.id)
 
-  const items = await listInboxItems({
+  const { items } = await listInboxItems({
     workspaceId: workspaceA.id,
     userId: userReviewerA.id,
     workspaceRole: 'admin',

@@ -32,6 +32,8 @@ import {
   parseDecisionBody,
   REQUESTER_PENDING_MAX_LIMIT,
 } from './approvals'
+import { INBOX_MAX_LIMIT, listInboxItems } from './inbox'
+import { decodeListCursor, type ListCursor } from './list-cursor'
 import { getOriginalRequest } from './original-request'
 import { encodeTenantJson } from './tenant-crypto'
 import { DEFAULT_CREATE_ONCE_RETENTION_DAYS } from './create-once'
@@ -915,6 +917,167 @@ test('pending list route: the server caps the page at the published 200 even wit
   assert.equal(new Set(body.items.map((item) => item.id)).size, REQUESTER_PENDING_MAX_LIMIT)
   // Newest first still holds under the cap.
   assert.equal(body.items[0]?.createdAt, new Date(base + total - 1).toISOString())
+  assert.equal(typeof (body as { nextCursor?: unknown }).nextCursor, 'string', 'a capped page with more rows must return nextCursor')
+})
+
+test('pending list: cursor pages with equal createdAt never skip or repeat (drop-id must go red)', async () => {
+  // #104 pagination + #107 order. Six pending rows share one created_at; ids
+  // are inserted lowest-first so heap order is the reverse of id DESC. Paging
+  // with limit=2 must walk id DESC with no gaps or duplicates. Dropping the
+  // id tie-break (ORDER BY created_at only, or a created_at-only cursor)
+  // skips the remaining same-timestamp rows after page 1.
+  const k = await insertKey(projectP.id, 'page key')
+  const same = new Date('2026-08-13T18:00:00.123Z')
+  const ids = Array.from({ length: 6 }, () => newId('apr').slice(0, 36)).sort()
+  const expectedOrder = [...ids].reverse()
+  const seed = await ingest(k)
+  const [stored] = await db.select().from(approvals).where(eq(approvals.id, seed.approval.id))
+  if (!stored) throw new Error('seed row missing')
+  await setRow(seed.approval.id, { status: 'cancelled', requesterKeyId: null })
+  for (const id of ids) {
+    await db.insert(approvals).values({
+      id,
+      workspaceId: workspace.id,
+      projectId: projectP.id,
+      plugin: 'mastra',
+      status: 'pending',
+      actionName: stored.actionName,
+      envelope: stored.envelope,
+      origin: stored.origin,
+      requesterKeyId: k.id,
+      expiresAt: stored.expiresAt ?? new Date(Date.now() + 3_600_000),
+      createdAt: same,
+    })
+  }
+
+  const seen: string[] = []
+  let cursor: string | null = null
+  let pages = 0
+  do {
+    const qs = new URLSearchParams({ projectId: projectP.id, limit: '2' })
+    if (cursor) qs.set('cursor', cursor)
+    const route = await listRoute(
+      new Request(`http://localhost/api/v1/approvals?${qs}`, { headers: { authorization: `Bearer ${k.raw}` } }),
+    )
+    assert.equal(route.status, 200)
+    const body = (await route.json()) as {
+      projectId: string
+      status: string
+      items: Array<{ id: string; kind: string; createdAt: string }>
+      nextCursor: string | null
+    }
+    assert.equal(body.status, 'open')
+    assert.equal(body.projectId, projectP.id)
+    assert.equal(body.items[0]?.kind, 'approval')
+    seen.push(...body.items.map((item) => item.id))
+    cursor = body.nextCursor
+    pages += 1
+    assert.ok(pages <= 4, 'pagination must terminate')
+  } while (cursor)
+
+  assert.deepEqual(seen, expectedOrder, 'pages must walk created_at DESC, id DESC with no gaps or duplicates')
+  assert.equal(new Set(seen).size, ids.length)
+  assert.equal(pages, 3)
+
+  const invalid = await listRoute(
+    new Request(`http://localhost/api/v1/approvals?cursor=not-a-cursor`, {
+      headers: { authorization: `Bearer ${k.raw}` },
+    }),
+  )
+  assert.equal(invalid.status, 400)
+  assert.deepEqual(await invalid.json(), { error: 'Invalid cursor' })
+})
+
+test('inbox list: cursor pages with equal createdAt never skip or repeat; limit is clamped', async () => {
+  const projectPage = {
+    id: newId('prj'),
+    workspaceId: workspace.id,
+    name: 'Page Project',
+    plugin: 'mastra' as const,
+    credentials: {},
+    evidenceSinkType: 'none' as const,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }
+  await db.insert(projects).values(projectPage)
+  const k = await insertKey(projectPage.id, 'inbox page key')
+  const same = new Date('2026-08-13T18:00:00.123Z')
+  const ids = Array.from({ length: 6 }, () => newId('apr').slice(0, 36)).sort()
+  const expectedOrder = [...ids].reverse()
+  const seed = await ingest(k)
+  const [stored] = await db.select().from(approvals).where(eq(approvals.id, seed.approval.id))
+  if (!stored) throw new Error('seed row missing')
+  await setRow(seed.approval.id, { status: 'cancelled' })
+  for (const id of ids) {
+    await db.insert(approvals).values({
+      id,
+      workspaceId: workspace.id,
+      projectId: projectPage.id,
+      plugin: 'mastra',
+      status: 'pending',
+      actionName: stored.actionName,
+      envelope: stored.envelope,
+      origin: stored.origin,
+      requesterKeyId: k.id,
+      expiresAt: stored.expiresAt ?? new Date(Date.now() + 3_600_000),
+      createdAt: same,
+    })
+  }
+
+  const seen: string[] = []
+  let cursor: ListCursor | undefined
+  let pages = 0
+  do {
+    const page = await listInboxItems({
+      workspaceId: workspace.id,
+      userId: reviewer.id,
+      workspaceRole: 'admin',
+      projectId: projectPage.id,
+      scope: 'open',
+      limit: 2,
+      cursor,
+    })
+    seen.push(...page.items.map((item) => item.id))
+    cursor = page.nextCursor ? (decodeListCursor(page.nextCursor) ?? undefined) : undefined
+    if (page.nextCursor) assert.ok(cursor, 'inbox nextCursor must decode')
+    pages += 1
+    assert.ok(pages <= 4, 'inbox pagination must terminate')
+    if (!page.nextCursor) break
+  } while (cursor)
+
+  assert.deepEqual(seen, expectedOrder, 'inbox pages must walk created_at DESC, id DESC with no gaps or duplicates')
+  assert.equal(new Set(seen).size, ids.length)
+  assert.equal(pages, 3)
+
+  const extra = REQUESTER_PENDING_MAX_LIMIT + 5
+  const base = Date.now()
+  const rows = []
+  for (let i = 0; i < extra; i++) {
+    rows.push({
+      id: newId('apr').slice(0, 36),
+      workspaceId: workspace.id,
+      projectId: projectPage.id,
+      plugin: 'mastra' as const,
+      status: 'pending' as const,
+      actionName: 'pay',
+      envelope: stored.envelope,
+      origin: stored.origin,
+      requesterKeyId: k.id,
+      expiresAt: new Date(base + 3_600_000),
+      createdAt: new Date(base + i),
+    })
+  }
+  await db.insert(approvals).values(rows)
+  const clamped = await listInboxItems({
+    workspaceId: workspace.id,
+    userId: reviewer.id,
+    workspaceRole: 'admin',
+    projectId: projectPage.id,
+    limit: 10000,
+  })
+  assert.equal(INBOX_MAX_LIMIT, 200)
+  assert.equal(clamped.items.length, INBOX_MAX_LIMIT, 'inbox limit=10000 must be clamped server-side')
+  assert.equal(typeof clamped.nextCursor, 'string')
 })
 
 test('create-once replay is scoped to the creating key; a sibling key gets 409 and learns nothing', async () => {

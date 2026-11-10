@@ -42,6 +42,7 @@ import { exportOtelTrace } from './otel-trace'
 import { resumeFailureMessage } from './resume-error'
 import { createOnceCutoff, envelopePayloadHash } from './create-once'
 import { buildHitlRead } from './hitl-response'
+import { clampListLimit, olderThanListCursor, takeListPage, type ListCursor } from './list-cursor'
 
 export async function authenticateProjectKey(rawKey: string, projectId?: string) {
   const hashed = hashApiKey(rawKey)
@@ -1185,14 +1186,30 @@ export const REQUESTER_PENDING_MAX_LIMIT = 200
  * The requester's open requests: created by this API key, in its project,
  * still `pending` (and not past their deadline) or `failed_resume`. Newest first.
  */
-export async function listRequesterPending(args: { apiKey: string; projectId?: string; limit?: number }) {
+export async function listRequesterPending(args: {
+  apiKey: string
+  projectId?: string
+  limit?: number
+  cursor?: ListCursor
+}) {
   const authn = await authenticateProjectKey(args.apiKey, args.projectId)
   if (!authn) return { ok: false as const, error: 'Invalid API key or project', status: 401 as const }
   const workspaceId = authn.project.workspaceId
-  const limit = Math.min(Math.max(Math.trunc(args.limit ?? REQUESTER_PENDING_DEFAULT_LIMIT), 1), REQUESTER_PENDING_MAX_LIMIT)
+  const limit = clampListLimit(args.limit, REQUESTER_PENDING_DEFAULT_LIMIT, REQUESTER_PENDING_MAX_LIMIT)
   return withTenant(workspaceId, async () => {
     await touchApiKey(authn.key.id)
     const now = new Date()
+    const filters = [
+      eq(approvals.workspaceId, workspaceId),
+      eq(approvals.projectId, authn.project.id),
+      eq(approvals.requesterKeyId, authn.key.id),
+      or(
+        eq(approvals.status, 'failed_resume'),
+        and(eq(approvals.status, 'pending'), or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, now))),
+      ),
+    ]
+    const cursorWhere = args.cursor ? olderThanListCursor(approvals.createdAt, approvals.id, args.cursor) : undefined
+    if (cursorWhere) filters.push(cursorWhere)
     const rows = await requireDb()
       .select({
         id: approvals.id,
@@ -1204,23 +1221,15 @@ export async function listRequesterPending(args: { apiKey: string; projectId?: s
         presentedAt: approvals.presentedAt,
       })
       .from(approvals)
-      .where(
-        and(
-          eq(approvals.workspaceId, workspaceId),
-          eq(approvals.projectId, authn.project.id),
-          eq(approvals.requesterKeyId, authn.key.id),
-          or(
-            eq(approvals.status, 'failed_resume'),
-            and(eq(approvals.status, 'pending'), or(sql`${approvals.expiresAt} is null`, gte(approvals.expiresAt, now))),
-          ),
-        ),
-      )
+      .where(and(...filters))
       .orderBy(desc(approvals.createdAt), desc(approvals.id))
-      .limit(limit)
+      .limit(limit + 1)
+    const { page, nextCursor } = takeListPage(rows, limit)
     return {
       ok: true as const,
       projectId: authn.project.id,
-      items: rows.map((row) => ({
+      nextCursor,
+      items: page.map((row) => ({
         id: row.id,
         kind: 'approval' as const,
         status: row.status,
