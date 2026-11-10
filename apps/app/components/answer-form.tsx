@@ -3,8 +3,10 @@
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useFormStatus } from 'react-dom'
-import type { AllowedActions, Decision, EditReasonConfig, EditableFieldSpec } from '@hitly/core'
+import type { AllowedActions, AnswerSchema, Decision, EditReasonConfig, EditableFieldSpec } from '@hitly/core'
 import { EditableFieldsForm } from './editable-fields-form'
+import { AnswerSection } from './answer-section'
+import { clientAnswerErrors, initialAnswerValue } from '@/lib/answer-form-helpers'
 
 /** One `mustOpen` context item (hitl-spec 3.7) as the answer form needs it. */
 export interface GateItem {
@@ -46,6 +48,7 @@ export function AnswerForm({
   originalArgs,
   editReasonConfig,
   respondAllowed,
+  answerSchema,
   reasonRequired,
   gateItems,
   returnTo,
@@ -57,6 +60,8 @@ export function AnswerForm({
   originalArgs: Record<string, unknown>
   editReasonConfig?: EditReasonConfig
   respondAllowed: boolean
+  /** Stored ask_user schema; renders the typed widget INSTEAD of the legacy box. */
+  answerSchema?: AnswerSchema
   reasonRequired: string[]
   gateItems: GateItem[]
   returnTo: string
@@ -69,6 +74,11 @@ export function AnswerForm({
   // Controlled so a remount after a failed submit can restore the reviewer's
   // typed reason (S5): seeded from the draft stashed at the last submit attempt.
   const [reason, setReason] = useState<string>(() => takeReasonDraft(approvalId))
+  // The reviewer's in-progress typed answer. Nothing is pre-selected
+  // (hitl-spec 3.5: the client decides, and never pre-fills).
+  const [answerValue, setAnswerValue] = useState<unknown>(() =>
+    answerSchema ? initialAnswerValue(answerSchema) : undefined,
+  )
   const [notice, setNotice] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
   const reasonRef = useRef<HTMLTextAreaElement>(null)
@@ -115,6 +125,16 @@ export function AnswerForm({
         event.preventDefault()
         setNotice(`A reason is required for "${decision}". Add one before submitting.`)
         reasonRef.current?.focus()
+        return
+      }
+    }
+    // Typed ask_user answers: the client refuses an invalid widget submit and
+    // KEEPS the reviewer's input (spec 7); the host still re-validates.
+    if (decision === 'respond' && respondAllowed && answerSchema) {
+      const answerErrors = clientAnswerErrors(answerSchema, answerValue)
+      if (answerErrors.length > 0) {
+        event.preventDefault()
+        setNotice(answerErrors[0] ?? 'Your answer is not valid yet.')
         return
       }
     }
@@ -173,13 +193,7 @@ export function AnswerForm({
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
         />
       ) : null}
-      {respondAllowed ? (
-        <input
-          name="response"
-          placeholder="Response"
-          className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        />
-      ) : null}
+      <AnswerSection respondAllowed={respondAllowed} answerSchema={answerSchema} value={answerValue} onChange={setAnswerValue} />
       {notice ? (
         <p role="alert" className="text-sm text-red-700 dark:text-red-400">
           {notice}

@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { DEFAULT_DEADLINE_MS, MAX_DEADLINE_MS, type McpConfig } from './config.ts'
+import { ANSWER_TYPE_ALIASES, FORM_REJECTION_MESSAGE } from './answer-types.ts'
 import type { ApprovalRead, HostClient, HostResult } from './host-client.ts'
 import { argsHash } from './jcs.ts'
 import type { Logger } from './logger.ts'
@@ -50,6 +51,63 @@ const link = z.object({
   label: z.string().max(200).optional(),
   mustOpen: z.boolean().optional(),
 })
+
+/**
+ * hitl/v0 typed answer schemas for ask_user (hitl-spec 3.4). The published
+ * enum carries the spec names plus the legacy MCP aliases; `simple_form` and
+ * `fields[]` are NOT advertised (there are no forms in v0) but still survive
+ * parse via `flagFormPayload` + passthrough so the handler can refuse them
+ * with the plain-language one-request-per-field message instead of a raw
+ * zod parse error.
+ */
+const answerOptionInput = z.union([
+  z.string().min(1).max(200),
+  z.object({
+    value: z.string().min(1).max(200),
+    label: z.string().max(200).optional(),
+    description: z.string().max(500).optional(),
+  }),
+])
+
+const answerBoundsInput = z.object({
+  min: z.number().optional(),
+  max: z.number().optional(),
+  step: z.number().optional(),
+  unit: z.string().min(1).max(40).optional(),
+  minLength: z.number().int().nonnegative().optional(),
+  maxLength: z.number().int().nonnegative().optional(),
+  pattern: z.string().min(1).max(256).optional(),
+  minItems: z.number().int().nonnegative().optional(),
+  maxItems: z.number().int().nonnegative().optional(),
+})
+
+/** Marks a form-shaped payload for the handler without entering the published enum. */
+function flagFormPayload(value: unknown): unknown {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    if (record.type === 'simple_form' || 'fields' in record) {
+      return { ...record, type: 'text', __form: true }
+    }
+  }
+  return value
+}
+
+const askAnswerSchemaInput = z.preprocess(
+  flagFormPayload,
+  z
+    .object({
+      type: z.enum(['text', 'single', 'multi', 'number', 'free_text', 'single_choice', 'multi_choice']).describe(
+        'One answer type for this request: text | single | multi | number (legacy aliases free_text, single_choice, multi_choice are accepted and stored as the spec name). hitl/v0 is one question per ask_user: no multi-field forms.',
+      ),
+      options: z
+        .array(answerOptionInput)
+        .max(20)
+        .optional()
+        .describe('Required for single/multi. Strings (value = label) or {value, label?, description?}.'),
+      bounds: answerBoundsInput.optional().describe('number: min/max/step/unit. text: minLength/maxLength/pattern. multi: minItems/maxItems.'),
+    })
+    .passthrough(),
+)
 
 const common = {
   idempotencyKey: z
@@ -318,14 +376,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
           .string()
           .optional()
           .describe(`Optional markdown explanation shown under the headline (at most ${DETAIL_MAX} characters).`),
-        answerSchema: z.object({
-          type: z.enum(['free_text', 'single_choice', 'multi_choice', 'simple_form']),
-          options: z.array(z.string().min(1).max(200)).max(20).optional(),
-          fields: z
-            .array(z.object({ name: z.string().min(1).max(100), label: z.string().max(200).optional(), required: z.boolean().optional() }))
-            .max(20)
-            .optional(),
-        }),
+        answerSchema: askAnswerSchemaInput,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -337,12 +388,64 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
           const detailError = validateDetail(input.detail)
           if (detailError) return { result: fail('invalid_request', detailError) }
         }
-        const schema = input.answerSchema
-        if ((schema.type === 'single_choice' || schema.type === 'multi_choice') && !schema.options?.length) {
-          return { result: fail('invalid_request', `${schema.type} needs options`) }
+        const schema = input.answerSchema as unknown as {
+          type: string
+          options?: Array<string | { value: string; label?: string; description?: string }>
+          bounds?: Record<string, unknown>
+          __form?: boolean
         }
-        if (schema.type === 'simple_form' && !schema.fields?.length) {
-          return { result: fail('invalid_request', 'simple_form needs fields') }
+        // hitl/v0 is one request per field: a form-shaped payload never reaches the host.
+        if (schema.__form) return { result: fail('invalid_request', FORM_REJECTION_MESSAGE) }
+        const answerType = ANSWER_TYPE_ALIASES[schema.type]
+        if (!answerType) {
+          return {
+            result: fail(
+              'invalid_request',
+              'answerSchema.type must be one of: text, single, multi, number (legacy aliases free_text, single_choice, multi_choice are accepted)',
+            ),
+          }
+        }
+        const needsOptions = answerType === 'single' || answerType === 'multi'
+        if (needsOptions && !schema.options?.length) {
+          return { result: fail('invalid_request', `${answerType} needs options`) }
+        }
+        if (!needsOptions && schema.options?.length) {
+          return { result: fail('invalid_request', `${answerType} does not take options`) }
+        }
+        // Normalise options onto the spec shape {value, label, description?}.
+        const options = schema.options?.map((option) => {
+          if (typeof option === 'string') return { value: option, label: option }
+          const normalised: { value: string; label: string; description?: string } = {
+            value: option.value,
+            label: option.label?.trim() || option.value,
+          }
+          if (option.description?.trim()) normalised.description = option.description.trim()
+          return normalised
+        })
+        if (options) {
+          const values = options.map((option) => option.value)
+          if (new Set(values).size !== values.length) {
+            return { result: fail('invalid_request', 'answerSchema.options values must be distinct') }
+          }
+        }
+        if (schema.bounds) {
+          if (schema.bounds.step !== undefined && (typeof schema.bounds.step !== 'number' || schema.bounds.step <= 0)) {
+            return { result: fail('invalid_request', 'answerSchema.bounds.step must be greater than 0') }
+          }
+          if (
+            typeof schema.bounds.min === 'number' &&
+            typeof schema.bounds.max === 'number' &&
+            schema.bounds.max < schema.bounds.min
+          ) {
+            return { result: fail('invalid_request', 'answerSchema.bounds.max must be >= min') }
+          }
+          if (
+            typeof schema.bounds.minItems === 'number' &&
+            typeof schema.bounds.maxItems === 'number' &&
+            schema.bounds.maxItems < schema.bounds.minItems
+          ) {
+            return { result: fail('invalid_request', 'answerSchema.bounds.maxItems must be >= minItems') }
+          }
         }
         const deadline = resolveDeadline(ctx, input.deadline)
         if ('error' in deadline) return { result: fail('invalid_request', deadline.error) }
@@ -353,11 +456,14 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
 
         const lines = [`**${input.prompt.trim()}**`]
         if (input.detail) lines.push('', input.detail.trim())
-        if (schema.options?.length) lines.push('', ...schema.options.map((option) => `- ${option}`))
-        if (schema.fields?.length) lines.push('', ...schema.fields.map((field) => `- ${field.label ?? field.name}`))
+        // Option bullets are supporting detail under the headline; the stored
+        // answerSchema below is authoritative for what the reviewer answers.
+        if (options?.length) lines.push('', ...options.map((option) => `- ${option.label}`))
         if (input.context) lines.push('', input.context)
-        // Until the question kind lands (M1b) the host stores this as an HTTP approval
-        // whose only acting answer is a free-text response.
+        // The host persists this schema on the envelope and renders the matching
+        // widget (text input, radios, checkboxes, number input); the reviewer's
+        // answer comes back as hitl/response/v0 `answer: { kind, value }` with
+        // `kind` equal to the stored spec type (#129 / hitl-spec#15).
         const body: Record<string, unknown> = {
           plugin: 'http',
           kind: 'question',
@@ -366,7 +472,11 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
           actionName: 'ask_user',
           args: {},
           prompt: input.prompt.trim(),
-          answerSchema: schema,
+          answerSchema: {
+            type: answerType,
+            ...(options?.length ? { options } : {}),
+            ...(schema.bounds ? { bounds: schema.bounds } : {}),
+          },
           contextMarkdown: lines.join('\n'),
           allowedActions: { accept: false, reject: false, respond: true, ignore: true },
           expiresAt: deadline.iso,

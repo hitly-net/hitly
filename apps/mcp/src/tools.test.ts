@@ -206,7 +206,14 @@ test('ask_user maps to HTTP ingest as a question with a free-text answer', async
     assert.equal(body.kind, 'question')
     assert.equal(body.resumeUrl, baseApproval.callback_url)
     assert.deepEqual(body.allowedActions, { accept: false, reject: false, respond: true, ignore: true })
-    assert.deepEqual(body.answerSchema, { type: 'single_choice', options: ['Hall A', 'Hall B'] })
+    // Aliases are mapped onto the SPEC name before ingest; options are normalised.
+    assert.deepEqual(body.answerSchema, {
+      type: 'single',
+      options: [
+        { value: 'Hall A', label: 'Hall A' },
+        { value: 'Hall B', label: 'Hall B' },
+      ],
+    })
     assert.match(String(body.contextMarkdown), /\n\n- Hall A\n- Hall B/)
     assert.match(String(body.contextMarkdown), /\*\*Which venue\?\*\*\n\n- Hall A\n- Hall B$/)
 
@@ -215,6 +222,7 @@ test('ask_user maps to HTTP ingest as a question with a free-text answer', async
       arguments: { idempotencyKey: 'bot-ask-0002', prompt: 'Which one?', answerSchema: { type: 'multi_choice' }, callback_url: baseApproval.callback_url },
     })
     assert.equal(missing.isError, true)
+    assert.match(JSON.stringify(structured(missing)), /multi needs options/)
   } finally {
     await h.close()
   }
@@ -288,6 +296,123 @@ test('ask_user accepts optional markdown detail, passes it through under the hea
     assert.match(JSON.stringify(structured(overCap)), /detail must be at most 8000 characters/)
     assert.match(JSON.stringify(structured(overCap)), /invalid_request/)
     assert.equal(h.host.ingests.length, 2, 'over-cap detail never reaches the host')
+  } finally {
+    await h.close()
+  }
+})
+
+test('ask_user tools/list advertises the spec answer types; no simple_form, no fields', async () => {
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    const tool = (await client.listTools()).tools.find((candidate) => candidate.name === 'ask_user')
+    const schema = tool?.inputSchema as Record<string, unknown> | undefined
+    assert.ok(schema, 'ask_user must be listed with an input schema')
+    const serialized = JSON.stringify(schema)
+    assert.doesNotMatch(serialized, /simple_form/, 'simple_form must not be advertised')
+    assert.doesNotMatch(serialized, /"fields"/, 'fields[] must not be advertised')
+    const answerSchema = (schema as { properties: Record<string, { properties: Record<string, { enum?: string[] }> }> }).properties.answerSchema
+    const types = answerSchema.properties.type.enum ?? []
+    for (const specName of ['text', 'single', 'multi', 'number']) {
+      assert.ok(types.includes(specName), `spec type ${specName} must be advertised`)
+    }
+    for (const alias of ['free_text', 'single_choice', 'multi_choice']) {
+      assert.ok(types.includes(alias), `legacy alias ${alias} stays accepted`)
+    }
+    assert.ok(!types.includes('simple_form'))
+  } finally {
+    await h.close()
+  }
+})
+
+test('ask_user refuses simple_form / fields with the one-request-per-field message', async () => {
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    const form = await client.callTool({
+      name: 'ask_user',
+      arguments: {
+        idempotencyKey: 'bot-ask-form-0001',
+        prompt: 'Draft the post?',
+        answerSchema: { type: 'simple_form', fields: [{ name: 'headline' }, { name: 'post_date' }, { name: 'notes' }] },
+        callback_url: baseApproval.callback_url,
+      },
+    })
+    assert.equal(form.isError, true)
+    const formText = JSON.stringify(structured(form))
+    assert.match(formText, /invalid_request/)
+    assert.match(formText, /one request per field/)
+    assert.match(formText, /separate ask_user/)
+
+    const fieldsOnly = await client.callTool({
+      name: 'ask_user',
+      arguments: {
+        idempotencyKey: 'bot-ask-form-0002',
+        prompt: 'Draft the post?',
+        answerSchema: { type: 'text', fields: [{ name: 'headline' }] },
+        callback_url: baseApproval.callback_url,
+      },
+    })
+    assert.equal(fieldsOnly.isError, true)
+    assert.match(JSON.stringify(structured(fieldsOnly)), /one request per field/)
+
+    assert.equal(h.host.ingests.length, 0, 'form-shaped asks never reach the host')
+  } finally {
+    await h.close()
+  }
+})
+
+test('ask_user maps aliases onto spec types and persists options/bounds; refuses bad combinations', async () => {
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    const seq = { n: 0 }
+    const ask = (answerSchema: Record<string, unknown>) =>
+      client.callTool({
+        name: 'ask_user',
+        arguments: {
+          idempotencyKey: `bot-ask-map-${String(++seq.n).padStart(4, '0')}`,
+          prompt: 'Your answer?',
+          answerSchema,
+          callback_url: baseApproval.callback_url,
+        },
+      })
+
+    const freeText = structured(await ask({ type: 'free_text' }))
+    assert.equal(freeText.state, 'pending')
+    assert.deepEqual(h.host.ingests.at(-1)?.body.answerSchema, { type: 'text' })
+
+    const multi = structured(await ask({ type: 'multi_choice', options: ['a', 'b'] }))
+    assert.equal(multi.state, 'pending')
+    assert.deepEqual(h.host.ingests.at(-1)?.body.answerSchema, {
+      type: 'multi',
+      options: [
+        { value: 'a', label: 'a' },
+        { value: 'b', label: 'b' },
+      ],
+    })
+
+    const numeric = structured(await ask({ type: 'number', bounds: { min: 0, max: 100, step: 5, unit: '%' } }))
+    assert.equal(numeric.state, 'pending')
+    assert.deepEqual(h.host.ingests.at(-1)?.body.answerSchema, { type: 'number', bounds: { min: 0, max: 100, step: 5, unit: '%' } })
+
+    const specOptions = structured(await ask({ type: 'single', options: [{ value: 'a', label: 'Alpha', description: 'first' }] }))
+    assert.equal(specOptions.state, 'pending')
+    assert.deepEqual(h.host.ingests.at(-1)?.body.answerSchema, {
+      type: 'single',
+      options: [{ value: 'a', label: 'Alpha', description: 'first' }],
+    })
+
+    // Refusals (spec 7: never store what the host could not honour).
+    assert.match(JSON.stringify(structured(await ask({ type: 'number', bounds: { step: 0 } }))), /step must be greater than 0/)
+    assert.match(JSON.stringify(structured(await ask({ type: 'single_choice' }))), /single needs options/)
+    assert.match(JSON.stringify(structured(await ask({ type: 'free_text', options: ['a'] }))), /text does not take options/)
+    assert.match(JSON.stringify(structured(await ask({ type: 'multi', options: ['a', 'a'] }))), /distinct/)
+    assert.equal(
+      h.host.ingests.filter((ingest) => String(ingest.body.runId).startsWith('mcp-bot-ask-map-')).length,
+      4,
+      'only the four accepted asks reached the host',
+    )
   } finally {
     await h.close()
   }

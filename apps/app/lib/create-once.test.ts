@@ -16,6 +16,8 @@ function populatedIngestedEnvelope(overrides?: Record<string, unknown>) {
   return {
     action: { name: 'pay', args: { amount: 100, currency: 'EUR' } },
     allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
+    prompt: 'Which venue?',
+    answerSchema: { type: 'single', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }], bounds: { minItems: 1 } },
     reasonRequired: ['reject'],
     contextMarkdown: 'Review this payment',
     metadata: { ticket: 'T-1' },
@@ -67,6 +69,7 @@ const PAYLOAD_HASH_ENVELOPE_KEYS = [
   'action',
   'agentId',
   'allowedActions',
+  'answerSchema',
   'attachments',
   'contextMarkdown',
   'dataCategories',
@@ -79,6 +82,7 @@ const PAYLOAD_HASH_ENVELOPE_KEYS = [
   'origin',
   'policyId',
   'policyRationale',
+  'prompt',
   'reasonRequired',
   'resumeSchema',
   'riskTier',
@@ -187,6 +191,66 @@ test('payloadHash: origin is in the hash (same envelope, different origin -> dif
   assert.equal(left, await jcsHash(JSON.parse(JSON.stringify(base))))
 })
 
+test('create-once covers a persisted answerSchema: asks differing only in type/options/bounds get different payloadHashes', async () => {
+  // The stored envelope IS the hash input, so a persisted answerSchema is
+  // automatically covered: two MCP ask_user calls with identical
+  // prompt/contextMarkdown that differ only in type, options or bounds must
+  // NOT collapse to the same payloadHash (they would 409 idempotency_conflict
+  // at the route instead of silently replaying the first ask's widget).
+  const base = {
+    action: { name: 'ask_user', args: {} },
+    allowedActions: { accept: false, reject: false, edit: false, respond: true, ignore: true, cancel: false },
+    prompt: 'Pick one?',
+    contextMarkdown: 'same headline and bullets',
+  }
+  const textAsk = { ...base, answerSchema: { type: 'text' } }
+  const singleAsk = { ...base, answerSchema: { type: 'single', options: [{ value: 'a', label: 'A' }] } }
+  assert.notEqual(
+    await envelopePayloadHash(textAsk),
+    await envelopePayloadHash(singleAsk),
+    'a text ask and a single ask with identical prompt/markdown must not share a payloadHash',
+  )
+  const optionA = { ...base, answerSchema: { type: 'single', options: [{ value: 'a', label: 'A' }] } }
+  const optionB = { ...base, answerSchema: { type: 'single', options: [{ value: 'b', label: 'B' }] } }
+  assert.notEqual(
+    await envelopePayloadHash(optionA),
+    await envelopePayloadHash(optionB),
+    'same type, different options: different payloadHash',
+  )
+  const loose = { ...base, answerSchema: { type: 'number', bounds: { min: 0 } } }
+  const tight = { ...base, answerSchema: { type: 'number', bounds: { min: 0, max: 10 } } }
+  assert.notEqual(
+    await envelopePayloadHash(loose),
+    await envelopePayloadHash(tight),
+    'same type, different bounds: different payloadHash',
+  )
+  assert.notEqual(
+    await envelopePayloadHash(textAsk),
+    await envelopePayloadHash({ ...textAsk, prompt: 'Pick one!!' }),
+    'prompt is hashed too',
+  )
+  assert.equal(
+    await envelopePayloadHash(optionA),
+    await envelopePayloadHash({ ...base, answerSchema: { type: 'single', options: [{ value: 'a', label: 'A' }] } }),
+    'an identical ask still hashes equal (create-once replay of the SAME request stays intact)',
+  )
+})
+
+test('create-once is backward-compatible: envelopes without prompt/answerSchema hash exactly as before', async () => {
+  // Legacy asks (fields absent vs undefined) must not retro-split stored
+  // create-once keys — JCS drops undefined, so the new optional envelope
+  // fields change nothing for pre-widgets envelopes.
+  const legacy = {
+    action: { name: 'ask_user', args: {} },
+    allowedActions: { accept: false, reject: false, edit: false, respond: true, ignore: true, cancel: false },
+    contextMarkdown: 'plain question',
+  }
+  assert.equal(
+    await envelopePayloadHash(legacy),
+    await envelopePayloadHash({ ...legacy, prompt: undefined, answerSchema: undefined }),
+  )
+})
+
 test('payloadHash: expiresAt is in the hash (same envelope, different expiresAt -> different hash)', async () => {
   const base = populatedIngestedEnvelope({ expiresAt: '2026-12-01T00:00:00.000Z' })
   const otherExpiry = populatedIngestedEnvelope({ expiresAt: '2026-12-02T00:00:00.000Z' })
@@ -205,4 +269,31 @@ test('payloadHash: injecting Authorization (or other auth headers) is not part o
   // A wrapper that injects Authorization into the JCS input must not match production.
   const injected = { ...(hashed as Record<string, unknown>), Authorization: 'Bearer should-not-be-hashed' }
   assert.notEqual(await envelopePayloadHash(base), await jcsHash(injected))
+})
+
+test('payloadHash: answerSchema is in the hash (two asks differing only in type/options/bounds never replay)', async () => {
+  // hitl/v0 create-once guard: a spent idempotencyKey must not silently replay
+  // a DIFFERENT question. The stored answerSchema participates in the hash.
+  const base = populatedIngestedEnvelope()
+  const differentType = populatedIngestedEnvelope({
+    answerSchema: { ...(base.answerSchema as Record<string, unknown>), type: 'multi' },
+  })
+  const differentOptions = populatedIngestedEnvelope({
+    answerSchema: {
+      ...(base.answerSchema as Record<string, unknown>),
+      options: [{ value: 'a', label: 'A' }, { value: 'c', label: 'C' }],
+    },
+  })
+  const differentBounds = populatedIngestedEnvelope({
+    answerSchema: {
+      ...(base.answerSchema as Record<string, unknown>),
+      bounds: { minItems: 2 },
+    },
+  })
+  const differentPrompt = populatedIngestedEnvelope({ prompt: 'Which hall?' })
+  const hash = await envelopePayloadHash(base)
+  assert.equal(hash, await jcsHash(JSON.parse(JSON.stringify(base))))
+  for (const other of [differentType, differentOptions, differentBounds, differentPrompt]) {
+    assert.notEqual(hash, await envelopePayloadHash(other), 'differing ask must produce a different payloadHash (409 idempotency_conflict)')
+  }
 })

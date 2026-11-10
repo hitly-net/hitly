@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import { test, before, after } from 'node:test'
 import { and, desc, eq } from 'drizzle-orm'
-import { decisionRecords } from '@hitly/db/schema'
+import { approvals, decisionRecords } from '@hitly/db/schema'
 import { decideApproval, parseDecisionBody } from './approvals'
 import { decodeTenantJson } from './tenant-crypto'
 import {
@@ -112,4 +112,69 @@ test('an approval without an answer sends decided (answer null), as before', asy
   const hit = receiver.hits[before]!
   assert.equal(hit.body.type, 'decided')
   assert.equal(hit.body.answer, null)
+})
+
+test('ask_user with a stored schema: persisted spec type, host-validated answer, answered callback', async () => {
+  const approval = await ingestHttpAsk(fixture, receiver.url, {
+    kind: 'question',
+    actionName: 'ask_user',
+    args: {},
+    prompt: 'Which venue?',
+    answerSchema: { type: 'single_choice', options: ['Hall A', 'Hall B'] },
+    allowedActions: { accept: false, reject: false, respond: true, ignore: true },
+  })
+
+  // Ingest persisted the schema (mapped to the SPEC name) and the prompt.
+  const [row] = await fixture.db
+    .select({ envelope: approvals.envelope })
+    .from(approvals)
+    .where(eq(approvals.id, approval.id))
+  const envelope = (await decodeTenantJson(fixture.workspaceId, row!.envelope)) as {
+    prompt?: string
+    answerSchema: { type: string; options?: Array<{ value: string; label: string }> }
+  }
+  assert.equal(envelope.prompt, 'Which venue?')
+  assert.equal(envelope.answerSchema.type, 'single', 'stored type is the spec name, not the MCP alias')
+  assert.deepEqual(envelope.answerSchema.options, [
+    { value: 'Hall A', label: 'Hall A' },
+    { value: 'Hall B', label: 'Hall B' },
+  ])
+
+  const decide = (payload: Record<string, unknown>) =>
+    decideApproval({
+      approvalId: approval.id,
+      actorUserId: fixture.reviewerId,
+      payload: parseDecisionBody(payload) as never,
+      workspaceId: fixture.workspaceId,
+    })
+
+  // Host refusals (spec 7) while the request is still open.
+  const bare = (await decide({ decision: 'respond', response: 'Hall A' })) as { error?: string; status?: number }
+  assert.equal(bare.status, 400, 'a bare response is refused when a schema is stored')
+  assert.match(String(bare.error), /response/)
+  const wrongKind = (await decide({ decision: 'respond', answer: { kind: 'single_choice', value: 'Hall A' } })) as {
+    status?: number
+    error?: string
+  }
+  assert.equal(wrongKind.status, 400, 'the alias kind is refused: kind must equal the stored spec type')
+  assert.match(String(wrongKind.error), /answer.kind/)
+  const unknown = (await decide({ decision: 'respond', answer: { kind: 'single', value: 'Hall C' } })) as { status?: number }
+  assert.equal(unknown.status, 400, 'option not in the stored options')
+
+  // The exact payload the web form POSTs.
+  const before = receiver.hits.length
+  const decided = (await decide({ decision: 'respond', answer: { kind: 'single', value: 'Hall B' } })) as {
+    error?: string
+    status?: string
+  }
+  assert.equal(decided.error, undefined, `valid typed answer must decide, got ${decided.error}`)
+  assert.equal(decided.status, 'decided')
+
+  assert.equal(receiver.hits.length, before + 1, 'exactly one callback')
+  const hit = receiver.hits[before]!
+  assert.equal(hit.body.type, 'answered')
+  assert.equal(hit.body.state, 'answered')
+  assert.equal(hit.body.decision, 'respond')
+  assert.deepEqual(hit.body.answer, { kind: 'single', value: 'Hall B' }, 'typed answer reaches the sink verbatim')
+  assert.equal(hit.body.response, undefined, 'no free-text substitute alongside the typed answer')
 })
