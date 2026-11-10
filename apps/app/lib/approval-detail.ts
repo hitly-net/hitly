@@ -1,7 +1,8 @@
 import { desc, eq, and } from 'drizzle-orm'
 import { isOpenApprovalStatus, type ApprovalEnvelope, type OriginRef, type PluginId, type WorkspaceRole } from '@hitly/core'
 import { approvals, decisionRecords, projects } from '@hitly/db/schema'
-import { approvalHasExpired } from './approval-expiry'
+import { approvalHasExpired, effectiveApprovalStatus } from './approval-expiry'
+import { settleExpiredApproval } from './approvals'
 import { canDecide, getProjectAccess } from './rbac'
 import { loadOpenedContextRefs } from './context-opens'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
@@ -35,9 +36,13 @@ export async function getApprovalDetail(args: {
 
     const envelope = (await decodeTenantJson(args.workspaceId, approval.envelope)) as unknown as ApprovalEnvelope
     const origin = (await decodeTenantJson(args.workspaceId, approval.origin)) as unknown as OriginRef
+    // Read-time expiry (PM ruling): a past-deadline pending row reads `expired`
+    // on every surface; the flip fires the one expiry callback exactly once.
+    await settleExpiredApproval(approval, args.workspaceId)
     const expired = approvalHasExpired(approval)
+    const readStatus = effectiveApprovalStatus(approval)
     const canAct = canDecide(access) && isOpenApprovalStatus(approval.status) && !expired
-    const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status)
+    const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status) && !expired
 
     const decisions = await database
       .select({
@@ -85,7 +90,7 @@ export async function getApprovalDetail(args: {
     return {
       ok: true as const,
       id: approval.id,
-      status: approval.status,
+      status: readStatus,
       actionName: approval.actionName,
       plugin: approval.plugin as PluginId,
       projectId: approval.projectId,

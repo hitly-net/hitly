@@ -32,7 +32,16 @@ export function parseProjectConfig(input: Record<string, unknown>): ProjectConfi
   const name = typeof input.name === 'string' ? input.name.trim() : ''
   if (!name) return { error: 'Name is required' }
   const description = typeof input.description === 'string' ? input.description.trim() : ''
-  const sla = (typeof input.sla === 'string' ? input.sla.trim() : '') || '60'
+  // Project request timeout in MINUTES. Blank means "no project timeout":
+  // requests that carry no explicit deadline then get the published 24h
+  // default (see applyRules in lib/approvals.ts), not a hidden 60.
+  const rawSla = typeof input.sla === 'string' ? input.sla.trim() : ''
+  let sla = '1440'
+  if (rawSla) {
+    const n = Number(rawSla)
+    if (!Number.isInteger(n) || n < 1) return { error: 'Request timeout must be a whole number of minutes (or blank for 24 hours)' }
+    sla = String(n)
+  }
   const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl.trim() : ''
   const token = typeof input.token === 'string' ? input.token.trim() : ''
   const namespace = typeof input.namespace === 'string' ? input.namespace.trim() : ''

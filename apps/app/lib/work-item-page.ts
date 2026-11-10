@@ -14,7 +14,8 @@ import {
 } from '@hitly/core'
 import { approvals, decisionRecords, projectMemberships, users } from '@hitly/db/schema'
 import { editedArgsFromPayload, omitEditedArgs } from './edited-args'
-import { approvalHasExpired } from './approval-expiry'
+import { approvalHasExpired, effectiveApprovalStatus } from './approval-expiry'
+import { settleExpiredApproval } from './approvals'
 import { loadOpenedContextRefs } from './context-opens'
 import { loadEvidenceReceiptForDisplay } from './evidence'
 import { canDecide, getProjectAccess } from './rbac'
@@ -211,6 +212,7 @@ export async function loadWorkItemPage(args: {
       })),
     )
 
+    await settleExpiredApproval(approvalRow, args.workspaceId)
     const redacted = redactApprovalForReviewer({ envelope, origin, decisions: decodedDecisions })
     const latestDecision = redacted.decisions[0]
     const editedArgs = latestDecision ? editedArgsFromPayload(latestDecision.payload) : null
@@ -261,7 +263,7 @@ export async function loadWorkItemPage(args: {
       url: item.url,
       opened: openedRefs.includes(item.ref),
     }))
-    const canCancel = canDecide(access) && isOpenApprovalStatus(approvalRow.status)
+    const canCancel = canDecide(access) && isOpenApprovalStatus(approvalRow.status) && !expired
     const delegateTargets = people.filter(
       (person) => person.role !== 'reader' && person.userId !== approvalRow.assignedUserId,
     )
@@ -275,7 +277,7 @@ export async function loadWorkItemPage(args: {
     return {
       ok: true as const,
       id: approvalRow.id,
-      status: approvalRow.status,
+      status: effectiveApprovalStatus(approvalRow),
       actionName: approvalRow.actionName,
       plugin: approvalRow.plugin as PluginId,
       projectId: approvalRow.projectId,

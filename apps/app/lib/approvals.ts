@@ -33,10 +33,11 @@ import { parseRuleActions, parseRuleMatch, ruleMatches } from './rules'
 import { ensureProjectResumeSecret } from './resume-secret'
 import { ensureProjectWebhookSecret } from './webhook-secret'
 import { deliverApprovalLifecycleEvent } from './lifecycle-delivery'
+import { affectedRows } from './housekeeping/result'
 import { newId } from './ids'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
-import { approvalHasExpired } from './approval-expiry'
+import { approvalHasExpired, effectiveApprovalStatus } from './approval-expiry'
 import { appendEvidence, buildDecidedEvent, buildPresentedEvent, buildRequestedEvent, buildResumedEvent, loadLatestReceipt } from './evidence'
 import { canDecide, getProjectAccess } from './rbac'
 import { loadOpenedContextRefs } from './context-opens'
@@ -418,17 +419,24 @@ async function applyRules(args: {
 
   const matched = rules.find((rule) => rule.enabled && ruleMatches(parseRuleMatch(rule.match), args.envelope, args.origin))
   const actions = matched ? parseRuleActions(matched.actions) : {}
-  const slaMinutes = actions.slaMinutes ?? Number(args.project.defaultSlaMinutes) ?? 60
-  const expiresAt = new Date(Date.now() + Math.max(slaMinutes, 1) * 60_000)
+  // Deadline precedence (hitl-spec 3.3, PM ruling): an EXPLICIT caller
+  // deadline on the envelope is authoritative and is never clamped down to
+  // the project SLA; otherwise the matched rule's slaMinutes, then the
+  // project's default timeout, then 24h (the published default). The project
+  // "60" timeout therefore only shapes requests that set no deadline.
   const envelopeExpiry = args.envelope.expiresAt ? new Date(args.envelope.expiresAt) : null
-  const finalExpiry =
-    envelopeExpiry && !Number.isNaN(envelopeExpiry.getTime()) && envelopeExpiry.getTime() < expiresAt.getTime()
-      ? envelopeExpiry
-      : expiresAt
+  const explicitExpiry = envelopeExpiry && !Number.isNaN(envelopeExpiry.getTime()) ? envelopeExpiry : null
+  const projectSla = Number(args.project.defaultSlaMinutes)
+  const slaMinutes = actions.slaMinutes ?? (Number.isFinite(projectSla) && projectSla > 0 ? projectSla : null)
+  const expiresAt =
+    explicitExpiry ??
+    (slaMinutes != null
+      ? new Date(Date.now() + Math.max(slaMinutes, 1) * 60_000)
+      : new Date(Date.now() + DEFAULT_REQUEST_WINDOW_MS))
   const channelTypes: ChannelType[] = actions.channelTypes?.length ? actions.channelTypes : ['email']
   return {
     matched,
-    expiresAt: finalExpiry,
+    expiresAt,
     channelTypes,
     assignedUserId: args.project.defaultAssigneeUserId,
   }
@@ -700,12 +708,7 @@ export async function decideApproval(args: {
     const approval = await loadApproval(args.approvalId, workspaceId, { forUpdate: true })
     if (!approval) return { error: 'Not found', status: 404 as const }
     if (approvalHasExpired(approval)) {
-      if (approval.status === 'pending') {
-        await database
-          .update(approvals)
-          .set({ status: 'expired', updatedAt: new Date() })
-          .where(and(eq(approvals.id, approval.id), eq(approvals.workspaceId, workspaceId)))
-      }
+      await settleExpiredApproval(approval, workspaceId)
       return { error: 'Approval has expired', status: 409 as const }
     }
     if (!isOpenApprovalStatus(approval.status)) {
@@ -1152,12 +1155,7 @@ export async function cancelApprovalAsRequester(args: { apiKey: string; approval
       return { ok: false as const, error: 'Not found', status: 404 as const }
     }
     if (approvalHasExpired(approval)) {
-      if (approval.status === 'pending') {
-        await database
-          .update(approvals)
-          .set({ status: 'expired', updatedAt: new Date() })
-          .where(and(eq(approvals.id, approval.id), eq(approvals.workspaceId, workspaceId)))
-      }
+      await settleExpiredApproval(approval, workspaceId)
       return { ok: false as const, error: 'Approval has expired', status: 409 as const }
     }
     if (approval.status !== 'pending') {
@@ -1196,6 +1194,89 @@ export async function cancelApprovalAsRequester(args: { apiKey: string; approval
   })
 }
 
+/** Host-side default request window when nobody set a deadline (hitl-spec 3.3). */
+export const DEFAULT_REQUEST_WINDOW_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Settle a past-deadline pending row: flip it to `expired` with a guarded
+ * update (exactly one caller wins per row) and fire the opt-in `expired`
+ * lifecycle callback in the winner only. Every read surface calls this so a
+ * row never reports stale `pending` before the hourly sweeper runs; existing
+ * rows already past expiry are settled with no data migration.
+ * Returns the status the read must report.
+ */
+export async function settleExpiredApproval(
+  approval: { id: string; status: string; expiresAt: Date | null; projectId: string; plugin: string; origin: Record<string, unknown> },
+  workspaceId: string,
+  now: number = Date.now(),
+): Promise<string> {
+  if (approval.status !== 'pending') return approval.status
+  if (approval.expiresAt == null || approval.expiresAt.getTime() >= now) return approval.status
+  const database = requireDb()
+  const result = await database
+    .update(approvals)
+    .set({ status: 'expired', updatedAt: new Date() })
+    .where(
+      and(
+        eq(approvals.id, approval.id),
+        eq(approvals.workspaceId, workspaceId),
+        eq(approvals.status, 'pending'),
+      ),
+    )
+  // Only the flip winner sends the expiry callback: exactly once per request.
+  if (affectedRows(result) > 0) {
+    await logProjectEvent({
+      workspaceId,
+      projectId: approval.projectId,
+      approvalId: approval.id,
+      type: 'expired',
+      message: 'Request expired',
+    })
+    await deliverApprovalLifecycleEvent({
+      approval: { id: approval.id, projectId: approval.projectId, plugin: approval.plugin, origin: approval.origin },
+      workspaceId,
+      type: 'expired',
+    })
+  }
+  return 'expired'
+}
+
+/**
+ * Settle every past-deadline pending row in the given projects before a
+ * pending list or count runs, so the shared `status = 'pending'` filters
+ * cannot list or count already-expired requests. Bounded: surfaces re-check
+ * on the next call; the hourly sweeper is the backstop.
+ */
+export async function settleExpiredApprovalsInProjects(
+  workspaceId: string,
+  projectIds: string[],
+  now: number = Date.now(),
+): Promise<void> {
+  if (projectIds.length === 0) return
+  const database = requireDb()
+  const stale = await database
+    .select({
+      id: approvals.id,
+      projectId: approvals.projectId,
+      plugin: approvals.plugin,
+      origin: approvals.origin,
+    })
+    .from(approvals)
+    .where(
+      and(
+        eq(approvals.workspaceId, workspaceId),
+        inArray(approvals.projectId, projectIds),
+        eq(approvals.status, 'pending'),
+        sql`${approvals.expiresAt} is not null`,
+        sql`${approvals.expiresAt} < to_timestamp(${now / 1000})`,
+      ),
+    )
+    .limit(200)
+  for (const row of stale) {
+    await settleExpiredApproval({ ...row, status: 'pending', expiresAt: new Date(now - 1) }, workspaceId, now)
+  }
+}
+
 export const REQUESTER_PENDING_DEFAULT_LIMIT = 50
 export const REQUESTER_PENDING_MAX_LIMIT = 200
 
@@ -1219,6 +1300,9 @@ export async function listRequesterPending(args: {
   return withTenant(workspaceId, async () => {
     await touchApiKey(authn.key.id)
     const now = new Date()
+    // Past-deadline pending rows are settled to `expired` first (and fire
+    // their one expiry callback), then the shared filters below exclude them.
+    await settleExpiredApprovalsInProjects(workspaceId, [authn.project.id], now.getTime())
     const filters = [
       eq(approvals.workspaceId, workspaceId),
       eq(approvals.projectId, authn.project.id),
@@ -1239,6 +1323,7 @@ export async function listRequesterPending(args: {
         createdAt: approvals.createdAt,
         expiresAt: approvals.expiresAt,
         presentedAt: approvals.presentedAt,
+        envelope: approvals.envelope,
       })
       .from(approvals)
       .where(and(...filters))
@@ -1249,16 +1334,36 @@ export async function listRequesterPending(args: {
       ok: true as const,
       projectId: authn.project.id,
       nextCursor,
-      items: page.map((row) => ({
-        id: row.id,
-        kind: 'approval' as const,
-        status: row.status,
-        actionName: row.actionName,
-        idempotencyKey: row.idempotencyKey,
-        createdAt: row.createdAt.toISOString(),
-        deadline: row.expiresAt ? row.expiresAt.toISOString() : null,
-        presentedAt: row.presentedAt ? row.presentedAt.toISOString() : null,
-      })),
+      items: await Promise.all(
+        page.map(async (row) => {
+          // ask_user rows are `question`s, everything else an `approval`; the
+          // headline (prompt / question) rides along so requester clients can
+          // show what is open without a second get_decision per row.
+          const envelope = (await decodeTenantJson(workspaceId, row.envelope)) as unknown as
+            | (ApprovalEnvelope & { _meta?: Record<string, unknown> })
+            | undefined
+          const isQuestion = row.actionName === 'ask_user'
+          const question =
+            typeof envelope?._meta?.question === 'string'
+              ? envelope._meta.question
+              : typeof envelope?._meta?.['net.hitly/question'] === 'string'
+                ? envelope._meta['net.hitly/question']
+                : undefined
+          const prompt = typeof envelope?.prompt === 'string' ? envelope.prompt : undefined
+          return {
+            id: row.id,
+            kind: (isQuestion ? 'question' : 'approval') as 'question' | 'approval',
+            status: effectiveApprovalStatus(row, now.getTime()),
+            actionName: row.actionName,
+            idempotencyKey: row.idempotencyKey,
+            createdAt: row.createdAt.toISOString(),
+            deadline: row.expiresAt ? row.expiresAt.toISOString() : null,
+            presentedAt: row.presentedAt ? row.presentedAt.toISOString() : null,
+            ...(isQuestion ? (prompt ? { prompt } : {}) : {}),
+            ...(!isQuestion ? (question ? { question } : {}) : {}),
+          }
+        }),
+      ),
     }
   })
 }
@@ -1508,6 +1613,11 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
     if (!approval || approval.projectId !== authn.project.id) {
       return { ok: false as const, error: 'Not found', status: 404 as const }
     }
+    // Read-time expiry: a past-deadline pending row must read `expired` here
+    // too (get_decision included), with the flip + one expiry callback, never
+    // a stale `pending` until the sweeper happens to run.
+    await settleExpiredApproval(approval, workspaceId)
+    const readStatus = effectiveApprovalStatus(approval)
 
     const decisionRows = await database
       .select({
@@ -1553,9 +1663,9 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
     const storedResumeHandle = (approval.origin as { resumeHandle?: Record<string, unknown> } | null)?.resumeHandle
     const storedResumeUrl = typeof storedResumeHandle?.resumeUrl === 'string' ? storedResumeHandle.resumeUrl.trim() : ''
     const noCallbackDelivery =
-      approval.plugin === 'http' && !storedResumeUrl && (approval.status === 'decided' || approval.status === 'failed_resume')
+      approval.plugin === 'http' && !storedResumeUrl && (readStatus === 'decided' || readStatus === 'failed_resume')
     const read = await buildHitlRead({
-      approval,
+      approval: { ...approval, status: readStatus },
       envelope,
       decision: latest && decision ? { decision, payload, actorUserId: latest.actorUserId, createdAt: latest.createdAt } : null,
       opens,
@@ -1573,7 +1683,7 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
     return {
       ok: true as const,
       id: approval.id,
-      status: approval.status,
+      status: readStatus,
       decision,
       response: typeof payload.response === 'string' ? payload.response : undefined,
       // The reviewer's typed ask_user answer (hitl-spec 7), verbatim from the
