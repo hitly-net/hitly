@@ -1,5 +1,11 @@
 import { productionAuthSecretProblem } from './auth-secret'
 import { MAX_TRUSTED_PROXY_COUNT, TRUSTED_PROXY_COUNT_ENV, trustedProxyCount } from './client-address'
+import {
+  DB_CONNECTION_TIMEOUT_MS_ENV,
+  DB_POOL_MAX_ENV,
+  dbConnectionTimeoutMsProblem,
+  dbPoolMaxProblem,
+} from './db-pool'
 import { MFA_ENCRYPTION_KEY_ENV, mfaEncryptionKeyProblem } from './mfa-crypto'
 import { TRUSTED_PROXIES_ENV, parseTrustedProxies, trustedProxiesProblem } from './trusted-proxies'
 
@@ -14,6 +20,9 @@ import { TRUSTED_PROXIES_ENV, parseTrustedProxies, trustedProxiesProblem } from 
  * - HITLY_MFA_ENCRYPTION_KEY must be 32-byte standard base64 (lib/mfa-crypto.ts).
  * Every environment:
  * - HITLY_TRUSTED_PROXIES, when set, must be a list of IPs or CIDR ranges.
+ * - HITLY_DB_CONNECTION_TIMEOUT_MS, when set, must be a positive integer.
+ * - HITLY_DB_POOL_MAX, when set, must be an integer of at least 3 (MFA confirm
+ *   holds one connection while Better Auth revokeOtherSessions takes another).
  */
 
 /** Passwords from the local development setup and examples; never acceptable in production. */
@@ -55,6 +64,10 @@ export function startupProblems(env: Record<string, string | undefined> = proces
   }
   const proxies = trustedProxiesProblem(env)
   if (proxies) problems.push(proxies)
+  const timeout = dbConnectionTimeoutMsProblem(env[DB_CONNECTION_TIMEOUT_MS_ENV])
+  if (timeout) problems.push(timeout)
+  const poolMax = dbPoolMaxProblem(env[DB_POOL_MAX_ENV])
+  if (poolMax) problems.push(poolMax)
   return problems
 }
 

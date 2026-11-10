@@ -16,6 +16,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { and, eq, inArray, like } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import * as schema from '@hitly/db/schema'
 import {
   accountSecurityEvents,
   accounts,
@@ -28,6 +30,7 @@ import {
 } from '@hitly/db/schema'
 import { auth } from './auth'
 import { db, pool } from './db'
+import { createAppPool } from './db-pool'
 import { CURRENT_PASSWORD_INCORRECT_MESSAGE } from './password-change'
 import { PUBLIC_PATHS } from './constants'
 import { newId } from './ids'
@@ -402,6 +405,64 @@ describe('MFA confirm revokes other sessions', () => {
       assert.ok(!serialised.includes(payload.secret), 'audit must not contain the TOTP secret')
       assert.ok(!serialised.includes(code), 'audit must not contain the TOTP code')
       if (wrappingKey) assert.ok(!serialised.includes(wrappingKey), 'audit must not contain the encryption key')
+    }
+  })
+
+  it('returns mfa_failed within a bounded time when the pool is exhausted', async () => {
+    const address = email('confirm-pool')
+    await createUser(address)
+    const cookie = await signInCookie(address)
+    const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookie, { currentPassword: PASSWORD }), routeMocks())
+    const payload = (await enrolled.json()) as { secret: string }
+    const user = await userByEmail(address)
+    assert.ok(user)
+    const url = process.env.DATABASE_URL
+    assert.ok(url)
+
+    const tiny = createAppPool(url, {
+      HITLY_DB_POOL_MAX: '1',
+      HITLY_DB_CONNECTION_TIMEOUT_MS: '500',
+    })
+    assert.equal(tiny.options.connectionTimeoutMillis, 500)
+    const tinyDb = drizzle(tiny, { schema })
+    const failLines: string[] = []
+    const started = Date.now()
+    let cap: ReturnType<typeof setTimeout> | undefined
+    try {
+      const failed = await Promise.race([
+        handleMfaConfirm(
+          post(MFA_CONFIRM_ENDPOINT, cookie, { code: totpCode(fromBase32(payload.secret), NOW) }),
+          routeMocks({
+            database: tinyDb,
+            log: (line) => failLines.push(line),
+            revokeOtherSessions: async () => {
+              const client = await tiny.connect()
+              client.release()
+            },
+          }),
+        ),
+        new Promise<never>((_, reject) => {
+          cap = setTimeout(() => reject(new Error('exhausted pool did not fail within 3000ms')), 3000)
+        }),
+      ])
+      const elapsed = Date.now() - started
+      assert.ok(elapsed < 3000, `exhausted pool must fail quickly, took ${elapsed}ms`)
+      assert.equal(failed.status, 500)
+      assert.deepEqual(await failed.json(), { error: 'mfa_failed' })
+      assert.equal(failLines.length, 1)
+      assert.match(failLines[0]!, /^\[hitly mfa\] Could not confirm MFA: /)
+      assert.ok(!failLines[0]!.includes(payload.secret))
+      assert.ok(!failLines[0]!.includes('postgres://'))
+      const pending = (await database.select().from(userMfa).where(eq(userMfa.userId, user.id)))[0]
+      assert.equal(pending?.enabled, false)
+      const types = (await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))).map(
+        (event) => event.type,
+      )
+      assert.ok(!types.includes(ACCOUNT_SECURITY_EVENT.enrolled))
+      assert.ok(!types.includes(ACCOUNT_SECURITY_EVENT.otherSessionsRevoked))
+    } finally {
+      if (cap) clearTimeout(cap)
+      await Promise.race([tiny.end(), new Promise((resolve) => setTimeout(resolve, 250))])
     }
   })
 })
