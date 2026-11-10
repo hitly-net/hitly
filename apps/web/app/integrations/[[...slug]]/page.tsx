@@ -1,4 +1,5 @@
 import { integrationsSource } from '@/lib/source'
+import { docPageMeta } from '@/lib/site'
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from 'fumadocs-ui/layouts/docs/page'
 import { notFound } from 'next/navigation'
 import { getMDXComponents } from '@/components/mdx'
@@ -37,8 +38,5 @@ export async function generateMetadata(props: {
   const params = await props.params
   const page = integrationsSource.getPage(params.slug)
   if (!page) notFound()
-  return {
-    title: page.data.title,
-    description: page.data.description,
-  }
+  return docPageMeta(page)
 }

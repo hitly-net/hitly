@@ -24,6 +24,21 @@ export interface ServerDeps {
 /** Project API keys look like `hitly_<base64url>`; resume tokens (`hitly_resume_…`) are not API keys. */
 const API_KEY_PATTERN = /^hitly_[A-Za-z0-9_-]{16,128}$/
 
+/** Where a plain browser visit to the MCP endpoint is sent. */
+export const MCP_DOCS_URL = 'https://hitly.net/docs/mcp'
+
+/**
+ * True when this looks like a person typing the URL into a browser rather than an
+ * MCP client: GET, Accept wants HTML, no credentials, and not an SSE stream request
+ * (MCP clients may send `text/event-stream` together with `text/html`).
+ */
+export function isBrowserVisit(req: IncomingMessage): boolean {
+  if (req.method !== 'GET') return false
+  if (req.headers.authorization) return false
+  const accept = (req.headers.accept ?? '').toLowerCase()
+  return accept.includes('text/html') && !accept.includes('text/event-stream')
+}
+
 export function extractApiKey(header: string | undefined): { key: string } | { error: 'missing' | 'invalid' } {
   if (!header) return { error: 'missing' }
   const match = /^Bearer\s+(\S+)\s*$/i.exec(header)
@@ -65,7 +80,7 @@ export function buildMcpServer(config: McpConfig, apiKey: string, deps: ServerDe
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
       instructions:
-        'HITLy routes asks to a human reviewer. request_approval and ask_user return immediately (pending). Never treat pending, expired or cancelled as approval. Confirm with get_decision before acting; if editedArgs is present, act on those.',
+        'HITLy routes asks to a human reviewer. request_approval and ask_user return immediately (pending). Never treat pending, expired or cancelled as approval. Confirm with get_decision before acting; if editedArgs is present, act on those. The typed ask_user answer comes back from get_decision as answer {kind, value}; use it verbatim. callback_url (https, with optional cb_auth_token sent back as Authorization: Bearer) gets a POST when the outcome is known, but the callback is only a hint - get_decision is the source of truth; if you don\'t pass callback_url you won\'t receive a callback, so poll get_decision. Ask one question per ask_user request (hitl/v0 answers exactly one ask); do not build on simple_form, which is going away.',
     },
   )
   const host = deps.hostFor ? deps.hostFor(apiKey) : new HttpHostClient(config.apiUrl, apiKey, deps.fetchImpl)
@@ -106,6 +121,12 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         // Sink for requests made without callback_url. Body is discarded unread.
         req.resume()
         res.writeHead(req.method === 'POST' ? 204 : 405).end()
+        return
+      }
+      if ((url.pathname === MCP_PATH || url.pathname === `${MCP_PATH}/`) && isBrowserVisit(req)) {
+        // A person opened the machine endpoint in a browser: point them at the docs.
+        logger.log({ event: 'browser_redirect' })
+        res.writeHead(302, { location: MCP_DOCS_URL, 'cache-control': 'no-store' }).end()
         return
       }
       if (url.pathname !== MCP_PATH) {
