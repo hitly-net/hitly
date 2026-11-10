@@ -4,6 +4,7 @@ import { PROJECT_ROLES } from '@hitly/core'
 import { addProjectMember, removeProjectMember, updateProjectMemberRole } from '@/actions/projects'
 import { AppShell } from '@/components/app-shell'
 import { ProjectTabs } from '@/components/project-tabs'
+import { isLastAdminRow } from '@/lib/member-guard'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
 import { requireDb } from '@/lib/tenant'
@@ -44,6 +45,11 @@ export default async function ProjectPeoplePage({ params }: { params: Promise<{ 
   const onProject = new Set(people.map((person) => person.userId))
   const candidates = workspaceMembers.filter((member) => !onProject.has(member.userId))
 
+  // The product rule (a project always keeps an admin) is enforced in the
+  // server actions; the UI just disables the dead-end for the last admin.
+  const adminCount = people.filter((person) => person.role === 'admin').length
+  const lastAdminHint = 'Only admin on this project - promote someone else to admin first'
+
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
       <h1 className="text-2xl font-semibold">{project.name}</h1>
@@ -83,7 +89,9 @@ export default async function ProjectPeoplePage({ params }: { params: Promise<{ 
       <p className="mt-2 text-xs text-zinc-500">Notices still go to the default assignee on Config until team routing ships.</p>
 
       <ul className="mt-6 max-w-xl divide-y divide-zinc-200 dark:divide-zinc-800">
-        {people.map((person) => (
+        {people.map((person) => {
+          const lastAdmin = isLastAdminRow(person.role, adminCount)
+          return (
           <li key={person.id} className="flex items-center gap-2 py-3 text-sm">
             <div className="flex-1">
               <p className="font-medium">{person.name}</p>
@@ -93,7 +101,9 @@ export default async function ProjectPeoplePage({ params }: { params: Promise<{ 
               <select
                 name="role"
                 defaultValue={person.role}
-                className="h-8 rounded-md border border-zinc-200 px-2 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                disabled={lastAdmin}
+                title={lastAdmin ? lastAdminHint : undefined}
+                className="h-8 rounded-md border border-zinc-200 px-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {PROJECT_ROLES.map((role) => (
                   <option key={role} value={role}>
@@ -101,17 +111,28 @@ export default async function ProjectPeoplePage({ params }: { params: Promise<{ 
                   </option>
                 ))}
               </select>
-              <button type="submit" className="text-xs underline">
+              <button
+                type="submit"
+                className="text-xs underline disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600"
+                disabled={lastAdmin}
+                title={lastAdmin ? lastAdminHint : undefined}
+              >
                 Save
               </button>
             </form>
             <form action={removeProjectMember.bind(null, id, person.id)}>
-              <button type="submit" className="text-xs text-zinc-500 hover:text-red-600">
+              <button
+                type="submit"
+                className="text-xs text-zinc-500 hover:text-red-600 disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600"
+                disabled={lastAdmin}
+                title={lastAdmin ? lastAdminHint : undefined}
+              >
                 Remove
               </button>
             </form>
           </li>
-        ))}
+          )
+        })}
       </ul>
     </AppShell>
   )
