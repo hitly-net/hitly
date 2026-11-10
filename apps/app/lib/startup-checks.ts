@@ -1,5 +1,6 @@
 import { productionAuthSecretProblem } from './auth-secret'
 import { MAX_TRUSTED_PROXY_COUNT, TRUSTED_PROXY_COUNT_ENV, trustedProxyCount } from './client-address'
+import { MFA_ENCRYPTION_KEY_ENV, mfaEncryptionKeyProblem } from './mfa-crypto'
 import { TRUSTED_PROXIES_ENV, parseTrustedProxies, trustedProxiesProblem } from './trusted-proxies'
 
 /**
@@ -10,6 +11,7 @@ import { TRUSTED_PROXIES_ENV, parseTrustedProxies, trustedProxiesProblem } from 
  * Production only (NODE_ENV exactly 'production'):
  * - BETTER_AUTH_SECRET must be usable (lib/auth-secret.ts).
  * - DATABASE_URL must not carry a development or placeholder password.
+ * - HITLY_MFA_ENCRYPTION_KEY must be 32-byte standard base64 (lib/mfa-crypto.ts).
  * Every environment:
  * - HITLY_TRUSTED_PROXIES, when set, must be a list of IPs or CIDR ranges.
  */
@@ -48,6 +50,8 @@ export function startupProblems(env: Record<string, string | undefined> = proces
     if (secret) problems.push(secret)
     const database = productionDatabasePasswordProblem(env.DATABASE_URL)
     if (database) problems.push(database)
+    const mfaKey = mfaEncryptionKeyProblem(env[MFA_ENCRYPTION_KEY_ENV])
+    if (mfaKey) problems.push(`${mfaKey} in production`)
   }
   const proxies = trustedProxiesProblem(env)
   if (proxies) problems.push(proxies)

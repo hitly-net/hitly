@@ -118,6 +118,91 @@ export const pendingEmailChanges = pgTable(
   ],
 )
 
+/**
+ * Authenticator-app MFA for an account. The TOTP secret is stored only as
+ * authenticated ciphertext; `enabled` stays false until a valid code is
+ * confirmed. Additive: accounts with no row have MFA off.
+ */
+export const userMfa = pgTable(
+  'user_mfa',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    totpCiphertext: text('totp_ciphertext').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    lastUsedStep: integer('last_used_step'),
+    failedVerifyCount: integer('failed_verify_count').notNull().default(0),
+    lockedUntil: timestamp('locked_until', { precision: 3, withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [uniqueIndex('user_mfa_user_id_idx').on(table.userId)],
+)
+
+/**
+ * One-time recovery codes for MFA. Only an HMAC is stored; plaintext is
+ * shown once at enrol or regenerate.
+ */
+export const userMfaRecoveryCodes = pgTable(
+  'user_mfa_recovery_codes',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeHash: varchar('code_hash', { length: 64 }).notNull(),
+    usedAt: timestamp('used_at', { precision: 3, withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex('user_mfa_recovery_codes_hash_idx').on(table.codeHash),
+    index('user_mfa_recovery_codes_user_id_idx').on(table.userId),
+  ],
+)
+
+/**
+ * Half-authenticated password login waiting on TOTP or a recovery code.
+ * The Better Auth session is held server-side (id only plus encrypted
+ * Set-Cookie values) until the second step succeeds; the client never
+ * receives a session cookie in this state.
+ */
+export const userMfaChallenges = pgTable(
+  'user_mfa_challenges',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    sessionId: id('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    cookiesCiphertext: text('cookies_ciphertext').notNull(),
+    expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex('user_mfa_challenges_token_hash_idx').on(table.tokenHash),
+    uniqueIndex('user_mfa_challenges_user_id_idx').on(table.userId),
+  ],
+)
+
+/** Account-security audit trail (MFA enrol, disable, recovery, lockout). */
+export const accountSecurityEvents = pgTable(
+  'account_security_events',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    type: varchar('type', { length: 64 }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [index('account_security_events_user_id_idx').on(table.userId)],
+)
+
 export const workspaces = pgTable('workspaces', {
   id: id().primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
