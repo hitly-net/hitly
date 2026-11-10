@@ -227,6 +227,43 @@ describe('signed-in password change on real Postgres', () => {
     assert.notEqual(await signInStatus(address, PASSWORD), 200)
   })
 
+  it('revokes only this account: another user keeps their signed-in session', async () => {
+    const address = email(`collateral-${run}`)
+    await createUser(address)
+    const cookieA = await signInCookie(address)
+
+    // Fixture: a second, unrelated account with its own live session. The
+    // revoke predicate must be scoped to the changing user; a revoke that
+    // instead hits sessions where user_id <> current signs this account out
+    // and this test goes red.
+    const otherAddress = email(`bystander-${run}`)
+    await createUser(otherAddress)
+    const cookieOther = await signInCookie(otherAddress)
+    const otherBefore = await sessionUser(cookieOther)
+    assert.ok(otherBefore, 'the other user session is valid before the change')
+    const otherUserId = otherBefore.user.id
+    assert.notEqual(otherUserId, (await sessionUser(cookieA))?.user.id, 'the two sessions are different accounts')
+    const otherCountBefore = await liveSessionCount(otherUserId)
+    assert.ok(otherCountBefore >= 1, 'the other user has live session rows before the change')
+
+    const response = await handlePasswordChange(
+      changeRequest(cookieA, { currentPassword: PASSWORD, newPassword: 'stable-horse-fresh' }, `203.0.113.${run.slice(-1)}`),
+      { allow: () => true, notify: async () => {} },
+    )
+    assert.equal(response.status, 200, 'the change itself succeeds')
+
+    // The bystander is untouched: same cookie, same account, same rows.
+    const otherAfter = await sessionUser(cookieOther)
+    assert.ok(otherAfter, 'the other user session still resolves after the change')
+    assert.equal(otherAfter.user.id, otherUserId, 'the bystander cookie still names the same account')
+    assert.equal(await liveSessionCount(otherUserId), otherCountBefore, 'no session row of the other user was revoked')
+
+    // And the change still did its job on its own account.
+    const reissued = cookieHeader(response)
+    assert.ok(await sessionUser(reissued), 'the changing device stays signed in')
+    assert.equal(await sessionUser(cookieA), null, 'the pre-change session of the changing account is gone')
+  })
+
   it('leaves the canary password in no log line and no email', async () => {
     const address = email(`canary-${run}`)
     await createUser(address)
