@@ -52,6 +52,7 @@ import {
   handleMfaVerify,
   hashMfaChallengeToken,
   MFA_DISABLED_LOG,
+  MFA_OTHER_SESSIONS_REVOKED_LOG,
   MFA_RECOVERY_CODES_REGENERATED_LOG,
   type MfaRouteDeps,
 } from './mfa-route'
@@ -260,6 +261,57 @@ describe('MFA enrolment', () => {
       assert.ok(!joinedLogs.includes(recovery), 'recovery codes must not appear in logs')
     }
     assert.ok(!joinedLogs.includes(code), 'TOTP code must not appear in logs')
+  })
+})
+
+describe('MFA confirm revokes other sessions', () => {
+  it('revokes other sessions on a successful confirm and keeps the current session', async () => {
+    const address = email('confirm-revoke')
+    await createUser(address)
+    const cookieA = await signInCookie(address)
+    const cookieB = await signInCookie(address)
+    assert.ok(await sessionFromCookie(cookieA))
+    assert.ok(await sessionFromCookie(cookieB))
+
+    const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookieA, { currentPassword: PASSWORD }), routeMocks())
+    const payload = (await enrolled.json()) as { secret: string }
+    const lines: string[] = []
+    const confirmed = await handleMfaConfirm(
+      post(MFA_CONFIRM_ENDPOINT, cookieA, { code: totpCode(fromBase32(payload.secret), NOW) }),
+      routeMocks({ log: (line) => lines.push(line) }),
+    )
+    assert.equal(confirmed.status, 200)
+    assert.ok(await sessionFromCookie(cookieA), 'the current session is kept')
+    assert.equal(await sessionFromCookie(cookieB), null, 'other sessions are revoked')
+
+    const user = await userByEmail(address)
+    assert.ok(user)
+    const types = (await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))).map(
+      (event) => event.type,
+    )
+    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.enrolled))
+    assert.ok(types.includes(ACCOUNT_SECURITY_EVENT.otherSessionsRevoked))
+    assert.deepEqual(lines, [`${MFA_OTHER_SESSIONS_REVOKED_LOG} user=${user.id}`])
+  })
+
+  it('does not revoke sessions when confirm fails', async () => {
+    const address = email('confirm-keep')
+    await createUser(address)
+    const cookieA = await signInCookie(address)
+    const cookieB = await signInCookie(address)
+    const enrolled = await handleMfaEnrol(post(MFA_ENROL_ENDPOINT, cookieA, { currentPassword: PASSWORD }), routeMocks())
+    assert.equal(enrolled.status, 200)
+    const failed = await handleMfaConfirm(post(MFA_CONFIRM_ENDPOINT, cookieA, { code: '000000' }), routeMocks())
+    assert.equal(failed.status, 400)
+    assert.ok(await sessionFromCookie(cookieA))
+    assert.ok(await sessionFromCookie(cookieB), 'a failed confirm must not revoke other sessions')
+    const user = await userByEmail(address)
+    assert.ok(user)
+    const types = (await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))).map(
+      (event) => event.type,
+    )
+    assert.ok(!types.includes(ACCOUNT_SECURITY_EVENT.otherSessionsRevoked))
+    assert.ok(!types.includes(ACCOUNT_SECURITY_EVENT.enrolled))
   })
 })
 
