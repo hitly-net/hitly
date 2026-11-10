@@ -326,7 +326,7 @@ test('inbox detail / list / audit / mobile loaders redact on the server (source)
   assert.doesNotMatch(loaderCode, /encodeTenantJson/, 'page loader must not write envelope/origin back')
   assert.doesNotMatch(loaderCode, /\.update\(approvals\)/, 'page loader must not update the stored row')
 
-  assert.match(inboxListPageSrc, /listInboxItems/, 'inbox list page must use listInboxItems')
+  assert.match(inboxListPageSrc, /listInboxItemsForWeb/, 'inbox list page must page through listInboxItemsForWeb')
   assert.match(auditPageSrc, /listAudit/, 'audit/history page must use listAudit')
   assert.match(inboxLibCode, /toInboxListItem/, 'inbox list must map through the allowlisted DTO')
   assert.match(inboxLibCode, /toAuditRow/, 'audit list must map through the allowlisted DTO')

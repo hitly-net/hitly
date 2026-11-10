@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { DEFAULT_DEADLINE_MS, MAX_DEADLINE_MS } from './config.ts'
+import type { HostClient } from './host-client.ts'
 import { argsHash } from './jcs.ts'
 import { DETAIL_MAX, TOOL_NAMES, toResponseV0, validateDetail, validateQuestion, validateRequestId } from './tools.ts'
 import { baseApproval, FakeHost, FIXED_NOW, startHarness, structured } from './test-helpers.ts'
@@ -394,6 +395,61 @@ test('list_pending returns this key\u2019s open requests [M0]', async () => {
     assert.deepEqual(items.map((item) => item.kind), ['approval', 'question'])
     assert.equal(items[0].question, baseApproval.question)
     assert.equal(items[1].prompt, 'Which day?')
+  } finally {
+    await h.close()
+  }
+})
+
+test('list_pending accepts cursor, returns nextCursor, and reaches item 101', async () => {
+  // Mutant M-mcp: if list_pending ignores input.cursor (always page 1) this goes red.
+  const catalog = Array.from({ length: 101 }, (_, i) => ({
+    id: `apr_${String(i + 1).padStart(4, '0')}`,
+    kind: 'approval',
+    question: `Reach item ${i + 1}?`,
+    createdAt: '2026-11-09T13:00:00.000Z',
+  }))
+  const pageSize = 50
+  const unused = async () => ({ ok: false as const, status: 501, error: 'unused', code: 'not_supported_by_host' as const })
+  const host: HostClient = {
+    ingest: unused,
+    getApproval: unused,
+    cancel: unused,
+    listPending: async (_projectId, cursor) => {
+      const start = cursor ? catalog.findIndex((item) => item.id === cursor) + 1 : 0
+      const from = Math.max(start, 0)
+      const page = catalog.slice(from, from + pageSize)
+      const last = page[page.length - 1]
+      const more = from + page.length < catalog.length
+      return { ok: true, status: 200, data: { items: page, nextCursor: more && last ? last.id : null } }
+    },
+  }
+  const h = await startHarness({ deps: { hostFor: () => host } })
+  try {
+    const client = await h.client()
+    const listed = (await client.listTools()).tools.find((tool) => tool.name === 'list_pending')
+    assert.match(String(listed?.description ?? ''), /nextCursor/)
+    assert.match(String(listed?.description ?? ''), /cursor/)
+
+    const first = structured(await client.callTool({ name: 'list_pending', arguments: {} })) as {
+      items: Array<{ id: string }>
+      nextCursor: string | null
+    }
+    assert.equal(first.items.length, 50)
+    assert.equal(first.nextCursor, 'apr_0050')
+    assert.equal(first.items.some((item) => item.id === 'apr_0101'), false)
+
+    const seen: string[] = [...first.items.map((item) => item.id)]
+    let cursor: string | null = first.nextCursor
+    while (cursor) {
+      const page = structured(await client.callTool({ name: 'list_pending', arguments: { cursor } })) as {
+        items: Array<{ id: string }>
+        nextCursor: string | null
+      }
+      seen.push(...page.items.map((item) => item.id))
+      cursor = page.nextCursor
+    }
+    assert.equal(seen.length, 101)
+    assert.equal(seen[100], 'apr_0101', 'item 101 must be reachable with list_pending cursor')
   } finally {
     await h.close()
   }
