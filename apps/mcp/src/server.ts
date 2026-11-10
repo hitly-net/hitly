@@ -24,6 +24,21 @@ export interface ServerDeps {
 /** Project API keys look like `hitly_<base64url>`; resume tokens (`hitly_resume_…`) are not API keys. */
 const API_KEY_PATTERN = /^hitly_[A-Za-z0-9_-]{16,128}$/
 
+/** Where a plain browser visit to the MCP endpoint is sent. */
+export const MCP_DOCS_URL = 'https://hitly.net/docs/mcp'
+
+/**
+ * True when this looks like a person typing the URL into a browser rather than an
+ * MCP client: GET, Accept wants HTML, no credentials, and not an SSE stream request
+ * (MCP clients may send `text/event-stream` together with `text/html`).
+ */
+export function isBrowserVisit(req: IncomingMessage): boolean {
+  if (req.method !== 'GET') return false
+  if (req.headers.authorization) return false
+  const accept = (req.headers.accept ?? '').toLowerCase()
+  return accept.includes('text/html') && !accept.includes('text/event-stream')
+}
+
 export function extractApiKey(header: string | undefined): { key: string } | { error: 'missing' | 'invalid' } {
   if (!header) return { error: 'missing' }
   const match = /^Bearer\s+(\S+)\s*$/i.exec(header)
@@ -106,6 +121,12 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         // Sink for requests made without callback_url. Body is discarded unread.
         req.resume()
         res.writeHead(req.method === 'POST' ? 204 : 405).end()
+        return
+      }
+      if ((url.pathname === MCP_PATH || url.pathname === `${MCP_PATH}/`) && isBrowserVisit(req)) {
+        // A person opened the machine endpoint in a browser: point them at the docs.
+        logger.log({ event: 'browser_redirect' })
+        res.writeHead(302, { location: MCP_DOCS_URL, 'cache-control': 'no-store' }).end()
         return
       }
       if (url.pathname !== MCP_PATH) {

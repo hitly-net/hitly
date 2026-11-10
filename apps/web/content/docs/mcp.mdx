@@ -1,0 +1,35 @@
+---
+title: MCP server
+description: Let a bot ask a human through HITLy over Model Context Protocol.
+---
+
+The HITLy MCP server lets a bot pause and ask a person (on the HITLy [inbox](/docs/inbox)) for an approval or an answer, then carry on once the human has decided. It speaks Streamable HTTP MCP — async-first: every create returns immediately with `state: "pending"`; there is no wait or long-poll.
+
+## Endpoint
+
+```text
+https://mcp.hitly.net/mcp
+```
+
+## Auth
+
+`Authorization: Bearer <project key>` — a HITLy **project API key** (from your project settings, the same key the [HTTP plugin](/integrations/http) uses). A missing or malformed key gets `401` with a `WWW-Authenticate: Bearer` challenge.
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `request_approval` | Ask a human to approve, reject, or ignore an action. Returns `requestId` and `state: "pending"` immediately. |
+| `ask_user` | Ask a question with an answer schema (free text, single/multi choice, simple form). |
+| `get_decision` | Non-blocking read of a request's current state. Returns `editedArgs` when the reviewer amended the action — act on those. |
+| `list_pending` | List open requests created with your key. |
+
+## There is no decide tool
+
+Bots can request, read, and cancel — they cannot decide. Decisions come from a signed-in **human** in the HITLy web or mobile inbox. `pending`, `expired` and `cancelled` are never approval: confirm with `get_decision` before acting.
+
+## Polling and callbacks
+
+Prefer a `callback_url` on create. If you cannot take callbacks, poll `get_decision` politely (every 30–60 s while pending, backing off); the callback is a hint, `get_decision` is the source of truth.
+
+Open the endpoint URL in a browser and you will be redirected here.
