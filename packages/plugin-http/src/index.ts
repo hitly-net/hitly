@@ -9,7 +9,45 @@ import {
   type OriginRef,
   type ResumeResponse,
 } from '@hitly/core'
-import { checkedFetch, destinationHost, destinationStatusMessage } from '@hitly/core/destination-check'
+import { deliverHttpCallback, resolveSigningKey } from './deliver.ts'
+import {
+  buildDecidedBody,
+  buildLifecycleBody,
+  eventIdFor,
+  isLifecycleEventType,
+  parseLifecycleEvents,
+  readLifecycleEvents,
+  type LifecycleEventType,
+} from './events.ts'
+import { CB_AUTH_TOKEN_KEY, readCbAuthToken, redactSecrets } from './secrets.ts'
+
+export {
+  buildSignatureHeaders,
+  HEADER_EVENT_ID,
+  HEADER_KEY_ID,
+  HEADER_SIGNATURE,
+  HEADER_TIMESTAMP,
+  isSigningKeyUsable,
+  pickActiveSigningKey,
+  signBody,
+  type SigningKeyEntry,
+  TIMESTAMP_MAX_SKEW_SECONDS,
+  verifyHttpSignature,
+  webhookKeyId,
+} from './sign.ts'
+export {
+  buildDecidedBody,
+  buildLifecycleBody,
+  EVENT_DECIDED,
+  deterministicEventId,
+  LIFECYCLE_EVENTS,
+  newEventId,
+  parseLifecycleEvents,
+  type HttpCallbackEventType,
+  type LifecycleEventType,
+} from './events.ts'
+export { deliverHttpCallback, DEFAULT_BACKOFF_MS, resolveSigningKey, resolveSigningSecret } from './deliver.ts'
+export { CB_AUTH_TOKEN_KEY, containsSecretValue, readCbAuthToken, redactSecrets, SECRET_HANDLE_KEYS } from './secrets.ts'
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
@@ -65,11 +103,11 @@ function attachmentList(value: unknown): ApprovalAttachment[] | undefined {
 }
 
 /**
- * `reasonRequired` (hitl-spec 3.6): answer values that need a reason. A malformed
- * value is refused rather than silently dropped (spec 7). An explicit `[]` stays `[]`:
- * that opts out of the reason prompt (the binary default `["reject"]` from
- * `resolveReasonRequired` only applies when the field is absent). Absent/null stay
- * `undefined` so the binary-shaped default still applies in @hitly/core.
+ * reasonRequired (hitl-spec 3.6): answer values that need a reason. A malformed
+ * value is refused rather than silently dropped (spec 7). An explicit [] stays []:
+ * that opts out of the reason prompt (the binary default ["reject"] from
+ * resolveReasonRequired only applies when the field is absent). Absent/null stay
+ * undefined so the binary-shaped default still applies in @hitly/core.
  */
 function reasonRequiredList(value: unknown): string[] | undefined {
   if (value === undefined || value === null) return undefined
@@ -84,9 +122,26 @@ function reasonRequiredList(value: unknown): string[] | undefined {
   return out
 }
 
+export type HttpDecisionPayload = DecisionPayload & {
+  /** Typed ask_user answer; travels only in the callback / decision payload. */
+  answer?: unknown
+  argsHash?: string
+  decidedBy?: string
+  client?: string
+}
+
 /**
- * Generic HTTP pause: caller supplies `resumeUrl`.
- * Resume: POST the decision JSON plus ingest `metadata`. n8n Wait (`$execution.resumeUrl`) is one host of this callback.
+ * http plugin: caller supplies resumeUrl.
+ * Resume POSTs decision JSON (+ optional Bearer / HMAC / lifecycle). Default remains a
+ * single final-decision POST so n8n Wait ($execution.resumeUrl) keeps working.
+ *
+ * Optional ingest fields (M0h):
+ * - cb_auth_token / cbAuthToken: stored on resumeHandle (tenant-encrypted with origin),
+ *   sent as Authorization Bearer, never echoed in resumeData / metadata / logs.
+ * - lifecycleEvents: opt-in list among presented|opened|cancelled|expired.
+ *
+ * The stored create-once request is never mutated; editedArgs travel only in the
+ * decision/response payload.
  */
 export const httpPlugin: HitlyPlugin = {
   id: 'http',
@@ -100,7 +155,9 @@ export const httpPlugin: HitlyPlugin = {
     const workflowId = optionalString(body.workflowId)
     const workflowName = optionalString(body.workflowName)
     const args = asRecord(body.args)
-    const metadata = asRecord(body.metadata)
+    // The metadata bag is caller-supplied: strip any credential-shaped keys so
+    // a cb_auth_token smuggled inside metadata can never be stored or projected.
+    const metadata = redactSecrets(asRecord(body.metadata))
     const pageId = optionalString(metadata.pageId) ?? optionalString(args.pageId)
 
     const allowedActionsPartial =
@@ -114,6 +171,15 @@ export const httpPlugin: HitlyPlugin = {
     const editReason =
       body.editReason && typeof body.editReason === 'object' ? (body.editReason as Record<string, unknown>) : undefined
     const reasonRequired = reasonRequiredList(body.reasonRequired)
+
+    const cbAuthToken = optionalString(body.cb_auth_token) ?? optionalString(body.cbAuthToken)
+    const lifecycleEvents = parseLifecycleEvents(body.lifecycleEvents ?? body.lifecycle_events)
+
+    const resumeHandle: Record<string, unknown> = { resumeUrl, metadata }
+    if (cbAuthToken) resumeHandle[CB_AUTH_TOKEN_KEY] = cbAuthToken
+    if (lifecycleEvents.length > 0) resumeHandle.lifecycleEvents = lifecycleEvents
+    const idempotencyKey = optionalString(body.idempotencyKey) ?? optionalString(body.idempotency_key)
+    if (idempotencyKey) resumeHandle.idempotencyKey = idempotencyKey
 
     return {
       action: {
@@ -132,7 +198,7 @@ export const httpPlugin: HitlyPlugin = {
         plugin: 'http',
         projectId: String(body.projectId ?? ''),
         runId,
-        resumeHandle: { resumeUrl, metadata },
+        resumeHandle,
         details: Object.fromEntries(
           Object.entries({
             executionId,
@@ -144,45 +210,86 @@ export const httpPlugin: HitlyPlugin = {
       },
     }
   },
-  async resume(origin: OriginRef, payload: DecisionPayload, _credentials?: ConnectionCredentials): Promise<ResumeResponse> {
+  async resume(
+    origin: OriginRef,
+    payload: DecisionPayload,
+    credentials?: ConnectionCredentials,
+  ): Promise<ResumeResponse> {
     const resumeUrl = String(origin.resumeHandle.resumeUrl ?? '')
-    const metadata = asRecord(origin.resumeHandle.metadata)
-    const resumeData: Record<string, unknown> = {
-      decision: payload.decision,
-      metadata,
-    }
-    const approvalId = optionalString(origin.resumeHandle.approvalId)
-    if (approvalId) resumeData.id = approvalId
-    if (payload.editedArgs) resumeData.editedArgs = payload.editedArgs
-    if (payload.response) resumeData.response = payload.response
-    if (payload.reason) resumeData.reason = payload.reason
-    const response = await checkedFetch(
+    const handle = origin.resumeHandle
+    const approvalId = optionalString(handle.approvalId)
+    // Logical key mirrors buildDecidedBody's type derivation: an ask_user answer
+    // and the final decision are distinct logical deliveries of one approval.
+    const logicalKey = (payload as HttpDecisionPayload).answer !== undefined ? 'answered' : 'decided'
+    const eventId = eventIdFor(handle, logicalKey)
+    const body = buildDecidedBody({
+      eventId,
+      origin,
+      payload: payload as HttpDecisionPayload,
+      approvalId,
+    })
+    const rawBody = JSON.stringify(body)
+    const signing = resolveSigningKey(credentials as Record<string, unknown> | undefined)
+    const result = await deliverHttpCallback({
       resumeUrl,
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(resumeData) },
-      { totalTimeoutMs: 60_000 },
-    )
-    const text = await response.text()
-    let body: unknown = text || null
-    if (text) {
-      try {
-        body = JSON.parse(text) as unknown
-      } catch {
-        body = text
-      }
-    }
-    if (!response.ok) {
-        return {
-        resumeData,
-        status: response.status,
-        body: null,
-        error: destinationStatusMessage('HTTP resume', response.status, destinationHost(resumeUrl)),
-      }
-    }
-    return { resumeData, status: response.status, body }
+      rawBody,
+      eventId,
+      cbAuthToken: readCbAuthToken(handle),
+      signingSecret: signing?.secret,
+      signingKeyId: signing?.keyId,
+    })
+    result.response.resumeData = redactSecrets(result.response.resumeData)
+    return result.response
   },
   async healthcheck(_credentials: ConnectionCredentials): Promise<'ok' | 'error'> {
     return 'ok'
   },
+}
+
+/**
+ * Deliver an opt-in lifecycle callback (presented|opened|cancelled|expired).
+ * No-ops when the request did not opt in. Reuses destination checks + auth/HMAC/retries.
+ */
+export async function deliverHttpLifecycleEvent(args: {
+  origin: OriginRef
+  type: LifecycleEventType | string
+  credentials?: ConnectionCredentials
+  approvalId?: string
+  occurredAt?: string
+  state?: string
+  /** Extra delivery context merged over the handle metadata for this event. */
+  extraMetadata?: Record<string, unknown>
+}): Promise<ResumeResponse | null> {
+  if (!isLifecycleEventType(args.type)) return null
+  const enabled = readLifecycleEvents(args.origin.resumeHandle)
+  if (!enabled.includes(args.type)) return null
+
+  const resumeUrl = String(args.origin.resumeHandle.resumeUrl ?? '')
+  if (!resumeUrl) return null
+  const approvalId = args.approvalId ?? optionalString(args.origin.resumeHandle.approvalId)
+  const eventId = eventIdFor(args.origin.resumeHandle, args.type)
+  const metadata = asRecord(args.origin.resumeHandle.metadata)
+  const body = buildLifecycleBody({
+    eventId,
+    type: args.type,
+    approvalId,
+    occurredAt: args.occurredAt,
+    metadata,
+    extraMetadata: args.extraMetadata,
+    state: args.state,
+  })
+  const rawBody = JSON.stringify(body)
+  const signing = resolveSigningKey(args.credentials as Record<string, unknown> | undefined)
+  const result = await deliverHttpCallback({
+    resumeUrl,
+    rawBody,
+    eventId,
+    cbAuthToken: readCbAuthToken(args.origin.resumeHandle),
+    signingSecret: signing?.secret,
+    signingKeyId: signing?.keyId,
+  })
+  result.response.resumeData = redactSecrets(result.response.resumeData)
+  return result.response
 }
 
 export default httpPlugin

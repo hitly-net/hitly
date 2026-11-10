@@ -5,6 +5,7 @@ import { approvals } from '@hitly/db/schema'
 import { withApiTenant } from '@/lib/api-session'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { requireDb } from '@/lib/tenant'
+import { deliverApprovalLifecycleEvent } from '@/lib/lifecycle-delivery'
 import { decodeTenantJson } from '@/lib/tenant-crypto'
 import { recordContextOpen } from '@/lib/context-opens'
 
@@ -54,6 +55,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       ref: item.ref,
       url: item.url,
       userId: ctx.session.user.id,
+    })
+    // Opt-in HTTP lifecycle callback (item 6): no-op unless the request opted
+    // in via lifecycleEvents; carries the opened item for the origin.
+    await deliverApprovalLifecycleEvent({
+      approval: {
+        id: approval.id,
+        projectId: approval.projectId,
+        plugin: approval.plugin,
+        origin: approval.origin,
+      },
+      workspaceId: ctx.workspace.id,
+      type: 'opened',
+      extraMetadata: { ref: item.ref, ...(item.url ? { url: item.url } : {}) },
     })
     return NextResponse.json({ ok: true, ref: item.ref, openedAt: openEvent.openedAt })
   })

@@ -62,6 +62,14 @@ The resume URL must be reachable from HITL<sub><i>y</i></sub>. `localhost` only 
   caption="n8n Wait on the same chain as ingest"
 />
 
+
+
+## Callback auth and signatures
+
+Optional on ingest: `cb_auth_token` (Bearer on every delivery; stored encrypted on the origin handle; never returned by API reads) and `lifecycleEvents` (`presented` | `opened` | `cancelled` | `expired`). Default remains a single final-decision POST for n8n Wait.
+
+When the project has a resume signing secret, HITLy also sends `X-HITLy-Timestamp`, `X-HITLy-Event-Id`, `X-HITLy-Key-Id` and `X-HITLy-Signature` (HMAC-SHA256 of `timestamp + "." + body`). Receivers MAY verify; a 5-minute timestamp window and event-id dedupe are recommended. See `@hitly/plugin-http` `verifyHttpSignature`.
+
 ## Related
 
 - Adapter: `@hitly/plugin-http`
