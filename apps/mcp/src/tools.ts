@@ -198,7 +198,16 @@ export function toResponseV0(read: ApprovalRead): Record<string, unknown> {
   // M0 host reads already speak hitl/response/v0: trust their status.
   if (read.spec === 'hitl/response/v0') status = read.status
   const out: Record<string, unknown> = { spec: 'hitl/response/v0', requestId: read.id, status }
-  if (status === 'answered') {
+  // NOTE (soft, deliberately not refactored): beyond the strict hitl/response/v0
+  // schema this result also carries host-convenience keys `editedArgs`,
+  // `response` and `callbackDelivery`. Requesters treat them as HITLy extras,
+  // not schema fields; any future strictness pass should move or version them.
+  // PM ruling on hitl-spec 4.2 (Test M1): a typed answer is the ONLY carrier.
+  // When the read holds one, the top-level value MUST NOT appear on the
+  // get_decision result either, so the whole value mapping is skipped
+  // (mirrors buildHitlRead on the REST side).
+  const typedAnswer = read.answer !== undefined && read.answer !== null
+  if (status === 'answered' && !typedAnswer) {
     if (typeof read.value === 'string' || (read.value && typeof read.value === 'object')) out.value = read.value
     else if (decision === 'accept' || decision === 'edit') out.value = 'approve'
     else if (decision === 'reject') out.value = 'reject'

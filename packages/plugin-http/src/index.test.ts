@@ -5,6 +5,7 @@ import type { DecisionPayload, OriginRef } from '@hitly/core'
 import { DestinationCheckError, globalFetchTransport, setDestinationCheckTestHooks } from '@hitly/core/destination-check'
 import {
   buildDecidedBody,
+  buildLifecycleBody,
   buildSignatureHeaders,
   containsSecretValue,
   DEFAULT_BACKOFF_MS,
@@ -323,6 +324,34 @@ describe('@hitly/plugin-http M0h', () => {
       assert.equal(body.type, 'answered')
       assert.deepEqual(body.answer, { kind: 'single_choice', value: 'blue' })
       assert.equal(body.decision, 'respond')
+    })
+
+    // PM ruling on hitl-spec 4.2 (Test M1): callbacks NEVER carry `answer: null` -
+    // with no answer the key is omitted entirely (also on lifecycle bodies).
+    it('buildDecidedBody omits the answer key when there is no answer', () => {
+      const body = buildDecidedBody({
+        eventId: 'evt_noans',
+        origin: baseOrigin('https://hooks.example/r'),
+        payload: { decision: 'accept' },
+        approvalId: 'apr_a',
+      })
+      assert.equal(body.type, 'decided')
+      assert.equal('answer' in body, false, 'no answer means no answer key, never answer: null')
+    })
+
+    it('buildDecidedBody treats a stored literal null answer as absent', () => {
+      const body = buildDecidedBody({
+        eventId: 'evt_nullans',
+        origin: baseOrigin('https://hooks.example/r'),
+        payload: { decision: 'respond', answer: null },
+        approvalId: 'apr_n',
+      })
+      assert.equal('answer' in body, false, 'a stored null must not surface as answer: null')
+    })
+
+    it('buildLifecycleBody never carries an answer key', () => {
+      const body = buildLifecycleBody({ eventId: 'evt_lc', type: 'presented', approvalId: 'apr_l' })
+      assert.equal('answer' in body, false, 'lifecycle events carry no answer key')
     })
 
     it('resume posts answer when provided on payload', async () => {

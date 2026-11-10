@@ -441,6 +441,38 @@ test('toResponseV0 passes the typed answer through and omits it when absent', ()
   assert.equal('answer' in withoutAnswer, false, 'no answer, no field')
 })
 
+// PM ruling on hitl-spec 4.2 (Test M1): with a typed answer, top-level `answer`
+// is the ONLY carrier - `value` MUST NOT appear on the MCP result either, for
+// any answered decision kind, and a stored literal null answer counts as absent.
+test('toResponseV0 omits value alongside a typed answer (PM ruling)', () => {
+  const respond = toResponseV0({
+    id: 'apr_1',
+    status: 'decided',
+    decision: 'respond',
+    response: 'Here is the reply text',
+    answer: { kind: 'free_text', value: 'Tuesday' },
+  })
+  assert.equal(respond.status, 'answered')
+  assert.equal('value' in respond, false, 'value MUST NOT appear alongside a typed answer')
+  assert.deepEqual(respond.answer, { kind: 'free_text', value: 'Tuesday' })
+
+  const accept = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'accept', answer: { kind: 'free_text', value: 'ok' } })
+  assert.equal('value' in accept, false, 'accept with a typed answer must not emit value: approve')
+  const reject = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'reject', answer: { kind: 'free_text', value: 'no' } })
+  assert.equal('value' in reject, false, 'reject with a typed answer must not emit value: reject')
+
+  // A stored literal null answer is absent, so the plain value mapping applies.
+  const nullAnswer = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'respond', response: 'Hall B', answer: null })
+  assert.equal('answer' in nullAnswer, false, 'stored null answer is treated as absent')
+  assert.equal(nullAnswer.value, 'Hall B')
+
+  // No typed answer: value mapping unchanged (regression pins).
+  const plainRespond = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'respond', response: 'Hall B' })
+  assert.equal(plainRespond.value, 'Hall B')
+  const noTextRespond = toResponseV0({ id: 'apr_1', status: 'decided', decision: 'respond' })
+  assert.equal('value' in noTextRespond, false, 'respond with no reply text never emits value: ""')
+})
+
 test('list_pending reports not_supported_by_host on today\u2019s host', async () => {
   const h = await startHarness()
   try {

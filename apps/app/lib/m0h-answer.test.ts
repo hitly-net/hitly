@@ -98,7 +98,7 @@ test('decide with a typed answer POSTs one answered callback with the answer int
   assert.deepEqual(stored.answer, { kind: 'single_choice', value: 'blue' })
 })
 
-test('an approval without an answer sends decided (answer null), as before', async () => {
+test('an approval without an answer sends decided with the answer key OMITTED, never null', async () => {
   const approval = await ingestHttpAsk(fixture, receiver.url)
   const before = receiver.hits.length
   const decided = await decideApproval({
@@ -111,5 +111,7 @@ test('an approval without an answer sends decided (answer null), as before', asy
   assert.equal(receiver.hits.length, before + 1)
   const hit = receiver.hits[before]!
   assert.equal(hit.body.type, 'decided')
-  assert.equal(hit.body.answer, null)
+  // PM ruling on hitl-spec 4.2 (Test M1): no answer means NO answer key -
+  // a decided callback must never carry `answer: null`.
+  assert.ok(!('answer' in hit.body), `decided callback must OMIT answer, got ${JSON.stringify(hit.body.answer)}`)
 })
