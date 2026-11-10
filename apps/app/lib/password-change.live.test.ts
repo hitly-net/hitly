@@ -13,6 +13,12 @@
  *    through the real mailer path, must leave the canary in no line of log
  *    output (console, stdout, stderr) and in no delivered email. Any code
  *    that logs the password makes this test fail.
+ * 3. Revocation is scoped to the changing account: an unrelated account's
+ *    live session must survive the change (a revoke keyed on
+ *    user_id <> current goes red here).
+ * 4. Log line shape: a success emits no password-change line, no 64-char
+ *    hex digest (the sha256 of a password included) and no session token,
+ *    and the one allowed fixed line (the throttle log) is emitted verbatim.
  *
  * Run with: yarn db:up && yarn db:migrate && yarn workspace @hitly/app test
  */
@@ -20,6 +26,7 @@
 process.env.HITLY_MAIL_TRANSPORT = 'memory'
 process.env.HITLY_SIGNUP_ENABLED = '1'
 
+import { createHash } from 'node:crypto'
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { NextRequest } from 'next/server'
@@ -29,6 +36,7 @@ import { clearSentMail, sentMail } from '@hitly/mail'
 import { auth } from './auth'
 import { db, pool } from './db'
 import { CHANGE_PASSWORD_ENDPOINT } from './password-change'
+import { CHANGE_PASSWORD_LIMITED_LOG } from './change-password-limit'
 import { handlePasswordChange } from './password-change-route'
 import { newId } from './ids'
 
@@ -262,6 +270,62 @@ describe('signed-in password change on real Postgres', () => {
     const reissued = cookieHeader(response)
     assert.ok(await sessionUser(reissued), 'the changing device stays signed in')
     assert.equal(await sessionUser(cookieA), null, 'the pre-change session of the changing account is gone')
+  })
+
+  it('pins the password-change log line shape: fixed lines only, no hashes, no tokens', async () => {
+    const address = email(`logshape-${run}`)
+    await createUser(address)
+    const cookie = await signInCookie(address)
+    const newPassword = `logshape-Pw-${run}-Nc5tY8wRa`
+    const newHash = createHash('sha256').update(newPassword).digest('hex')
+
+    clearSentMail()
+    const before = logged.length
+    // Production log path (no log override): whatever the change emits must
+    // match the pinned shapes. A mutant that logs log(sha256(newPassword))
+    // puts a 64-char hex digest in the output and goes red here.
+    const response = await handlePasswordChange(
+      changeRequest(cookie, { currentPassword: PASSWORD, newPassword }, `203.0.113.${run.slice(-1)}`),
+      { allow: () => true },
+    )
+    assert.equal(response.status, 200, 'the log-shape change succeeds')
+    await settle()
+    const during = logged.slice(before)
+    const joined = during.join('\n')
+
+    // Shape pin 1: a clean success emits no password-change line at all.
+    const routeLines = during.filter((line) => line.includes('[hitly password-change]'))
+    assert.deepEqual(routeLines, [], 'a successful change logs no password-change line')
+
+    // Shape pin 2: no hash of either password and no hash-shaped string
+    // anywhere in the output (kills log(sha256(newPassword)) mutants).
+    assert.ok(!joined.includes(newHash), 'the sha256 of the new password is never logged')
+    assert.ok(!joined.includes(newHash.toUpperCase()), 'no uppercase sha256 of the new password either')
+    assert.ok(!joined.includes(PASSWORD), 'the current password is never logged')
+    assert.ok(!joined.includes(newPassword), 'the new password is never logged')
+    assert.ok(!/[0-9a-f]{64}/i.test(joined), 'no 64-char hex digest appears in log output')
+
+    // Shape pin 3: no session token value reaches the log.
+    const oldToken = cookieToken(cookie)
+    assert.ok(oldToken, 'the signed-in cookie carries a session token')
+    assert.ok(!joined.includes(oldToken), 'the pre-change session token is never logged')
+    const newToken = cookieToken(cookieHeader(response))
+    assert.ok(newToken, 'the rotated cookie carries a session token')
+    assert.ok(!joined.includes(newToken), 'the rotated session token is never logged')
+
+    // Shape pin 4: the one line the handler is allowed to log (throttle) is
+    // emitted verbatim and carries no secret.
+    const throttleBefore = logged.length
+    const throttled = await handlePasswordChange(
+      changeRequest(cookieHeader(response), { currentPassword: newPassword, newPassword: 'fifth-horse-stable' }, `203.0.113.${run.slice(-1)}`),
+      { allow: () => false },
+    )
+    assert.equal(throttled.status, 429, 'the spent budget answers 429')
+    const throttleLines = logged.slice(throttleBefore).filter((line) => line.includes('[hitly password-change]'))
+    assert.equal(throttleLines.length, 1, 'the throttle path logs exactly one password-change line')
+    assert.equal(throttleLines[0].trim(), CHANGE_PASSWORD_LIMITED_LOG, 'the throttle line matches the pinned fixed text verbatim')
+    assert.ok(!/[0-9a-f]{64}/i.test(throttleLines[0]), 'the pinned line carries no hash')
+    assert.ok(!throttleLines[0].includes(newPassword) && !throttleLines[0].includes(newToken ?? ''), 'the pinned line carries no password or token')
   })
 
   it('leaves the canary password in no log line and no email', async () => {
