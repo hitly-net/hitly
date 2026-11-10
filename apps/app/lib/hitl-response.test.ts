@@ -76,6 +76,64 @@ test('hitl read: reject -> answered/reject; respond -> answered with the reply; 
   assert.equal('value' in (ignore.hitl ?? {}), false)
 })
 
+// PM ruling on hitl-spec 4.2 (Test M1): for status=answered with a typed
+// answer, top-level `answer` is the ONLY carrier - `value` MUST NOT be present
+// alongside it, on REST and MCP alike (see toResponseV0 for the MCP leg).
+const TYPED = { kind: 'free_text', value: 'Morning works ✓', confidence: 0.9 }
+
+test('hitl read: typed answer suppresses value with respond reply text present (PM ruling)', async () => {
+  const read = await buildHitlRead({
+    approval: approval('decided'),
+    envelope,
+    decision: decision('respond', { response: 'Here is the reply text', answer: TYPED }),
+    opens: [],
+  })
+  assertValid(read.hitl)
+  assert.equal(read.hitl?.status, 'answered')
+  assert.equal('value' in (read.hitl ?? {}), false, 'value MUST NOT appear alongside a typed answer')
+  assert.deepEqual(read.hitl?.answer, TYPED, 'answer must be the only carrier, verbatim')
+  assert.deepEqual(read.hitl?._meta?.['net.hitly/answer'], TYPED, 'deprecated alias must equal answer exactly')
+})
+
+test('hitl read: typed answer suppresses value on accept, reject and edit too (PM ruling)', async () => {
+  const accept = await buildHitlRead({ approval: approval('decided'), envelope, decision: decision('accept', { answer: TYPED }), opens: [] })
+  assertValid(accept.hitl)
+  assert.equal(accept.hitl?.status, 'answered')
+  assert.equal('value' in (accept.hitl ?? {}), false, 'accept with a typed answer must not emit value: approve')
+  assert.deepEqual(accept.hitl?.answer, TYPED)
+
+  const reject = await buildHitlRead({ approval: approval('decided'), envelope, decision: decision('reject', { answer: TYPED }), opens: [] })
+  assertValid(reject.hitl)
+  assert.equal('value' in (reject.hitl ?? {}), false, 'reject with a typed answer must not emit value: reject')
+  assert.deepEqual(reject.hitl?.answer, TYPED)
+
+  const edit = await buildHitlRead({
+    approval: approval('decided'),
+    envelope,
+    decision: decision('edit', { editedArgs: { amount: 90 }, answer: TYPED }),
+    opens: [],
+    mergeEdits: (edited) => ({ ...ARGS, ...edited }),
+  })
+  assertValid(edit.hitl)
+  assert.equal('value' in (edit.hitl ?? {}), false, 'edit with a typed answer must not emit value: approve')
+  assert.deepEqual(edit.hitl?.answer, TYPED)
+  assert.deepEqual(edit.hitl?._meta?.['net.hitly/editedArgs'], { amount: 90, currency: 'EUR', to: 'acct-1' })
+})
+
+test('hitl read: respond without a typed answer and without reply text omits value (never "")', async () => {
+  const read = await buildHitlRead({ approval: approval('decided'), envelope, decision: decision('respond', {}), opens: [] })
+  // NOTE: deliberately no assertValid here. A respond decision that carries
+  // NEITHER reply text NOR a typed answer is the degenerate case: the ruling
+  // forbids `value: ""` and forbids an `answer` placeholder, while the schema
+  // requires `value` on an answered response with no `answer`. The host's
+  // obligation is to omit both, which is what this test pins; collecting a
+  // real answer is the reviewer UI's gate, not this mapper's.
+  assert.equal(read.hitl?.status, 'answered')
+  assert.equal('value' in (read.hitl ?? {}), false, 'no reply text and no answer means no value key')
+  assert.equal('answer' in (read.hitl ?? {}), false, 'no typed answer means no answer key')
+  assert.equal(read.hitl?._meta && 'net.hitly/answer' in read.hitl._meta, false, 'alias absent whenever answer is absent')
+})
+
 test('hitl read: edit -> answered/approve; edited args only in the response, argsHash stays the original', async () => {
   const read = await buildHitlRead({
     approval: approval('decided'),

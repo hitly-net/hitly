@@ -116,8 +116,11 @@ export function buildDecidedBody(args: BuildDecidedBodyArgs): HttpCallbackBody {
   if (args.payload.response) body.response = args.payload.response
   if (args.payload.reason) body.reason = args.payload.reason
   if (args.payload.argsHash) body.argsHash = args.payload.argsHash
-  if (args.payload.answer !== undefined) body.answer = args.payload.answer
-  else body.answer = null
+  // PM ruling on hitl-spec 4.2 (Test M1): OMIT `answer` when there is none -
+  // never send `answer: null`. A stored literal null (legacy rows) counts as
+  // absent here too, matching the read surfaces; the type derivation above is
+  // deliberately unchanged so host-retry logical delivery ids stay stable.
+  if (args.payload.answer !== undefined && args.payload.answer !== null) body.answer = args.payload.answer
 
   body.decisionDetail = {
     outcome: args.payload.decision,
@@ -158,7 +161,8 @@ export function buildLifecycleBody(args: BuildLifecycleBodyArgs): HttpCallbackBo
     occurred_at: args.occurredAt ?? new Date().toISOString(),
     state: args.state ?? args.type,
     metadata: redactSecrets({ ...(args.metadata ?? {}), ...(args.extraMetadata ?? {}) }),
-    answer: null,
+    // Lifecycle events carry no reviewer answer: `answer` is OMITTED (never
+    // `answer: null`) per the hitl-spec 4.2 PM ruling.
   }
 }
 
