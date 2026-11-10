@@ -121,11 +121,11 @@ async function storedEnvelope(approvalId: string): Promise<Record<string, unknow
 
 /** Render the inbox respond controls from the STORED schema and submit them. */
 function submitWidget(schema: AnswerSchema, pick: unknown): FormData {
-  let submitted: FormData | null = null
+  const box: { submitted: FormData | null } = { submitted: null }
   const view = render(
     <form onSubmit={(event) => {
       event.preventDefault()
-      submitted = new FormData(event.currentTarget)
+      box.submitted = new FormData(event.currentTarget)
     }}>
       <AnswerSection respondAllowed={true} answerSchema={schema} value={pick} onChange={() => undefined} />
       <button name="decision" value="respond">respond</button>
@@ -133,8 +133,8 @@ function submitWidget(schema: AnswerSchema, pick: unknown): FormData {
   )
   fireEvent.submit(view.container.querySelector('form')!)
   cleanup()
-  if (!submitted) throw new Error('widget form did not submit')
-  return submitted
+  if (!box.submitted) throw new Error('widget form did not submit')
+  return box.submitted
 }
 
 test('e2e: MCP text ask -> stored schema -> widget -> web decide -> get_decision answered -> sink', { skip: SKIP }, async () => {
@@ -158,11 +158,11 @@ test('e2e: MCP text ask -> stored schema -> widget -> web decide -> get_decision
   assert.equal(schema.type, 'text', 'the stored type is the spec name, not the free_text alias')
 
   // (3) the inbox renders the text widget, not an anonymous Response box.
-  let submitted: FormData | null = null
+  const box: { submitted: FormData | null } = { submitted: null }
   const view = render(
     <form onSubmit={(event) => {
       event.preventDefault()
-      submitted = new FormData(event.currentTarget)
+      box.submitted = new FormData(event.currentTarget)
     }}>
       {/* the real form carries the decision on the clicked button; jsdom's
           FormData(form) has no submitter, so a hidden field plays that role */}
@@ -179,13 +179,13 @@ test('e2e: MCP text ask -> stored schema -> widget -> web decide -> get_decision
   assert.equal(widget.value, 'Ship on Tuesday', 'the reviewer keeps their input (spec 7)')
   fireEvent.submit(view.container.querySelector('form')!)
   cleanup()
-  assert.ok(submitted, 'form submitted')
+  assert.ok(box.submitted, 'form submitted')
 
   // (4) decide with the EXACT payload the web form posted.
-  const parsed = parseAnswerField(submitted!.get('answer') as string | null)
+  const parsed = parseAnswerField(box.submitted!.get('answer') as string | null)
   assert.equal(parsed.ok, true)
   const payload = parseDecisionBody({
-    decision: String(submitted!.get('decision')),
+    decision: String(box.submitted!.get('decision')),
     answer: parsed.ok ? parsed.answer : undefined,
   })
   assert.ok(payload, 'the submitted payload parses as a valid decision')
