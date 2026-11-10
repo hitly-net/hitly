@@ -177,6 +177,30 @@ function tokenFrom(mail: { text: string }) {
   return match[1]!
 }
 
+async function startPendingChange(localOld: string, localNew: string, deps: EmailChangeRouteDeps = {}) {
+  const oldAddress = email(localOld)
+  const newAddress = email(localNew)
+  await createUser(oldAddress)
+  const cookie = await signInCookie(oldAddress)
+  clearSentMail()
+  const response = await handleEmailChange(
+    changeRequest(cookie, { currentPassword: PASSWORD, newEmail: newAddress }),
+    { ...routeMocks(), allow: () => true, ...deps },
+  )
+  assert.equal(response.status, 200)
+  await settle()
+  const token = tokenFrom(sentMail[0]!)
+  const user = await userByEmail(oldAddress)
+  assert.ok(user)
+  return { oldAddress, newAddress, cookie, token, user }
+}
+
+/** GET render of /verify-email-change (mail scanners, prefetch, and HEAD share this path). */
+async function getConfirmPage(token: string) {
+  const { default: VerifyEmailChangePage } = await import('../app/verify-email-change/page')
+  return VerifyEmailChangePage({ searchParams: Promise.resolve({ token }) })
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 before(() => {
@@ -543,6 +567,61 @@ describe('email change request policy', () => {
   })
 })
 
+describe('confirm is POST-only (GET/HEAD/prefetch must not consume the token)', () => {
+  it('a GET-only visit (mail scanner) leaves the email and pending row; a later POST still succeeds', async () => {
+    const { oldAddress, newAddress, token, user } = await startPendingChange('get-old', 'get-new')
+    const tree = await getConfirmPage(token)
+    assert.ok(tree)
+
+    const { GET, HEAD, POST } = await import('../app/api/session/verify-email-change/route')
+    const peek = `${APP_URL}${VERIFY_EMAIL_CHANGE_ENDPOINT}?token=${token}`
+    assert.equal((await GET()).status, 405)
+    assert.equal((await HEAD()).status, 405)
+    const prefetch = new NextRequest(peek, { method: 'GET' })
+    assert.equal(prefetch.method, 'GET')
+    assert.equal((await GET()).status, 405)
+
+    assert.ok(await userByEmail(oldAddress), 'GET must not switch the live email')
+    assert.equal(await userByEmail(newAddress), null)
+    const pending = await pendingFor(user.id)
+    assert.ok(pending, 'GET must not clear the pending row')
+    assert.equal(pending.tokenHash, hashEmailChangeToken(token))
+
+    const confirmed = new NextRequest(`${APP_URL}${VERIFY_EMAIL_CHANGE_ENDPOINT}`, {
+      method: 'POST',
+      headers: { origin: APP_URL, 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    assert.equal((await POST(confirmed)).status, 200)
+    assert.ok(await userByEmail(newAddress))
+    assert.equal(await userByEmail(oldAddress), null)
+    assert.equal(await pendingFor(user.id), null)
+  })
+
+  it('a POST without same-origin is rejected and the token stays valid', async () => {
+    const { oldAddress, newAddress, token, user } = await startPendingChange('csrf-old', 'csrf-new')
+    const { POST } = await import('../app/api/session/verify-email-change/route')
+    const crossSite = new NextRequest(`${APP_URL}${VERIFY_EMAIL_CHANGE_ENDPOINT}`, {
+      method: 'POST',
+      headers: { origin: 'http://localhost:3002', 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    assert.equal((await POST(crossSite)).status, 403)
+    assert.ok(await userByEmail(oldAddress))
+    assert.equal(await userByEmail(newAddress), null)
+    assert.ok(await pendingFor(user.id), 'a rejected POST must not consume the token')
+
+    const sameOrigin = new NextRequest(`${APP_URL}${VERIFY_EMAIL_CHANGE_ENDPOINT}`, {
+      method: 'POST',
+      headers: { origin: APP_URL, 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    assert.equal((await POST(sameOrigin)).status, 200)
+    assert.ok(await userByEmail(newAddress))
+    assert.equal(await userByEmail(oldAddress), null)
+  })
+})
+
 describe('submitEmailChange outcome mapping', () => {
   const fake = (status: number, body: unknown): typeof fetch => async () =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -596,10 +675,15 @@ describe('submitEmailChange outcome mapping', () => {
 })
 
 describe('email change wiring (static)', () => {
-  it('the confirmation page is public and sends no-referrer', async () => {
+  it('the confirmation page is public, sends no-referrer, and does not consume on GET', async () => {
     assert.ok(PUBLIC_PATHS.includes(VERIFY_EMAIL_CHANGE_PAGE))
     const page = fs.readFileSync(path.join(__dirname, '../app/verify-email-change/page.tsx'), 'utf-8')
     assert.match(page, /referrer:\s*'no-referrer'/)
+    assert.ok(page.includes('<ConfirmEmailChangeForm'))
+    assert.ok(!page.includes('handleEmailChangeVerify'), 'GET must not call the verify handler')
+    const form = fs.readFileSync(path.join(__dirname, '../components/confirm-email-change-form.tsx'), 'utf-8')
+    assert.ok(form.includes('Confirm'))
+    assert.ok(form.includes('submitEmailChangeVerification'))
     const config = fs.readFileSync(path.join(__dirname, '../next.config.mjs'), 'utf-8')
     assert.ok(config.includes("source: '/verify-email-change'"))
     assert.ok(config.includes("'no-referrer'"))
@@ -662,5 +746,16 @@ describe('email change tokens stay out of logs', () => {
       assert.ok(!all.includes(token), 'token must not be logged')
       assert.ok(!all.includes(hashEmailChangeToken(token)), 'token hash must not be logged')
     }
+  })
+
+  it('deps.log never receives the raw confirmation token', async () => {
+    const lines: string[] = []
+    const deps = routeMocks({ log: (line) => lines.push(line) })
+    const { token, newAddress } = await startPendingChange('log-old', 'log-new', deps)
+    assert.equal((await handleEmailChangeVerify(token, deps)).status, 200)
+    assert.ok(await userByEmail(newAddress))
+    const joined = lines.join('\n')
+    assert.ok(!joined.includes(token), 'deps.log must not receive the raw token')
+    assert.ok(!joined.includes(hashEmailChangeToken(token)), 'deps.log must not receive the token hash')
   })
 })

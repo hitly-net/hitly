@@ -235,8 +235,9 @@ export async function handleEmailChange(
 /**
  * Confirms a pending email change. Expired, used, unknown, and colliding
  * tokens all answer the same invalid_token error. On success the live email
- * is switched atomically, the pending row is cleared, and a notice goes to
- * the previous address.
+ * is switched atomically (emailVerified set true), the pending row is
+ * cleared, other sessions are kept, and a notice goes to the previous
+ * address. Call this only from POST — GET/HEAD must not.
  */
 export async function handleEmailChangeVerify(
   token: unknown,
