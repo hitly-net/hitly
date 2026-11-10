@@ -106,6 +106,10 @@ export async function buildHitlRead(input: HitlReadInput) {
     const decidedBy: HitlDecidedBy | undefined = decision.actorUserId ? { kind: 'human', id: decision.actorUserId } : undefined
     const decidedAt = decision.createdAt.toISOString()
     const meta: Record<string, unknown> = { 'net.hitly/decision': decision.decision }
+    // Typed ask_user answer (hitl-spec 7): carried verbatim into the hitl view
+    // under the section-12 extension namespace. Never invented, never dropped
+    // when present, and the stored request/payload are untouched.
+    if (payload.answer !== undefined) meta['net.hitly/answer'] = payload.answer
     switch (decision.decision) {
       case 'accept':
       case 'reject':

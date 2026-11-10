@@ -1546,6 +1546,12 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
       status: approval.status,
       decision,
       response: typeof payload.response === 'string' ? payload.response : undefined,
+      // The reviewer's typed ask_user answer (hitl-spec 7), verbatim from the
+      // stored decision payload. A respond decision carries only `response`
+      // text; without this field the typed answer the human entered would be
+      // invisible to the requester's get_decision. Carried on the response
+      // only - the stored request and decision payload are never mutated.
+      ...(payload.answer !== undefined ? { answer: payload.answer } : {}),
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
       ...read,
