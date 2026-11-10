@@ -59,7 +59,9 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       summary,
-      alertCount: summary.pending + summary.failedResume,
+      // Pending badge: only items awaiting a human (failed_resume rows
+      // already carry a human decision and must not count here).
+      alertCount: summary.pending,
       screenEpoch,
       refresh,
       refreshScreen,

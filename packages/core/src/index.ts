@@ -25,6 +25,21 @@ export type OpenApprovalStatus = (typeof OPEN_APPROVAL_STATUSES)[number]
 export const CLOSED_APPROVAL_STATUSES = ['decided', 'expired', 'cancelled'] as const
 export type ClosedApprovalStatus = (typeof CLOSED_APPROVAL_STATUSES)[number]
 
+/**
+ * The ONE definition of "awaiting a human" shared by every pending surface:
+ * MCP list_pending, the web pending inbox, the mobile pending inbox, and all
+ * pending counts/badges. A `failed_resume` row already carries a human
+ * decision (only its resume delivery failed), so it is deliberately NOT here.
+ * Its delivery failure stays visible via get_decision (callbackDelivery:
+ * 'failed') and the operator REST status, never via a pending list or count.
+ */
+export const AWAITING_HUMAN_APPROVAL_STATUSES = ['pending'] as const
+export type AwaitingHumanApprovalStatus = (typeof AWAITING_HUMAN_APPROVAL_STATUSES)[number]
+
+export function isAwaitingHumanApprovalStatus(status: string): status is AwaitingHumanApprovalStatus {
+  return (AWAITING_HUMAN_APPROVAL_STATUSES as readonly string[]).includes(status)
+}
+
 export function isOpenApprovalStatus(status: string): status is OpenApprovalStatus {
   return (OPEN_APPROVAL_STATUSES as readonly string[]).includes(status)
 }

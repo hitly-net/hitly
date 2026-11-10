@@ -164,7 +164,7 @@ If the reviewer amended the action's arguments, `get_decision` includes `editedA
 
 ### list_pending
 
-List open requests created with your key.
+List requests created with your key that still await a human. A request a human already decided whose resume then failed (`failed_resume`) is not listed - its outcome and the failed delivery (`callbackDelivery: "failed"`) come back from `get_decision`.
 
 ```json
 { "name": "list_pending", "arguments": { "projectId": "prj_…" } }

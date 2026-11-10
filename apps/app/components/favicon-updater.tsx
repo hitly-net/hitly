@@ -18,7 +18,9 @@ export function FaviconUpdater() {
           projectCount: number
         }
 
-        const hasOpenItems = (summary.pending + summary.failedResume) > 0
+        // Pending badge: only items awaiting a human. failed_resume rows
+        // already carry a decision, so they no longer mark the favicon open.
+        const hasOpenItems = summary.pending > 0
         const iconPath = hasOpenItems ? '/icon-open.svg' : '/icon.svg'
 
         const link = document.querySelector<HTMLLinkElement>("link[rel*='icon']") 

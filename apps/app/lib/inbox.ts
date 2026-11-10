@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, ilike, inArray, or, sql } from 'drizzle-orm'
 import { clampListLimit, decodeListCursor, olderThanListCursor, takeListPage, type ListCursor } from './list-cursor'
-import { CLOSED_APPROVAL_STATUSES, isDecision, type WorkspaceRole } from '@hitly/core'
+import { AWAITING_HUMAN_APPROVAL_STATUSES, CLOSED_APPROVAL_STATUSES, isDecision, type WorkspaceRole } from '@hitly/core'
 import { approvals, decisionRecords, projects, users } from '@hitly/db/schema'
 import { listVisibleProjectIds } from './rbac'
 import { requireDb, withTenant } from './tenant'
@@ -86,7 +86,9 @@ export async function listInboxItems(args: {
     const filters = [eq(approvals.workspaceId, args.workspaceId), inArray(approvals.projectId, projectIds)]
   const scope = isInboxScope(args.scope) ? args.scope : 'all'
   if (scope === 'open') {
-    filters.push(inArray(approvals.status, ['pending', 'failed_resume']))
+    // Pending inbox (web + mobile): only items still awaiting a human.
+    // failed_resume rows already carry a human decision and must not appear.
+    filters.push(inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES]))
   } else if (scope === 'closed') {
     filters.push(inArray(approvals.status, [...CLOSED_APPROVAL_STATUSES]))
   }
@@ -172,7 +174,13 @@ export async function inboxSummary(args: {
   const pendingRows = await database
     .select({ count: sql<number>`count(*)` })
     .from(approvals)
-    .where(and(inArray(approvals.projectId, projectIds), eq(approvals.workspaceId, args.workspaceId), eq(approvals.status, 'pending')))
+    .where(
+      and(
+        inArray(approvals.projectId, projectIds),
+        eq(approvals.workspaceId, args.workspaceId),
+        inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES]),
+      ),
+    )
   const failedRows = await database
     .select({ count: sql<number>`count(*)` })
     .from(approvals)
