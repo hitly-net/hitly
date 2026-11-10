@@ -27,6 +27,7 @@ import {
   LAST_PROJECT_ADMIN,
   LAST_WORKSPACE_OWNER,
   MembershipGuardError,
+  setLastAdminDecisionHookForTests,
 } from './member-guard'
 import { requireDb, withTenant } from './tenant'
 
@@ -262,6 +263,100 @@ describe('project last-admin guard', () => {
     // Interleaving decides which one wins; the invariant is that the project
     // keeps an admin either way.
     assert.ok((await adminUserIdsOf(projectId)).length >= 1, 'never zero admins')
+  })
+
+  /** Poll until `cond` is true or the deadline passes; true if it became true. */
+  async function waitUntil(cond: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      if (await cond()) return true
+      if (Date.now() > deadline) return false
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
+
+  /**
+   * True while some backend is blocked waiting for THIS project's advisory
+   * admin-guard lock (same key split as pg_locks.classid/objid, verified
+   * against postgres:16). Unique projectId per run makes this collision-free.
+   */
+  function advisoryLockWaited(projectId: string): Promise<boolean> {
+    return waitUntil(async () => {
+      const result = await pool!.query(
+        `select 1 from pg_locks l, (select hashtextextended($1, 0) as h) k
+          where l.locktype = 'advisory' and not l.granted
+            and l.classid::bigint = ((k.h >> 32) & 4294967295)
+            and l.objid::bigint = (k.h & 4294967295)
+          limit 1`,
+        [`hitly:project-admin:${projectId}`],
+      )
+      return (result.rowCount ?? 0) > 0
+    }, 4000)
+  }
+
+  it('deterministic interleave: lock + post-lock recount pin exactly one demotion', async () => {
+    // Connection A starts the guarded demote of adminA and is HELD by the
+    // test hook after its (post-lock) count, before its write, while still
+    // holding the advisory lock. Connection B then demotes adminB: against
+    // the real guard it must block on the lock, recount after A commits and
+    // refuse. If the lock is removed, B counts and commits while A is held
+    // (both win, zero admins). If the post-lock recount is removed, B's
+    // pre-lock count wins after release (same end state). Either mutant
+    // turns this test RED; the code above keeps it GREEN.
+    const projectId = await makeProject('Interleave demote', [adminA.id, adminB.id])
+    const mA = await membershipIdOf(projectId, adminA.id)
+    const mB = await membershipIdOf(projectId, adminB.id)
+
+    let releaseA!: () => void
+    const aHeld = new Promise<void>((resolve) => {
+      releaseA = resolve
+    })
+    let aReached!: () => void
+    const aAtHook = new Promise<void>((resolve) => {
+      aReached = resolve
+    })
+    setLastAdminDecisionHookForTests(async ({ membershipId }) => {
+      if (membershipId !== mA) return
+      aReached()
+      // Bounded hold: even if the test body throws, never hang the suite.
+      await Promise.race([aHeld, new Promise((resolve) => setTimeout(resolve, 15000))])
+    })
+    try {
+      const pA = guardMembershipChange(projectId, mA, 'user')
+      const reachedInTime = await Promise.race([
+        aAtHook.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 10000)),
+      ])
+      assert.ok(reachedInTime, 'A reaches the between-count-and-write seam')
+
+      const pB = guardMembershipChange(projectId, mB, 'user')
+      const bSettled = pB.then(
+        () => 'settled' as const,
+        () => 'settled' as const,
+      )
+      const observed = await Promise.race([bSettled, advisoryLockWaited(projectId).then((saw) => (saw ? ('waiting' as const) : ('timeout' as const)))])
+      releaseA()
+      const [rA, rB] = await Promise.allSettled([pA, pB])
+
+      assert.equal(
+        observed,
+        'waiting',
+        'B contends the held advisory lock while A is between count and write (settled/timeout = guard is not serialising)',
+      )
+      assert.equal(rA.status, 'fulfilled', 'the held demotion of adminA commits')
+      assert.equal(rB.status, 'rejected', 'the second demotion of adminB is refused, not committed')
+      const reason = (rB as PromiseRejectedResult).reason
+      assert.ok(
+        reason instanceof MembershipGuardError && reason.code === LAST_PROJECT_ADMIN,
+        `adminB refused with ${LAST_PROJECT_ADMIN}, got: ${String(reason)}`,
+      )
+      assert.equal(await roleOf(projectId, adminA.id), 'user')
+      assert.equal(await roleOf(projectId, adminB.id), 'admin')
+      assert.deepEqual(await adminUserIdsOf(projectId), [adminB.id], 'exactly one admin remains')
+    } finally {
+      releaseA()
+      setLastAdminDecisionHookForTests(null)
+    }
   })
 })
 

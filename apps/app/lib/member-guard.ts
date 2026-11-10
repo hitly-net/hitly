@@ -33,6 +33,22 @@ export class MembershipGuardError extends Error {
   }
 }
 
+type LastAdminDecisionHook = (info: { projectId: string; membershipId: string }) => Promise<void>
+
+let lastAdminDecisionHook: LastAdminDecisionHook | null = null
+
+/**
+ * Test-only seam: when set, guardProjectAdminChange awaits this hook after
+ * the last-admin check has passed and BEFORE returning to the caller's
+ * write, while the project advisory lock is held. The guard suite uses it to
+ * force a deterministic two-connection interleave (hold A between count and
+ * write, run B against the held lock, then release). Production never sets
+ * it; null restores normal behaviour.
+ */
+export function setLastAdminDecisionHookForTests(hook: LastAdminDecisionHook | null): void {
+  lastAdminDecisionHook = hook
+}
+
 /**
  * Serialize last-admin checks for one project for the rest of the current
  * transaction (pg_advisory_xact_lock, same idiom as create-once).
@@ -98,6 +114,23 @@ export async function guardProjectAdminChange(args: {
   if (member.role !== 'admin') return
   if (args.newRole === 'admin') return
   await lockProjectAdminGuard(database, args.projectId)
+  // Re-read the target row AFTER acquiring the lock: a concurrent committed
+  // change may have promoted, demoted or removed this very membership while
+  // we waited for the lock, so the pre-lock role read is not trusted.
+  const latest = await database
+    .select({ role: projectMemberships.role })
+    .from(projectMemberships)
+    .where(
+      and(
+        eq(projectMemberships.id, args.membershipId),
+        eq(projectMemberships.projectId, args.projectId),
+        eq(projectMemberships.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1)
+  const latestMember = latest[0]
+  if (!latestMember) throw new Error('Member not found')
+  if (latestMember.role !== 'admin') return
   // Recount after acquiring the lock so a concurrent committed change wins.
   const remaining = await countOtherAdmins(database, workspaceId, args.projectId, member.id)
   if (remaining === 0) {
@@ -105,6 +138,9 @@ export async function guardProjectAdminChange(args: {
       LAST_PROJECT_ADMIN,
       'This is the project\'s only admin. Promote someone else to admin first.',
     )
+  }
+  if (lastAdminDecisionHook) {
+    await lastAdminDecisionHook({ projectId: args.projectId, membershipId: member.id })
   }
 }
 
