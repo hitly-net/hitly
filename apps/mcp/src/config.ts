@@ -9,7 +9,13 @@ export const DEFAULT_PORT = 3006
 export const DEFAULT_LISTEN_HOST = '127.0.0.1'
 export const DEFAULT_API_URL = 'https://cloud.hitly.net'
 export const MCP_PATH = '/mcp'
-/** Bot request deadline when the caller passes none (decided 9 Nov 12:31). */
+/**
+ * Documented default window when the caller passes no deadline. The HOST owns
+ * the stored expiry (host default chain: rule SLA > project timeout > 24h);
+ * the MCP server never synthesises it. This constant exists only to pin the
+ * documented value and keep MCP and the host's DEFAULT_REQUEST_WINDOW_MS in
+ * lockstep (asserted in tools.test.ts).
+ */
 export const DEFAULT_DEADLINE_MS = 24 * 60 * 60 * 1000
 /** Deadline cap: a bot cannot schedule an ask further out than 30 days. */
 export const MAX_DEADLINE_MS = 30 * 24 * 60 * 60 * 1000

@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { DEFAULT_DEADLINE_MS, MAX_DEADLINE_MS, type McpConfig } from './config.ts'
+import { MAX_DEADLINE_MS, type McpConfig } from './config.ts'
 import { ANSWER_TYPE_ALIASES, FORM_REJECTION_MESSAGE } from './answer-types.ts'
 import type { ApprovalRead, HostClient, HostResult } from './host-client.ts'
 import { argsHash } from './jcs.ts'
@@ -121,7 +121,7 @@ const common = {
     .string()
     .datetime({ offset: true })
     .optional()
-    .describe('ISO 8601 deadline. Default: 24 hours from now. Expiry never counts as approval.'),
+    .describe('ISO 8601 deadline. When omitted the host default rules: the project timeout if set, else 24 hours from now. Expiry never counts as approval.'),
   callback_url: httpsUrl
     .optional()
     .describe(
@@ -166,9 +166,9 @@ export function validateRequestId(requestId: string): string | null {
   return null
 }
 
-function resolveDeadline(ctx: ToolContext, deadline?: string): { iso: string } | { error: string } {
+function resolveDeadline(ctx: ToolContext, deadline?: string): { iso?: string } | { error: string } {
   const now = ctx.now?.() ?? Date.now()
-  if (!deadline) return { iso: new Date(now + DEFAULT_DEADLINE_MS).toISOString() }
+  if (!deadline) return { iso: undefined }
   const at = Date.parse(deadline)
   if (Number.isNaN(at)) return { error: 'deadline must be an ISO 8601 date-time' }
   if (at <= now) return { error: 'deadline must be in the future' }
@@ -179,14 +179,19 @@ function resolveDeadline(ctx: ToolContext, deadline?: string): { iso: string } |
 }
 
 /**
- * A replay reports the deadline stored on create, not one recomputed now: the retry
- * may land hours after the original, and the host never moved the real expiry.
+ * The deadline the requester is told about is the one the HOST stored
+ * (returned on create and replay alike), never a locally recomputed value:
+ * host-side rule/project defaults and the create-once replay must both be
+ * visible. Falls back to the local value only on hosts without the field.
  */
-function reportedDeadline(created: { data: { replayed?: boolean; [key: string]: unknown } }, fallbackIso: string): string {
-  if (created.data.replayed === true && typeof created.data.expiresAt === 'string' && !Number.isNaN(Date.parse(created.data.expiresAt))) {
-    return created.data.expiresAt
-  }
-  return fallbackIso
+function reportedDeadline(
+  created: { data: { replayed?: boolean; [key: string]: unknown } },
+  fallbackIso?: string,
+): string | null {
+  const stored = created.data.expiresAt
+  if (typeof stored === 'string' && !Number.isNaN(Date.parse(stored))) return stored
+  if (fallbackIso) return fallbackIso
+  return typeof stored === 'string' ? stored : null
 }
 
 /**
@@ -360,7 +365,10 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
           allowedActions: { accept: true, reject: true, ignore: true },
           ...(reasonRequired ? { reasonRequired } : {}),
           ...(input.links ? { externalUrls: input.links } : {}),
-          expiresAt: deadline.iso,
+          // Only an EXPLICIT deadline is sent: with no deadline the host
+          // default rules (project timeout, else 24h), so the two sides can
+          // never disagree and the caller's default is never clamped.
+          ...(deadline.iso ? { expiresAt: deadline.iso } : {}),
           argsHash: hash,
           metadata: { source: 'hitly-mcp', ...(input.risk ? { risk: input.risk } : {}) },
           ...(input.cb_auth_token ? { cbAuthToken: input.cb_auth_token } : {}),
@@ -499,7 +507,10 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
           },
           contextMarkdown: lines.join('\n'),
           allowedActions: { accept: false, reject: false, respond: true, ignore: true },
-          expiresAt: deadline.iso,
+          // Only an EXPLICIT deadline is sent (see request_approval): no
+          // deadline => the host default applies (24h unless the project
+          // sets its own timeout).
+          ...(deadline.iso ? { expiresAt: deadline.iso } : {}),
           metadata: { source: 'hitly-mcp', kind: 'question' },
           ...(input.cb_auth_token ? { cbAuthToken: input.cb_auth_token } : {}),
         }
