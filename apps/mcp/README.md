@@ -28,7 +28,17 @@ Rules the server enforces:
 
 ## Auth
 
-`Authorization: Bearer hitly_…` — a HITLy **HTTP-plugin project API key**, forwarded to the host for every call. Missing or malformed keys get `401` with `WWW-Authenticate: Bearer`. OAuth 2.1 replaces key paste in M3.
+`Authorization: Bearer hitly_… — a HITLy **HTTP-plugin project API key**, forwarded to the host for every call. Missing or malformed keys get `401` with `WWW-Authenticate: Bearer`. OAuth 2.1 replaces key paste in M3.
+
+## Callbacks
+
+`request_approval` and `ask_user` take optional `callback_url` (https) and `cb_auth_token` (16–512 chars). HITLy POSTs the outcome to `callback_url` with `content-type: application/json` and, when `cb_auth_token` was given, `Authorization: Bearer <cb_auth_token>` (the token is never echoed back). When the project has a webhook signing secret, delivery also carries `x-hitly-timestamp` (unix seconds), `x-hitly-signature` (hex HMAC-SHA256 over `"<timestamp>.<raw body>"`), `x-hitly-event-id` (stable across retries; dedupe on it) and `x-hitly-key-id`; otherwise only `x-hitly-event-id`. **Redirects are not followed** — a 3xx fails the delivery.
+
+The body is the HTTP-plugin decided/answered event: `event_id`, `type` (`decided`, or `answered` for an `ask_user` answer), `request_id`, `occurred_at`, `state`, `decision`, `answer` (the reviewer's reply typed per the `answerSchema`: string, number, or string array; null otherwise), `reason`, `argsHash`, `editedArgs` (reviewer amendments — act on these), `response` (plain text reply), `metadata`, `idempotency_key`, `decisionDetail` (`outcome`, `reason`, `decidedBy`, `client`).
+
+The same outcome in spec form is what `get_decision` returns: a `hitl/response/v0` object (hitl-spec section 4) with `spec`, `requestId`, `status` (`answered` | `declined` | `cancelled` | `expired`), `value` (the typed answer), `reason`, `decidedBy`, `decidedAt`, `argsHash`, `signature`, `activity`.
+
+The callback is a **hint**; `get_decision` is the source of truth. No `callback_url` means no callback: poll `get_decision` instead. Example: a Grok Bot agent passes its own agent webhook URL as `callback_url` (e.g. `https://example.com/hooks/hitly`) and a secret only it knows as `cb_auth_token`. `cb_auth_token` requires the host to advertise the `cb_auth_token` capability; the tool refuses with a clear error otherwise.
 
 ## Origin, Host and rate limiting
 
