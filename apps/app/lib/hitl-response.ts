@@ -11,9 +11,12 @@ import { argsHash as computeArgsHash, contextItems, jcsHash, type ApprovalEnvelo
  *                       (`_meta["net.hitly/editedArgs"]`, full merged args).
  *                       The stored request and `argsHash` stay the original.
  * - reject           -> answered, value "reject"
- * - respond          -> answered, value = the reviewer's reply text; when the
- *                       reviewer replied without any reply text `value` is
- *                       OMITTED (never `value: ""`), matching MCP get_decision
+ * - respond          -> answered; when the host holds a typed ask_user answer
+ *                       that answer is the ONLY carrier (top-level `answer`,
+ *                       hitl-spec 4.2 PM ruling) and `value` is OMITTED;
+ *                       without a typed answer, `value` = the reviewer's reply
+ *                       text, and a respond with no reply text OMITS `value`
+ *                       (never `value: ""`), matching MCP get_decision
  * - ignore           -> declined (no value)
  * - cancel           -> cancelled (`_meta["net.hitly/cancelledBy"]` says whether
  *                       the requester or a reviewer withdrew it)
@@ -143,13 +146,18 @@ export async function buildHitlRead(input: HitlReadInput) {
       case 'reject':
       case 'edit':
       case 'respond': {
-        // respond with no reply text OMITS `value` (never `value: ""`),
-        // matching MCP toResponseV0, which maps respond value only from a
-        // string `response` and leaves the key out otherwise.
+        // PM ruling on hitl-spec 4.2 (Test M1): when the host holds a typed
+        // answer, top-level `answer` is the ONLY carrier of the answer and
+        // `value` MUST NOT be present alongside it - on REST and MCP alike.
+        // Without a typed answer, respond with no reply text OMITS `value`
+        // (never `value: ""`), matching MCP toResponseV0, which maps respond
+        // value only from a string `response` and leaves the key out otherwise.
         let value: string | undefined
-        if (decision.decision === 'reject') value = 'reject'
-        else if (decision.decision === 'respond') value = typeof payload.response === 'string' ? payload.response : undefined
-        else value = 'approve'
+        if (answer === undefined) {
+          if (decision.decision === 'reject') value = 'reject'
+          else if (decision.decision === 'respond') value = typeof payload.response === 'string' ? payload.response : undefined
+          else value = 'approve'
+        }
         if (decision.decision === 'edit' && payload.editedArgs && typeof payload.editedArgs === 'object') {
           const raw = payload.editedArgs as Record<string, unknown>
           editedArgs = input.mergeEdits?.(raw) ?? { ...originalArgs, ...raw }

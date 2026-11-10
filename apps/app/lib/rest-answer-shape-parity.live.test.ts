@@ -21,7 +21,10 @@
  * through the real GET /api/v1/approvals/:id route and the real MCP tool loop.
  * Mutants checked: (1) respond defaulting value to ""; (2) emitting
  * answer: null; (3) dropping/diverging the _meta alias while answer exists;
- * (4) removing the top-level answer from the hitl view (old REST nesting).
+ * (4) removing the top-level answer from the hitl view (old REST nesting);
+ * (5) emitting a top-level value alongside a typed answer on REST or MCP
+ * (PM ruling: answer is the ONLY carrier); (6) callbacks sending answer: null
+ * instead of omitting the key (decided POST and lifecycle bodies).
  *
  * Run with: DATABASE_URL=... HITLY_ENCRYPTION_KEK=... yarn workspace @hitly/app test
  */
@@ -250,4 +253,74 @@ test('a stored literal null answer is treated as absent everywhere (real host, P
   const got = await readViaMcp(approvalId)
   assert.ok(!('answer' in got), 'MCP result must treat stored null as absent')
   assert.equal(findNullAnswer(got), null, 'MCP result must never surface answer: null')
+})
+
+// PM ruling on hitl-spec 4.2 (Test M1): with a typed answer, top-level `answer`
+// is the ONLY carrier. Reply text stored alongside it must NOT resurrect a
+// top-level `value` on REST or MCP, and callbacks must never send `answer: null`.
+
+test('respond with BOTH reply text and a typed answer: no top-level value on REST nor MCP (real host, PG)', async () => {
+  const approvalId = await askAsBot()
+  const typed = { kind: 'free_text', value: 'Tuesday morning ✓' }
+  await decide(approvalId, { decision: 'respond', response: 'Here is some reply text', answer: typed })
+
+  const body = await readViaRest(approvalId)
+  const hitl = hitlView(body)
+  assert.equal(hitl.status, 'answered')
+  assert.ok(!('value' in hitl), `REST hitl view must NOT carry value alongside a typed answer, got ${JSON.stringify(hitl.value)}`)
+  assert.deepEqual(hitl.answer, typed, 'REST answer must stay the only carrier, verbatim')
+  const meta = hitl._meta as Record<string, unknown>
+  assert.deepEqual(meta['net.hitly/answer'], hitl.answer, 'deprecated alias must still equal answer exactly')
+
+  const got = await readViaMcp(approvalId)
+  assert.equal(got.status, 'answered')
+  assert.ok(!('value' in got), `MCP result must NOT carry value alongside a typed answer, got ${JSON.stringify(got.value)}`)
+  assert.deepEqual(got.answer, typed, 'MCP answer must be the only carrier too')
+  assert.equal(findNullAnswer(body), null, 'no answer-shaped null in the REST read')
+  assert.equal(findNullAnswer(got), null, 'no answer-shaped null in the MCP result')
+})
+
+test('accept and reject with a typed answer also carry answer only, never value (real host, PG)', async () => {
+  for (const decision of ['accept', 'reject'] as const) {
+    const approvalId = await askAsBot({
+      actionName: 'deploy',
+      args: { env: 'prod' },
+      allowedActions: { accept: true, reject: true, respond: false, ignore: true },
+    })
+    const typed = { kind: 'free_text', value: `typed note with the ${decision}` }
+    await decide(approvalId, { decision, answer: typed, reason: `reviewer rationale for ${decision}` })
+
+    const hitl = hitlView(await readViaRest(approvalId))
+    assert.equal(hitl.status, 'answered')
+    assert.ok(!('value' in hitl), `REST hitl view for ${decision} + answer must omit value, got ${JSON.stringify(hitl.value)}`)
+    assert.deepEqual(hitl.answer, typed)
+
+    const got = await readViaMcp(approvalId)
+    assert.ok(!('value' in got), `MCP result for ${decision} + answer must omit value, got ${JSON.stringify(got.value)}`)
+    assert.deepEqual(got.answer, typed)
+  }
+})
+
+test('callbacks: answered POST carries the answer intact with no null; decided POST omits answer entirely (real host, PG)', async () => {
+  const hitsBefore = receiver.hits.length
+
+  const withAnswer = await askAsBot()
+  const typed = { kind: 'single_choice', value: 'Morning' }
+  await decide(withAnswer, { decision: 'respond', answer: typed })
+
+  const answered = receiver.hits.slice(hitsBefore).filter((hit) => hit.body.type === 'answered')
+  assert.equal(answered.length, 1, 'one answered callback POST must reach the receiver')
+  assert.deepEqual(answered[0]!.body.answer, typed, 'answered callback must carry the answer intact')
+  assert.equal(findNullAnswer(answered[0]!.body), null, 'answered callback must never carry answer: null anywhere')
+
+  const noAnswer = await askAsBot({
+    actionName: 'deploy',
+    args: { env: 'prod' },
+    allowedActions: { accept: true, reject: true, respond: false, ignore: true },
+  })
+  await decide(noAnswer, { decision: 'accept' })
+
+  const decided = receiver.hits.slice(hitsBefore).filter((hit) => hit.body.type === 'decided')
+  assert.equal(decided.length, 1, 'one decided callback POST must reach the receiver')
+  assert.ok(!('answer' in decided[0]!.body), `decided callback must OMIT the answer key, got ${JSON.stringify(decided[0]!.body.answer)}`)
 })
