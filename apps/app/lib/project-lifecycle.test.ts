@@ -19,12 +19,15 @@ import {
   users,
   workspaces,
 } from '@hitly/db/schema'
+import { POST as cancelRoute } from '../app/api/v1/approvals/[id]/cancel/route'
 import { POST as ingestRoute } from '../app/api/v1/approvals/route'
-import { decideApproval, ingestApproval } from './approvals'
+import { cancelApproval, cancelApprovalAsRequester, decideApproval, ingestApproval } from './approvals'
 import { db, pool } from './db'
+import { expireOverdueApprovals } from './housekeeping/jobs'
 import { newId } from './ids'
 import { generateApiKey } from './keys'
 import { listInboxItems } from './inbox'
+import { startCapturingReceiver } from './m0h-fixture'
 import { parseProjectConfig, saveProjectConfig } from './project-config'
 import {
   PROJECT_ARCHIVED_CODE,
@@ -450,6 +453,159 @@ describe('tier hook direct-delete path', () => {
       assert.equal(gone, undefined)
     } finally {
       setCanUseProjectLifecycleForTests(null)
+    }
+  })
+})
+
+describe('cancel on paused and archived projects', () => {
+  it('POST /cancel with the project API key on an archived project is 409 project_archived and the item is unchanged', async () => {
+    const { projectId, apiKey } = await insertProject('Archive Cancel Http')
+    const created = await withTenant(workspaceId, () => ingest(apiKey))
+    if (!created.ok) throw new Error(created.error)
+    const archived = await withTenant(workspaceId, () =>
+      setProjectStatus({ projectId, status: 'archived', workspaceRole: 'admin', workspace }),
+    )
+    assert.equal(archived.ok, true)
+    const [before] = await database.select().from(approvals).where(eq(approvals.id, created.approval.id))
+    assert.equal(before.status, 'pending')
+
+    const route = await cancelRoute(
+      new Request(`http://localhost/api/v1/approvals/${created.approval.id}/cancel`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+      { params: Promise.resolve({ id: created.approval.id }) },
+    )
+    assert.equal(route.status, 409)
+    assert.deepEqual(await route.json(), { error: 'project archived', code: 'project_archived' })
+
+    const requester = await cancelApprovalAsRequester({ apiKey, approvalId: created.approval.id })
+    assert.equal(requester.ok, false)
+    if (requester.ok) throw new Error('archived requester cancel must fail')
+    assert.equal(requester.status, 409)
+    assert.equal(requester.code, PROJECT_ARCHIVED_CODE)
+    assert.equal(requester.error, 'project archived')
+
+    const [after] = await database.select().from(approvals).where(eq(approvals.id, created.approval.id))
+    assert.equal(after.status, 'pending')
+    assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime())
+  })
+
+  it('session cancelApproval on an archived project is 409 project_archived and the item is unchanged', async () => {
+    const { projectId, apiKey } = await insertProject('Archive Cancel Session')
+    const created = await withTenant(workspaceId, () => ingest(apiKey))
+    if (!created.ok) throw new Error(created.error)
+    const archived = await withTenant(workspaceId, () =>
+      setProjectStatus({ projectId, status: 'archived', workspaceRole: 'admin', workspace }),
+    )
+    assert.equal(archived.ok, true)
+    const [before] = await database.select().from(approvals).where(eq(approvals.id, created.approval.id))
+
+    const cancelled = await cancelApproval({
+      approvalId: created.approval.id,
+      actorUserId: adminId,
+      workspaceId,
+    })
+    assert.equal('error' in cancelled, true)
+    if (!('error' in cancelled)) throw new Error('archived session cancel must fail')
+    assert.equal(cancelled.error, 'project archived')
+    assert.equal(cancelled.status, 409)
+    assert.equal('code' in cancelled && cancelled.code, PROJECT_ARCHIVED_CODE)
+
+    const [after] = await database.select().from(approvals).where(eq(approvals.id, created.approval.id))
+    assert.equal(after.status, 'pending')
+    assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime())
+  })
+
+  it('cancel on a paused project still succeeds on the requester HTTP path and the session path', async () => {
+    const { projectId: httpProjectId, apiKey: httpKey } = await insertProject('Pause Cancel Http')
+    const httpCreated = await withTenant(workspaceId, () => ingest(httpKey))
+    if (!httpCreated.ok) throw new Error(httpCreated.error)
+    const pausedHttp = await withTenant(workspaceId, () =>
+      setProjectStatus({ projectId: httpProjectId, status: 'paused', workspaceRole: 'admin', workspace }),
+    )
+    assert.equal(pausedHttp.ok, true)
+
+    const route = await cancelRoute(
+      new Request(`http://localhost/api/v1/approvals/${httpCreated.approval.id}/cancel`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${httpKey}` },
+      }),
+      { params: Promise.resolve({ id: httpCreated.approval.id }) },
+    )
+    assert.equal(route.status, 200)
+    assert.deepEqual(await route.json(), {
+      id: httpCreated.approval.id,
+      status: 'cancelled',
+      decision: 'cancel',
+      by: 'requester',
+    })
+    const [httpRow] = await database.select().from(approvals).where(eq(approvals.id, httpCreated.approval.id))
+    assert.equal(httpRow.status, 'cancelled')
+
+    const { projectId: sessionProjectId, apiKey: sessionKey } = await insertProject('Pause Cancel Session')
+    const sessionCreated = await withTenant(workspaceId, () => ingest(sessionKey))
+    if (!sessionCreated.ok) throw new Error(sessionCreated.error)
+    const pausedSession = await withTenant(workspaceId, () =>
+      setProjectStatus({ projectId: sessionProjectId, status: 'paused', workspaceRole: 'admin', workspace }),
+    )
+    assert.equal(pausedSession.ok, true)
+
+    const cancelled = await cancelApproval({
+      approvalId: sessionCreated.approval.id,
+      actorUserId: adminId,
+      workspaceId,
+    })
+    assert.equal('error' in cancelled && Boolean(cancelled.error), false, JSON.stringify(cancelled))
+    if ('error' in cancelled) throw new Error(cancelled.error)
+    assert.equal(cancelled.status, 'cancelled')
+    const [sessionRow] = await database.select().from(approvals).where(eq(approvals.id, sessionCreated.approval.id))
+    assert.equal(sessionRow.status, 'cancelled')
+  })
+})
+
+describe('expiry sweeper on archived projects', () => {
+  it('expires an overdue pending item and sends exactly one expired callback', async () => {
+    const receiver = await startCapturingReceiver()
+    try {
+      const { projectId, apiKey } = await insertProject('Archive Expire Sweep')
+      const created = await withTenant(workspaceId, () =>
+        ingestApproval({
+          apiKey,
+          body: {
+            ...httpBody(),
+            resumeUrl: `${receiver.url}/resume`,
+            lifecycleEvents: ['expired'],
+          },
+        }),
+      )
+      if (!created.ok) throw new Error(created.error)
+      const archived = await withTenant(workspaceId, () =>
+        setProjectStatus({ projectId, status: 'archived', workspaceRole: 'admin', workspace }),
+      )
+      assert.equal(archived.ok, true)
+
+      await database
+        .update(approvals)
+        .set({ expiresAt: new Date(Date.now() - 60_000) })
+        .where(eq(approvals.id, created.approval.id))
+      assert.equal((await database.select().from(approvals).where(eq(approvals.id, created.approval.id)))[0]?.status, 'pending')
+
+      const before = receiver.hits.length
+      const swept = await expireOverdueApprovals()
+      assert.ok(swept.expired >= 1, 'the sweep must expire the archived overdue row')
+
+      const [row] = await database.select().from(approvals).where(eq(approvals.id, created.approval.id))
+      assert.equal(row.status, 'expired')
+      const expiryHits = receiver.hits
+        .slice(before)
+        .filter(
+          (hit) =>
+            String(hit.body.request_id ?? hit.body.id) === created.approval.id && hit.body.type === 'expired',
+        )
+      assert.equal(expiryHits.length, 1, `exactly one expired callback, got ${expiryHits.length}`)
+    } finally {
+      await receiver.close()
     }
   })
 })
