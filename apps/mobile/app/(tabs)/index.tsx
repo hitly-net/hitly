@@ -2,6 +2,7 @@ import { ScrollView, Text, StyleSheet } from 'react-native'
 import { useRouter } from 'expo-router'
 import { colors } from '../../src/theme'
 import { useAttention } from '../../src/providers/AttentionProvider'
+import { FAILED_RESUME_INBOX_SCOPE } from '../../src/inbox-scope-param'
 import { AttentionSummary } from '../../src/components/attention/AttentionSummary'
 
 export default function HomeScreen() {
@@ -14,7 +15,9 @@ export default function HomeScreen() {
       <AttentionSummary
         summary={summary}
         onPending={() => router.push('/(tabs)/inbox')}
-        onFailed={() => router.push('/(tabs)/inbox')}
+        onFailed={() =>
+          router.push({ pathname: '/(tabs)/inbox', params: { scope: FAILED_RESUME_INBOX_SCOPE } })
+        }
       />
     </ScrollView>
   )
