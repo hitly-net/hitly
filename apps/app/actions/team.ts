@@ -82,9 +82,13 @@ export async function removeWorkspaceMember(memberId: string) {
   // role change cannot slip between the count and the removal.
   await withTenant(workspace.id, async () => {
     const database = requireDb()
-    const rows = await database.select().from(memberships).where(eq(memberships.id, memberId)).limit(1)
+    const rows = await database
+      .select()
+      .from(memberships)
+      .where(and(eq(memberships.id, memberId), eq(memberships.workspaceId, workspace.id)))
+      .limit(1)
     const member = rows[0]
-    if (!member || member.workspaceId !== workspace.id) throw new Error('Member not found')
+    if (!member) throw new Error('Member not found')
     if (member.userId === user.id) throw new Error('You cannot remove yourself')
     if (member.role === 'owner') throw new Error('Cannot remove the owner')
     // Server-side backstop for the same rule (a workspace always keeps an
@@ -97,7 +101,9 @@ export async function removeWorkspaceMember(memberId: string) {
     // A workspace removal strands the person's project admin seats: refuse
     // while they are the only admin of any project in this workspace.
     await assertWorkspaceMemberRemovalKeepsProjectAdmins({ userId: member.userId, database })
-    await database.delete(memberships).where(eq(memberships.id, memberId))
+    await database
+      .delete(memberships)
+      .where(and(eq(memberships.id, memberId), eq(memberships.workspaceId, workspace.id)))
   })
   revalidatePath('/settings/team')
 }

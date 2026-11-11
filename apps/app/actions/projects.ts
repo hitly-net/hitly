@@ -303,7 +303,15 @@ export async function deleteProjectRule(projectId: string, ruleId: string) {
   return withAppTenant(async () => {
     await requireProjectAdmin(projectId)
     const database = requireDb()
-    await database.delete(projectRules).where(and(eq(projectRules.id, ruleId), eq(projectRules.workspaceId, requireTenantWorkspaceId())))
+    await database
+      .delete(projectRules)
+      .where(
+        and(
+          eq(projectRules.id, ruleId),
+          eq(projectRules.projectId, projectId),
+          eq(projectRules.workspaceId, requireTenantWorkspaceId()),
+        ),
+      )
     revalidatePath(`/projects/${projectId}/rules`)
   })
 }
@@ -312,7 +320,16 @@ export async function toggleProjectChannel(projectId: string, channelId: string,
   return withAppTenant(async () => {
     await requireProjectAdmin(projectId)
     const database = requireDb()
-    await database.update(projectChannels).set({ enabled, updatedAt: new Date() }).where(and(eq(projectChannels.id, channelId), eq(projectChannels.workspaceId, requireTenantWorkspaceId())))
+    await database
+      .update(projectChannels)
+      .set({ enabled, updatedAt: new Date() })
+      .where(
+        and(
+          eq(projectChannels.id, channelId),
+          eq(projectChannels.projectId, projectId),
+          eq(projectChannels.workspaceId, requireTenantWorkspaceId()),
+        ),
+      )
     revalidatePath(`/projects/${projectId}/channels`)
   })
 }
