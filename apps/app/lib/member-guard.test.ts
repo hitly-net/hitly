@@ -7,6 +7,11 @@
  * Run with: yarn db:up && yarn test
  */
 
+// The last-admin decision seam only arms under NODE_ENV === 'test'
+// (see setLastAdminDecisionHookForTests); opt this file's process in
+// before any guard call runs.
+;(process.env as Record<string, string | undefined>).NODE_ENV = 'test'
+
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { and, eq } from 'drizzle-orm'
@@ -356,6 +361,67 @@ describe('project last-admin guard', () => {
     } finally {
       releaseA()
       setLastAdminDecisionHookForTests(null)
+    }
+  })
+
+  it('post-lock role re-read: a committed change while waiting on the lock is never a stale refusal', async () => {
+    // Connection Y holds the project's advisory xact lock, and while X (a
+    // guarded demote of adminA that already passed its pre-lock role read)
+    // waits on that lock, Y demotes BOTH admins and commits. When X gets the
+    // lock it must re-read its own target row: adminA is no longer an admin,
+    // so the demote is a no-op and must NOT raise a stale last_project_admin.
+    // Without the post-lock re-read X would count admins after the lock,
+    // see zero, and throw - this test goes RED on that mutant.
+    const projectId = await makeProject('Reread demote', [adminA.id, adminB.id])
+    const mA = await membershipIdOf(projectId, adminA.id)
+    const mB = await membershipIdOf(projectId, adminB.id)
+
+    const y = await pool!.connect()
+    let demoteA: Promise<void> | undefined
+    try {
+      await y.query('begin')
+      await y.query(
+        'select pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [`hitly:project-admin:${projectId}`],
+      )
+
+      demoteA = guardMembershipChange(projectId, mA, 'user')
+      const waiting = await advisoryLockWaited(projectId)
+      assert.ok(waiting, 'X contends the held advisory lock (guard is not serialising)')
+
+      // Y demotes both admins behind X and commits, releasing the lock.
+      await y.query('update project_memberships set role = $1 where id = any($2)', ['user', [mA, mB]])
+      await y.query('commit')
+    } finally {
+      await y.query('rollback').catch(() => undefined)
+      y.release()
+    }
+
+    const rA = await demoteA
+    assert.equal(rA, undefined, 'the stale demote resolves as a no-op, not a refusal')
+    assert.equal(await roleOf(projectId, adminA.id), 'user')
+    assert.equal(await roleOf(projectId, adminB.id), 'user')
+  })
+
+  it('the decision seam is inert outside NODE_ENV=test', async () => {
+    // setLastAdminDecisionHookForTests is a no-op for non-null hooks unless
+    // NODE_ENV === 'test', so no production import can arm it by mistake.
+    const projectId = await makeProject('Seam gate', [adminA.id, adminB.id])
+    const mA = await membershipIdOf(projectId, adminA.id)
+    let hookCalls = 0
+    const env = process.env as Record<string, string | undefined>
+    const savedEnv = env.NODE_ENV
+    env.NODE_ENV = 'production'
+    try {
+      setLastAdminDecisionHookForTests(async () => {
+        hookCalls += 1
+      })
+      await guardMembershipChange(projectId, mA, 'user')
+      assert.equal(hookCalls, 0, 'no hook runs when NODE_ENV is not test')
+      assert.equal(await roleOf(projectId, adminA.id), 'user', 'the guarded write still commits')
+    } finally {
+      setLastAdminDecisionHookForTests(null)
+      env.NODE_ENV = savedEnv
     }
   })
 })
