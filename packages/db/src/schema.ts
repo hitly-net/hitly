@@ -1,4 +1,4 @@
-import { CHANNEL_TYPES, DECISIONS, PLUGIN_IDS, PROJECT_ROLES, WORKSPACE_ROLES } from '@hitly/core'
+import { CHANNEL_TYPES, DECISIONS, PLUGIN_IDS, PROJECT_ROLES, PROJECT_STATUSES, WORKSPACE_ROLES } from '@hitly/core'
 import {
   boolean,
   index,
@@ -23,6 +23,7 @@ const updatedAt = () =>
 
 export const workspaceRoleEnum = pgEnum('workspace_role', WORKSPACE_ROLES)
 export const projectRoleEnum = pgEnum('project_role', PROJECT_ROLES)
+export const projectStatusEnum = pgEnum('project_status', PROJECT_STATUSES)
 export const pluginIdEnum = pgEnum('plugin_id', PLUGIN_IDS)
 export const channelTypeEnum = pgEnum('channel_type', CHANNEL_TYPES)
 export const approvalStatusEnum = pgEnum('approval_status', [
@@ -272,6 +273,8 @@ export const projects = pgTable(
     name: varchar('name', { length: 255 }).notNull(),
     description: text('description'),
     plugin: pluginIdEnum('plugin').notNull(),
+    /** live = accepting requests; paused = no new requests; archived = hidden + read-only. */
+    status: projectStatusEnum('status').notNull().default('live'),
     credentials: jsonb('credentials').$type<Record<string, unknown>>().notNull(),
     defaultAssigneeUserId: id('default_assignee_user_id').references(() => users.id, {
       onDelete: 'set null',
@@ -282,7 +285,10 @@ export const projects = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => [index('projects_workspace_idx').on(table.workspaceId)],
+  (table) => [
+    index('projects_workspace_idx').on(table.workspaceId),
+    index('projects_workspace_status_idx').on(table.workspaceId, table.status),
+  ],
 )
 
 export const projectMemberships = pgTable(

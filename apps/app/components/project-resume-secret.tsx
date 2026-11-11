@@ -6,9 +6,11 @@ import { regenerateProjectResumeSecret } from '@/actions/projects'
 export function ProjectResumeSecret({
   projectId,
   secret,
+  readOnly,
 }: {
   projectId: string
   secret: string
+  readOnly?: boolean
 }) {
   const [value, setValue] = useState(secret)
   const [shown, setShown] = useState(false)
@@ -72,6 +74,7 @@ export function ProjectResumeSecret({
         >
           {copied === 'env' ? 'Copied' : 'Copy .env'}
         </button>
+        {readOnly ? null : (
         <button
           type="button"
           disabled={busy}
@@ -80,6 +83,7 @@ export function ProjectResumeSecret({
         >
           {busy ? 'Working…' : 'Regenerate'}
         </button>
+        )}
       </div>
       {justRotated ? (
         <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 font-mono text-xs break-all dark:border-amber-900 dark:bg-amber-950">

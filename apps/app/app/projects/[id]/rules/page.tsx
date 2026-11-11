@@ -4,6 +4,7 @@ import { projectRules } from '@hitly/db/schema'
 import { createProjectRule, deleteProjectRule } from '@/actions/projects'
 import { AppShell } from '@/components/app-shell'
 import { ProjectTabs } from '@/components/project-tabs'
+import { ProjectHeading, ProjectStatusBanner } from '@/components/project-status-banner'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
@@ -23,8 +24,9 @@ export default async function ProjectRulesPage({ params }: { params: Promise<{ i
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
-      <h1 className="text-2xl font-semibold">{project.name}</h1>
+      <ProjectHeading name={project.name} status={project.status} />
       <ProjectTabs projectId={id} current="Rules" />
+      <ProjectStatusBanner status={project.status} />
       <p className="mt-4 text-sm text-zinc-500">
         First matching rule wins. Assignee overrides are ignored until team routing; SLA and channel still apply.
       </p>

@@ -52,6 +52,8 @@ The retention period is **10 days** by default and is published in every create 
 }
 ```
 
+A **paused** project refuses new ingest with `409` and `{ "error": "project paused", "code": "project_paused" }`. An **archived** project refuses ingest (and reviewer decide/cancel) with `409` and `{ "error": "project archived", "code": "project_archived" }`. Replay of an existing create-once row is not a new request. See [Projects](/docs/projects#status).
+
 `mastraBaseUrl` is optional when the project already stores the origin base URL.
 
 Evidence fields are optional; HITL<sub><i>y</i></sub> persists them when present and writes them to the configured HTTP evidence sink. See [Envelope](/docs/envelope#evidence-fields) for field descriptions.
