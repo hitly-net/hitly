@@ -1,5 +1,5 @@
 {
-  "id": "ec8131df-5e94-4c69-88de-96595ed3a132",
+  "id": "b4237bd0-9c95-4a6a-a353-0be21e726387",
   "prevId": "04dab690-2222-423d-a54a-9b68ccde5704",
   "version": "7",
   "dialect": "postgresql",
@@ -379,33 +379,6 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "approvals_workspace_created_at_id_idx": {
-          "name": "approvals_workspace_created_at_id_idx",
-          "columns": [
-            {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "first"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "first"
             }
           ],
           "isUnique": false,
@@ -1919,6 +1892,14 @@
           "primaryKey": false,
           "notNull": true
         },
+        "status": {
+          "name": "status",
+          "type": "project_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'live'"
+        },
         "credentials": {
           "name": "credentials",
           "type": "jsonb",
@@ -1972,6 +1953,27 @@
           "columns": [
             {
               "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "projects_workspace_status_idx": {
+          "name": "projects_workspace_status_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2895,6 +2897,15 @@
         "admin",
         "user",
         "reader"
+      ]
+    },
+    "public.project_status": {
+      "name": "project_status",
+      "schema": "public",
+      "values": [
+        "live",
+        "paused",
+        "archived"
       ]
     },
     "public.workspace_role": {

@@ -159,7 +159,7 @@ test('migration 0006: approvals.requester_key_id is nullable, FK set null, index
   assert.equal(idx.rows.length, 1)
 })
 
-test('migration 0010: approvals keyset list index is (workspace_id, created_at DESC, id DESC)', async () => {
+test('migration 0011: approvals keyset list index is (workspace_id, created_at DESC, id DESC)', async () => {
   const idx = await client.query(
     `select indexdef from pg_indexes where tablename = 'approvals' and indexname = 'approvals_workspace_created_at_id_idx'`,
   )

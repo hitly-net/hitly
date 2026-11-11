@@ -80,8 +80,14 @@ describe('list cursor', () => {
     const journal = JSON.parse(fs.readFileSync(path.join(drizzleDir, 'meta/_journal.json'), 'utf8')) as {
       entries: Array<{ tag: string }>
     }
-    const entry = journal.entries.find((e) => e.tag === '0010_approvals_workspace_created_at_id')
-    assert.ok(entry, 'drizzle journal must list 0010_approvals_workspace_created_at_id')
+    const projectStatus = journal.entries.find((e) => e.tag === '0010_project_status')
+    const entry = journal.entries.find((e) => e.tag === '0011_approvals_workspace_created_at_id')
+    assert.ok(projectStatus, 'drizzle journal must list 0010_project_status (#142) before this index')
+    assert.ok(entry, 'drizzle journal must list 0011_approvals_workspace_created_at_id')
+    assert.ok(
+      journal.entries.indexOf(projectStatus) < journal.entries.indexOf(entry),
+      '0011 index migration must apply after 0010_project_status',
+    )
     const migration = fs.readFileSync(path.join(drizzleDir, `${entry.tag}.sql`), 'utf8')
     assert.match(
       migration,
