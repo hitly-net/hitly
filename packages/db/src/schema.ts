@@ -190,6 +190,36 @@ export const userMfaChallenges = pgTable(
   ],
 )
 
+/**
+ * WebAuthn passkeys for an account. Column names match Better Auth's
+ * passkey plugin (`credentialID`, `publicKey`, `deviceType`, …) so the
+ * drizzle adapter can map the `passkey` model onto this table. `lastUsedAt`
+ * is extra and updated after a successful passkey sign-in.
+ */
+export const passkeys = pgTable(
+  'passkeys',
+  {
+    id: id().primaryKey(),
+    name: varchar('name', { length: 255 }),
+    publicKey: text('public_key').notNull(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    credentialID: varchar('credential_id', { length: 255 }).notNull(),
+    counter: integer('counter').notNull(),
+    deviceType: varchar('device_type', { length: 32 }).notNull(),
+    backedUp: boolean('backed_up').notNull(),
+    transports: text('transports'),
+    aaguid: varchar('aaguid', { length: 36 }),
+    createdAt: createdAt(),
+    lastUsedAt: timestamp('last_used_at', { precision: 3, withTimezone: true }),
+  },
+  (table) => [
+    index('passkeys_user_id_idx').on(table.userId),
+    uniqueIndex('passkeys_credential_id_idx').on(table.credentialID),
+  ],
+)
+
 /** Account-security audit trail (MFA enrol, disable, recovery, lockout). */
 export const accountSecurityEvents = pgTable(
   'account_security_events',
