@@ -34,9 +34,11 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         resumeResponse: result.resumeResponse,
       })
     }
+    const error = 'error' in result ? result.error : 'Retry failed'
+    const status = 'status' in result && typeof result.status === 'number' ? result.status : 500
     return NextResponse.json(
-      { error: 'error' in result ? result.error : 'Retry failed' },
-      { status: 'status' in result && typeof result.status === 'number' ? result.status : 500 },
+      'code' in result && result.code ? { error, code: result.code } : { error },
+      { status },
     )
   })
 }
