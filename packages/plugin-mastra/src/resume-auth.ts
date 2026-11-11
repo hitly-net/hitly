@@ -68,27 +68,27 @@ export function verifyHitlyResume(
   const claim = record?.hitly
 
   if (!secret) {
-    if (required) throw new Error('HITLY_RESUME_SECRET is not set; copy it from the Hitly project Config page.')
+    if (required) throw new Error('HITLY_RESUME_SECRET is not set; copy it from the HITLy project Config page.')
     return
   }
   if (!record || !claim || typeof claim !== 'object') {
-    throw new Error('Hitly resume proof is missing; reject spoofed resume.')
+    throw new Error('HITLy resume proof is missing; reject spoofed resume.')
   }
 
   const proof = claim as HitlyResumeClaim
   if (proof.v !== HITLY_RESUME_CLAIM_VERSION || typeof proof.sig !== 'string') {
-    throw new Error('Hitly resume proof is invalid.')
+    throw new Error('HITLy resume proof is invalid.')
   }
   if (typeof proof.exp !== 'number' || proof.exp * 1000 < Date.now()) {
-    throw new Error('Hitly resume proof has expired.')
+    throw new Error('HITLy resume proof has expired.')
   }
   if (args?.runId && proof.runId !== args.runId) {
-    throw new Error('Hitly resume proof runId does not match this run.')
+    throw new Error('HITLy resume proof runId does not match this run.')
   }
 
   const { hitly: _hitly, ...data } = record
   const expected = hmacHex(secret, `${stable(unsignedClaim(proof))}.${stable(data)}`)
   if (!equalHex(expected, proof.sig)) {
-    throw new Error('Hitly resume proof signature does not match.')
+    throw new Error('HITLy resume proof signature does not match.')
   }
 }

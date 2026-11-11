@@ -1,6 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm'
 import {
   isOpenApprovalStatus,
+  isWorkspaceAdmin,
   mustOpenItems,
   resolveReasonRequired,
   type AllowedActions,
@@ -161,6 +162,7 @@ export async function loadWorkItemPage(args: {
       workspaceRole: args.workspaceRole,
     })
     if (!access) return { ok: false as const }
+    if (access.project.status === 'archived' && !isWorkspaceAdmin(args.workspaceRole)) return { ok: false as const }
 
     const envelope = (await decodeTenantJson(args.workspaceId, approvalRow.envelope)) as unknown as ApprovalEnvelope
     const origin = (await decodeTenantJson(args.workspaceId, approvalRow.origin)) as unknown as OriginRef
@@ -245,7 +247,8 @@ export async function loadWorkItemPage(args: {
       redacted.envelope.editableFields && Object.keys(redacted.envelope.editableFields).length > 0,
     )
     const showEditControl = Boolean(allowed.edit && hasEditableFields)
-    const canAct = canDecide(access) && isOpenApprovalStatus(approvalRow.status)
+    const archived = access.project.status === 'archived'
+    const canAct = canDecide(access) && isOpenApprovalStatus(approvalRow.status) && !archived
     const expired = approvalHasExpired(approvalRow)
     const reasonRequired = resolveReasonRequired(redacted.envelope)
     const gatedItems = canAct && !expired ? mustOpenItems(redacted.envelope) : []
@@ -263,7 +266,7 @@ export async function loadWorkItemPage(args: {
       url: item.url,
       opened: openedRefs.includes(item.ref),
     }))
-    const canCancel = canDecide(access) && isOpenApprovalStatus(approvalRow.status) && !expired
+    const canCancel = canDecide(access) && isOpenApprovalStatus(approvalRow.status) && !expired && !archived
     const delegateTargets = people.filter(
       (person) => person.role !== 'reader' && person.userId !== approvalRow.assignedUserId,
     )
@@ -295,7 +298,7 @@ export async function loadWorkItemPage(args: {
         : undefined,
       canAct,
       canCancel,
-      canRetry: approvalRow.status === 'failed_resume' && Boolean(canDecide(access)),
+      canRetry: approvalRow.status === 'failed_resume' && Boolean(canDecide(access)) && !archived,
       expired,
       canDelegate,
       allowed,

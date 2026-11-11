@@ -39,6 +39,7 @@ import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 import { approvalHasExpired, effectiveApprovalStatus } from './approval-expiry'
 import { appendEvidence, buildDecidedEvent, buildPresentedEvent, buildRequestedEvent, buildResumedEvent, loadLatestReceipt } from './evidence'
+import { ingestBlockedForProjectStatus, mutationBlockedForProjectStatus } from './project-lifecycle'
 import { canDecide, getProjectAccess } from './rbac'
 import { loadOpenedContextRefs } from './context-opens'
 import { exportOtelTrace } from './otel-trace'
@@ -80,6 +81,17 @@ async function decodeProject<T extends { workspaceId: string; credentials: Recor
     ...project,
     credentials: await decodeTenantJson(project.workspaceId, project.credentials),
   }
+}
+
+async function refuseIfProjectArchived(projectId: string, workspaceId: string) {
+  const rows = await requireDb()
+    .select({ status: projects.status })
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)))
+    .limit(1)
+  const blocked = mutationBlockedForProjectStatus(rows[0]?.status ?? 'live')
+  if (!blocked) return null
+  return { error: blocked.error, code: blocked.code, status: 409 as const }
 }
 
 async function loadApproval(approvalId: string, workspaceId: string, options?: { forUpdate?: boolean }) {
@@ -253,6 +265,7 @@ export async function markApprovalPresented(args: {
       workspaceRole: args.workspaceRole,
     })
     if (!access) return { error: 'Not found', status: 404 as const }
+    if (mutationBlockedForProjectStatus(access.project.status)) return { presentedAt: null }
     if (!canDecide(access)) return { presentedAt: null }
     if (approval.presentedAt) return { presentedAt: approval.presentedAt.toISOString() }
     if (!isOpenApprovalStatus(approval.status) || approvalHasExpired(approval)) {
@@ -442,13 +455,18 @@ async function applyRules(args: {
   }
 }
 
+type IngestedApproval = NonNullable<Awaited<ReturnType<typeof loadApproval>>>
+type IngestApprovalResult =
+  | { ok: true; replayed: boolean; approval: IngestedApproval }
+  | { ok: false; error: string; status: 400 | 401 | 409 | 500; code?: string }
+
 export async function ingestApproval(args: {
   apiKey: string
   body: Record<string, unknown>
   idempotencyKey?: string | null
   /** Clock for the create-once window (tests). */
   now?: number
-}) {
+}): Promise<IngestApprovalResult> {
   const requestedProjectId = typeof args.body.projectId === 'string' ? args.body.projectId : undefined
   const authn = await authenticateProjectKey(args.apiKey, requestedProjectId)
   if (!authn) {
@@ -575,6 +593,16 @@ export async function ingestApproval(args: {
         error: 'Idempotency-Key already used in this project by a different API key',
         status: 409 as const,
       }
+    }
+  }
+
+  const ingestBlock = ingestBlockedForProjectStatus(project.status)
+  if (ingestBlock) {
+    return {
+      ok: false as const,
+      error: ingestBlock.error,
+      code: ingestBlock.code,
+      status: 409 as const,
     }
   }
 
@@ -707,6 +735,8 @@ export async function decideApproval(args: {
     const database = requireDb()
     const approval = await loadApproval(args.approvalId, workspaceId, { forUpdate: true })
     if (!approval) return { error: 'Not found', status: 404 as const }
+    const archived = await refuseIfProjectArchived(approval.projectId, workspaceId)
+    if (archived) return archived
     if (approvalHasExpired(approval)) {
       await settleExpiredApproval(approval, workspaceId)
       return { error: 'Approval has expired', status: 409 as const }
@@ -1094,6 +1124,8 @@ export async function cancelApproval(args: { approvalId: string; actorUserId: st
     const database = requireDb()
     const approval = await loadApproval(args.approvalId, workspaceId, { forUpdate: true })
     if (!approval) return { error: 'Not found', status: 404 as const }
+    const archived = await refuseIfProjectArchived(approval.projectId, workspaceId)
+    if (archived) return archived
     if (!isOpenApprovalStatus(approval.status)) {
       return { error: 'Approval is not open', status: 409 as const }
     }
@@ -1154,6 +1186,8 @@ export async function cancelApprovalAsRequester(args: { apiKey: string; approval
     if (!approval || approval.projectId !== authn.project.id || approval.requesterKeyId !== authn.key.id) {
       return { ok: false as const, error: 'Not found', status: 404 as const }
     }
+    const archived = await refuseIfProjectArchived(approval.projectId, workspaceId)
+    if (archived) return { ok: false as const, error: archived.error, code: archived.code, status: archived.status }
     if (approvalHasExpired(approval)) {
       await settleExpiredApproval(approval, workspaceId)
       return { ok: false as const, error: 'Approval has expired', status: 409 as const }
@@ -1295,6 +1329,9 @@ export async function listRequesterPending(args: {
 }) {
   const authn = await authenticateProjectKey(args.apiKey, args.projectId)
   if (!authn) return { ok: false as const, error: 'Invalid API key or project', status: 401 as const }
+  if ('status' in authn.project && authn.project.status === 'archived') {
+    return { ok: true as const, projectId: authn.project.id, nextCursor: null, items: [] }
+  }
   const workspaceId = authn.project.workspaceId
   const limit = clampListLimit(args.limit, REQUESTER_PENDING_DEFAULT_LIMIT, REQUESTER_PENDING_MAX_LIMIT)
   return withTenant(workspaceId, async () => {
@@ -1378,6 +1415,8 @@ export async function retryResume(args: { approvalId: string; workspaceId?: stri
     const database = requireDb()
     const approval = await loadApproval(args.approvalId, workspaceId)
     if (!approval) return { error: 'Not found', status: 404 as const }
+    const archived = await refuseIfProjectArchived(approval.projectId, workspaceId)
+    if (archived) return archived
     if (approval.status !== 'failed_resume') {
       return { error: 'Approval is not in failed_resume', status: 409 as const }
     }
@@ -1702,6 +1741,11 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
       ...read,
+      // Top-level copy of the stored ask_user schema (hitl-spec 3.4). Null
+      // when the request has none (legacy asks). Not nested on `hitl` —
+      // hitl/response/v0 forbids extra properties. Origin clients sent this
+      // schema at ingest; it is not reviewer-redacted here.
+      answerSchema: envelope.answerSchema ?? null,
     }
   })
 }

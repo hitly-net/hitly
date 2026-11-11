@@ -48,7 +48,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const parsed = parseProjectConfig(body)
     if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 })
     const result = await saveProjectConfig(id, parsed)
-    if ('error' in result) return NextResponse.json({ error: result.error }, { status: 404 })
+    if ('error' in result) {
+      const status = 'status' in result && typeof result.status === 'number' ? result.status : 404
+      return NextResponse.json(
+        'code' in result && result.code ? { error: result.error, code: result.code } : { error: result.error },
+        { status },
+      )
+    }
     return NextResponse.json({ ok: true })
   })
 }

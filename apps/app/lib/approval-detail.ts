@@ -1,5 +1,5 @@
 import { desc, eq, and } from 'drizzle-orm'
-import { isOpenApprovalStatus, type ApprovalEnvelope, type OriginRef, type PluginId, type WorkspaceRole } from '@hitly/core'
+import { isOpenApprovalStatus, isWorkspaceAdmin, type ApprovalEnvelope, type OriginRef, type PluginId, type WorkspaceRole } from '@hitly/core'
 import { approvals, decisionRecords, projects } from '@hitly/db/schema'
 import { approvalHasExpired, effectiveApprovalStatus } from './approval-expiry'
 import { settleExpiredApproval } from './approvals'
@@ -33,6 +33,9 @@ export async function getApprovalDetail(args: {
       workspaceRole: args.workspaceRole,
     })
     if (!access) return { ok: false as const, error: 'Not found', status: 404 }
+    if (access.project.status === 'archived' && !isWorkspaceAdmin(args.workspaceRole)) {
+      return { ok: false as const, error: 'Not found', status: 404 }
+    }
 
     const envelope = (await decodeTenantJson(args.workspaceId, approval.envelope)) as unknown as ApprovalEnvelope
     const origin = (await decodeTenantJson(args.workspaceId, approval.origin)) as unknown as OriginRef
@@ -41,8 +44,9 @@ export async function getApprovalDetail(args: {
     await settleExpiredApproval(approval, args.workspaceId)
     const expired = approvalHasExpired(approval)
     const readStatus = effectiveApprovalStatus(approval)
-    const canAct = canDecide(access) && isOpenApprovalStatus(approval.status) && !expired
-    const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status) && !expired
+    const archived = access.project.status === 'archived'
+    const canAct = canDecide(access) && isOpenApprovalStatus(approval.status) && !expired && !archived
+    const canCancel = canDecide(access) && isOpenApprovalStatus(approval.status) && !expired && !archived
 
     const decisions = await database
       .select({
@@ -101,6 +105,11 @@ export async function getApprovalDetail(args: {
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
       envelope: redacted.envelope,
+      // Top-level copy of the stored ask_user schema (hitl-spec 3.4). Nested
+      // `envelope.answerSchema` stays for existing clients. Null when absent
+      // (legacy asks with no schema). Taken from the redacted envelope so
+      // reviewer redaction rules are unchanged.
+      answerSchema: redacted.envelope.answerSchema ?? null,
       origin: redacted.origin,
       originFields: redacted.originFields,
       canAct,

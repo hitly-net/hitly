@@ -5,6 +5,7 @@ import { addProjectMember, removeProjectMember, updateProjectMemberRole } from '
 import { AppShell } from '@/components/app-shell'
 import { ProjectTabs } from '@/components/project-tabs'
 import { isLastAdminRow } from '@/lib/member-guard'
+import { ProjectHeading, ProjectStatusBanner } from '@/components/project-status-banner'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
 import { requireDb } from '@/lib/tenant'
@@ -52,8 +53,9 @@ export default async function ProjectPeoplePage({ params }: { params: Promise<{ 
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
-      <h1 className="text-2xl font-semibold">{project.name}</h1>
+      <ProjectHeading name={project.name} status={project.status} />
       <ProjectTabs projectId={id} current="People" />
+      <ProjectStatusBanner status={project.status} />
 
       <form action={addProjectMember.bind(null, id)} className="mt-6 flex max-w-xl gap-2">
         <select

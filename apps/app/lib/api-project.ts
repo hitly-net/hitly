@@ -1,3 +1,4 @@
+import { isWorkspaceAdmin } from '@hitly/core'
 import { NextResponse } from 'next/server'
 import { withApiTenant } from './api-session'
 import { canAdminProject, getProjectAccess } from './rbac'
@@ -10,6 +11,9 @@ export async function requireApiProject(projectId: string) {
       workspaceRole: ctx.role,
     })
     if (!access || access.project.workspaceId !== ctx.workspace.id) {
+      return { ok: false as const, error: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
+    }
+    if (access.project.status === 'archived' && !isWorkspaceAdmin(ctx.role)) {
       return { ok: false as const, error: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
     }
     return { ...ctx, access, canAdmin: canAdminProject(access) }

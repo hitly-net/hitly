@@ -17,6 +17,11 @@ function expiresLabel(expiresAt: Date | string | null | undefined) {
   return `expires in ${hours}h`
 }
 
+/** Email subject and push title for a pending approval. */
+export function decisionNeededTitle(actionName: string) {
+  return `HITLy: ${actionName} needs a decision`
+}
+
 export function pushCopy(args: {
   actionName: string
   projectName?: string | null
@@ -25,7 +30,7 @@ export function pushCopy(args: {
   const sla = expiresLabel(args.expiresAt)
   const bodyParts = [args.projectName?.trim(), sla].filter(Boolean)
   return {
-    title: `Hitly: ${args.actionName} needs a decision`,
+    title: decisionNeededTitle(args.actionName),
     body: bodyParts.length > 0 ? bodyParts.join(' · ') : 'A work item is waiting for you.',
   }
 }

@@ -56,6 +56,11 @@ export const PROJECT_ROLES = ['admin', 'user', 'reader'] as const
 
 export type ProjectRole = (typeof PROJECT_ROLES)[number]
 
+/** Operational lifecycle of a project. Default for new and existing rows is `live`. */
+export const PROJECT_STATUSES = ['live', 'paused', 'archived'] as const
+
+export type ProjectStatus = (typeof PROJECT_STATUSES)[number]
+
 export const CHANNEL_TYPES = ['email', 'slack', 'telegram'] as const
 
 export type ChannelType = (typeof CHANNEL_TYPES)[number]
@@ -267,6 +272,10 @@ export function isWorkspaceRole(value: unknown): value is WorkspaceRole {
 
 export function isProjectRole(value: unknown): value is ProjectRole {
   return typeof value === 'string' && (PROJECT_ROLES as readonly string[]).includes(value)
+}
+
+export function isProjectStatus(value: unknown): value is ProjectStatus {
+  return typeof value === 'string' && (PROJECT_STATUSES as readonly string[]).includes(value)
 }
 
 export function isChannelType(value: unknown): value is ChannelType {

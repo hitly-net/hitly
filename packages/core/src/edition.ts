@@ -90,7 +90,7 @@ export class FeatureUnavailableError extends Error {
   readonly feature: Feature
 
   constructor(feature: Feature) {
-    super(`Feature "${feature}" is not available in this Hitly edition`)
+    super(`Feature "${feature}" is not available in this HITLy edition`)
     this.name = 'FeatureUnavailableError'
     this.feature = feature
   }
