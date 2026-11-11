@@ -133,13 +133,37 @@ test('list_pending through real GET /api/v1/approvals reaches item 101 (pending 
           name: 'list_pending',
           arguments: cursor ? { projectId: project.id, cursor } : { projectId: project.id },
         }),
-      ) as { items: Array<{ id: string }>; nextCursor: string | null; error?: { code: string } }
+      ) as { items: Array<{ id: string; requestId?: string }>; nextCursor: string | null; error?: { code: string } }
       assert.equal(page.error, undefined, `list_pending must succeed against the real host list, got ${JSON.stringify(page)}`)
+      for (const item of page.items) {
+        assert.equal(
+          item.requestId,
+          item.id,
+          `every MCP list_pending item must carry a top-level requestId, got ${JSON.stringify(item)}`,
+        )
+      }
       seen.push(...page.items.map((item) => item.id))
       cursor = page.nextCursor ?? undefined
       pages += 1
       assert.ok(pages <= 4, 'list_pending pagination must terminate')
     } while (cursor)
+
+    // The REST requester list shares the item shape: every item carries the
+    // same top-level requestId handle get_decision and cancel take.
+    const restRes = await listApprovals(
+      new Request('https://hitly.example/api/v1/approvals?status=pending', {
+        headers: { authorization: `Bearer ${rawKey}` },
+      }),
+    )
+    const restBody = (await restRes.json()) as { items: Array<{ id: string; requestId?: string }> }
+    assert.ok(Array.isArray(restBody.items) && restBody.items.length > 0, 'REST pending list must be non-empty')
+    for (const item of restBody.items) {
+      assert.equal(
+        item.requestId,
+        item.id,
+        `every REST pending item must carry a top-level requestId, got ${JSON.stringify(item)}`,
+      )
+    }
 
     assert.ok(
       hostCalls.some((call) => call.includes('GET ') && call.includes('/api/v1/approvals') && call.includes('status=pending')),

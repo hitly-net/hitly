@@ -627,6 +627,12 @@ test('list_pending returns this key\u2019s open requests [M0]', async () => {
     assert.deepEqual(items.map((item) => item.kind), ['approval', 'question'])
     assert.equal(items[0].question, baseApproval.question)
     assert.equal(items[1].prompt, 'Which day?')
+    // Every item carries a top-level requestId (the handle get_decision and
+    // cancel take) - pinned against a host that labels rows by `id` only.
+    for (const item of items) {
+      assert.equal(typeof item.requestId, 'string', `item ${JSON.stringify(item)} lacks requestId`)
+      assert.equal(item.requestId, item.id)
+    }
   } finally {
     await h.close()
   }

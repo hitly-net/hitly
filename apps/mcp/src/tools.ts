@@ -311,7 +311,14 @@ function normaliseList(data: unknown): Record<string, unknown>[] {
   return raw
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
     .map((item) => {
-      const out: Record<string, unknown> = { id: item.id, kind: item.kind ?? 'approval' }
+      // Every item carries a top-level `requestId` (the handle get_decision
+      // and cancel take). Hosts that label the field `id` only are mapped so
+      // clients never see requestId missing from a listed item.
+      const out: Record<string, unknown> = {
+        id: item.id,
+        requestId: item.requestId ?? item.id,
+        kind: item.kind ?? 'approval',
+      }
       for (const key of ['question', 'prompt', 'createdAt', 'deadline', 'expiresAt', 'status'] as const) {
         if (item[key] !== undefined) out[key] = item[key]
       }
