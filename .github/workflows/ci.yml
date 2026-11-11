@@ -9,6 +9,9 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # HITLY_TELEMETRY unset (default off). Next CLI telemetry stays disabled.
+      NEXT_TELEMETRY_DISABLED: '1'
     services:
       postgres:
         image: postgres:16

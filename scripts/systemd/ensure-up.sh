@@ -21,7 +21,7 @@ start_web() {
     return 0
   fi
   cd "${HOME}/hitly"
-  nohup yarn workspace @hitly/web start --hostname 0.0.0.0 >>/tmp/hitly-web.log 2>&1 &
+  nohup ./scripts/with-hitly-telemetry.sh yarn workspace @hitly/web start --hostname 0.0.0.0 >>/tmp/hitly-web.log 2>&1 &
 }
 
 start_app() {
@@ -29,7 +29,7 @@ start_app() {
     return 0
   fi
   cd "${HOME}/hitly"
-  nohup yarn workspace @hitly/app start --hostname 0.0.0.0 >>/tmp/hitly-app.log 2>&1 &
+  nohup ./scripts/with-hitly-telemetry.sh yarn workspace @hitly/app start --hostname 0.0.0.0 >>/tmp/hitly-app.log 2>&1 &
 }
 
 listening 5432 || start_db

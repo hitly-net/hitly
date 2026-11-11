@@ -1,5 +1,11 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv": [
+    "HITLY_TELEMETRY",
+    "NEXT_TELEMETRY_DISABLED",
+    "NEXT_PUBLIC_PLAUSIBLE_DOMAIN",
+    "NEXT_PUBLIC_PLAUSIBLE_SRC"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
