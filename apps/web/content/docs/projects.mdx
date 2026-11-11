@@ -39,10 +39,16 @@ Home and Inbox list work items from **all visible projects** in the current work
 
 A project is `live`, `paused`, or `archived`. Workspace admins change this on Config (web only; not MCP).
 
-| Status | New requests | Pending items | Inbox and lists |
+| Status | New requests | Open items | Inbox and lists |
 | --- | --- | --- | --- |
-| `live` | Accepted | Decide as usual | Visible |
-| `paused` | Refused (`409`, `{ "error": "project paused", "code": "project_paused" }`) | Decide as usual | Visible |
-| `archived` | Refused (`409`, `{ "error": "project archived", "code": "project_archived" }`) | Read-only (no decide, no edits) | Hidden |
+| `live` | Accepted | Respond, decide, cancel, retry, delegate as usual | Visible |
+| `paused` | Refused (`409`, `{ "error": "project paused", "code": "project_paused" }`) | Respond, cancel, retry, and delegate stay allowed | Visible |
+| `archived` | Refused (`409`, `{ "error": "project archived", "code": "project_archived" }`) | Read-only: no respond, decide, edits, cancel, retry, or delegate - each refused with the same `409` `project_archived` | Hidden |
 
-Unarchive restores `live`. Delete is allowed only after archive (in-flight items go with the project). On plans that do not offer pause/archive, Config offers direct delete: type the project name to confirm.
+Expiration is not blocked by project status: the hourly sweeper still flips overdue open items to `expired` and sends the `expired` callback (where the request opted in) for `paused` and `archived` projects alike.
+
+Unarchive restores `live`; an archived project cannot be moved straight to `paused` (`409` `project_archived` - unarchive first). Delete is allowed only after a project is archived, from the web UI, by a workspace admin - never through MCP (in-flight items go with the project). On plans that do not offer pause/archive, Config offers direct delete: type the project name to confirm.
+
+A zip export of archived projects is planned.
+
+MCP clients hit the same refusals as tool errors; see [MCP - Project status errors](/docs/mcp#project-status-errors).
