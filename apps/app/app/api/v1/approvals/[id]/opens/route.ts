@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import { findContextItem, isOpenApprovalStatus, type ApprovalEnvelope } from '@hitly/core'
 import { approvals } from '@hitly/db/schema'
 import { withApiTenant } from '@/lib/api-session'
+import { mutationBlockedForProjectStatus } from '@/lib/project-lifecycle'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { requireDb } from '@/lib/tenant'
 import { deliverApprovalLifecycleEvent } from '@/lib/lifecycle-delivery'
@@ -36,6 +37,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       workspaceRole: ctx.role,
     })
     if (!canDecide(access)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    const archivedOpen = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
+    if (archivedOpen) {
+      return NextResponse.json({ error: archivedOpen.error, code: archivedOpen.code }, { status: archivedOpen.status })
+    }
     if (!isOpenApprovalStatus(approval.status)) {
       return NextResponse.json({ error: 'Approval is not awaiting a decision' }, { status: 409 })
     }

@@ -39,7 +39,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     })
     if ('error' in decided && decided.error) {
       const fields = 'fields' in decided && decided.fields ? { fields: decided.fields } : {}
-      return NextResponse.json({ error: decided.error, ...fields }, { status: decided.status })
+      const code = 'code' in decided && decided.code ? { code: decided.code } : {}
+      return NextResponse.json({ error: decided.error, ...code, ...fields }, { status: decided.status })
+    }
+    if (!('resumeError' in decided)) {
+      return NextResponse.json({ error: 'Decision failed' }, { status: 500 })
     }
     return NextResponse.json({
       id,

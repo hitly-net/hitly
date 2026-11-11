@@ -27,7 +27,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (apiKey) {
     const result = await cancelApprovalAsRequester({ apiKey, approvalId: id, reason: await readReason(request) })
     if (result.ok) return NextResponse.json({ id, status: result.status, decision: 'cancel', by: 'requester' })
-    if (result.status !== 401) return NextResponse.json({ error: result.error }, { status: result.status })
+    if (result.status !== 401) {
+      return NextResponse.json(
+        'code' in result && result.code ? { error: result.error, code: result.code } : { error: result.error },
+        { status: result.status },
+      )
+    }
   }
 
   return withApiTenant(async (ctx) => {
@@ -49,7 +54,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const result = await cancelApproval({ approvalId: id, actorUserId: ctx.session.user.id, workspaceId: ctx.workspace.id })
     if ('error' in result && result.error) {
-      return NextResponse.json({ error: result.error }, { status: result.status })
+      return NextResponse.json(
+        'code' in result && result.code ? { error: result.error, code: result.code } : { error: result.error },
+        { status: result.status },
+      )
     }
     return NextResponse.json({ id, status: result.status, decision: 'cancel' })
   })

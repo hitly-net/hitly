@@ -48,6 +48,7 @@ export type ProjectConfigFormProps = {
     prefix: string
     forcePathStyle: boolean | undefined
   }
+  readOnly?: boolean
 }
 
 export function ProjectConfigForm(props: ProjectConfigFormProps) {
@@ -62,6 +63,7 @@ export function ProjectConfigForm(props: ProjectConfigFormProps) {
 
   return (
     <form action={formAction} className="mt-6 flex max-w-xl flex-col gap-3">
+      <fieldset disabled={props.readOnly} className="flex flex-col gap-3 disabled:opacity-60">
       <Field id="project-name" label="Project name">
         <input id="project-name" name="name" defaultValue={props.name} className={fieldClass} />
       </Field>
@@ -240,6 +242,7 @@ export function ProjectConfigForm(props: ProjectConfigFormProps) {
           </span>
         ) : null}
       </div>
+      </fieldset>
     </form>
   )
 }
