@@ -121,7 +121,7 @@ const common = {
     .string()
     .datetime({ offset: true })
     .optional()
-    .describe('ISO 8601 deadline. When omitted the host default rules: the project timeout if set, else 24 hours from now. Expiry never counts as approval.'),
+    .describe('ISO 8601 deadline. An explicit deadline always wins and is never clamped down to the project timeout; when omitted the host falls back to the matched rule SLA, then the project default timeout, then 24 hours from now. Must be in the future and at most 30 days out. Expiry never counts as approval.'),
   callback_url: httpsUrl
     .optional()
     .describe(

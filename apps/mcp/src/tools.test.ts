@@ -327,6 +327,26 @@ test('ask_user accepts optional markdown detail, passes it through under the hea
   }
 })
 
+test('the deadline advertise states the full host precedence and the 30-day cap', async () => {
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    const { tools } = await client.listTools()
+    const tool = tools.find((t: { name: string }) => t.name === 'request_approval')
+    const deadline = (tool?.inputSchema as { properties?: Record<string, { description?: string }> })
+      ?.properties?.deadline
+    const text = String(deadline?.description ?? '')
+    assert.ok(text.length > 0, 'deadline must carry a description')
+    assert.match(text, /explicit .*(always wins|never clamped)/i, 'explicit deadline wins')
+    assert.match(text, /rule SLA/, 'rule SLA step must be advertised')
+    assert.match(text, /project default timeout/, 'project timeout step must be advertised')
+    assert.match(text, /24 hours/, '24h default must be advertised')
+    assert.match(text, /30 days/, 'cap must be advertised')
+  } finally {
+    await h.close()
+  }
+})
+
 test('ask_user tools/list advertises the spec answer types; no simple_form, no fields', async () => {
   const h = await startHarness()
   try {
