@@ -1,6 +1,6 @@
 {
-  "id": "cbc64d0a-9b79-475d-86d4-7d66ea7f7a70",
-  "prevId": "04dab690-2222-423d-a54a-9b68ccde5704",
+  "id": "0fc9301b-9535-45e9-b18a-2b3ed1a3521a",
+  "prevId": "0e73a4b2-e434-48c3-a75b-80c0ca029fb6",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -379,6 +379,33 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "approvals_workspace_created_at_id_idx": {
+          "name": "approvals_workspace_created_at_id_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
             }
           ],
           "isUnique": false,
@@ -1892,6 +1919,14 @@
           "primaryKey": false,
           "notNull": true
         },
+        "status": {
+          "name": "status",
+          "type": "project_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'live'"
+        },
         "credentials": {
           "name": "credentials",
           "type": "jsonb",
@@ -1945,6 +1980,27 @@
           "columns": [
             {
               "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "projects_workspace_status_idx": {
+          "name": "projects_workspace_status_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2958,6 +3014,15 @@
         "admin",
         "user",
         "reader"
+      ]
+    },
+    "public.project_status": {
+      "name": "project_status",
+      "schema": "public",
+      "values": [
+        "live",
+        "paused",
+        "archived"
       ]
     },
     "public.workspace_role": {
