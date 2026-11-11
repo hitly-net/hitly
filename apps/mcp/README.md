@@ -7,7 +7,7 @@ Remote [MCP](https://modelcontextprotocol.io) server that lets a bot ask a human
 | Tool | What it does | Host call |
 | --- | --- | --- |
 | `request_approval` | Approve / Reject / Ignore an action. Returns `requestId`, `state`, `replayed`, `argsHash`, `deadline`, `reviewUrl`. | `POST /api/v1/approvals` (HTTP plugin; `callback_url` → `resumeUrl`; `Idempotency-Key` = `idempotencyKey`) |
-| `ask_user` | Ask a question with an `answerSchema` (`free_text`, `single_choice`, `multi_choice`). One ask per request: hitl/v0 answers exactly one ask, so ask one `ask_user` per field; `simple_form` is refused (`answerSchema.type` must be text, single, multi or number) - send a separate `ask_user` for each field. Optional markdown `detail` (≤8000 chars) renders under the headline. | same ingest, `kind: "question"` |
+| `ask_user` | Ask a question with an `answerSchema` (`text`, `single`, `multi`, `number`). One ask per request: hitl/v0 answers exactly one ask, so ask one `ask_user` per field; `simple_form` is refused (`answerSchema.type` must be text, single, multi or number) - send a separate `ask_user` for each field. Optional markdown `detail` (≤8000 chars) renders under the headline. | same ingest, `kind: "question"` |
 | `get_decision` | Non-blocking read as `hitl/response/v0`. Returns `editedArgs` when the reviewer amended the action. | `GET /api/v1/approvals/:id` |
 | `list_pending` | Requests created with this key that still await a human (human-decided `failed_resume` rows are excluded; read them with `get_decision`). | `GET /api/v1/approvals?status=pending` (M0) |
 | `cancel` | Withdraw an open request. | `POST /api/v1/approvals/:id/cancel` (M0 requester cancel) |
@@ -35,7 +35,7 @@ Replace `<mcp-host>` with the MCP server host and `<your-project-api-key>` with 
 ```json
 { "mcpServers": { "hitly": {
     "url": "https://<mcp-host>/mcp",
-    "headers": { "Authorization": "***" }
+    "headers": { "Authorization": "Bearer <your-project-api-key>" }
 } } }
 ```
 
@@ -66,9 +66,9 @@ JSON-RPC over Streamable HTTP at `/mcp`: `initialize` (POST `protocolVersion`, `
 
 `request_approval` and `ask_user` take optional `callback_url` (https) and `cb_auth_token` (16–512 chars). HITLy POSTs the outcome to `callback_url` with `content-type: application/json` and, when `cb_auth_token` was given, `Authorization: Bearer <cb_auth_token>` (the token is never echoed back). When the project has a webhook signing secret, delivery also carries `x-hitly-timestamp` (unix seconds), `x-hitly-signature` (hex HMAC-SHA256 over `"<timestamp>.<raw body>"`), `x-hitly-event-id` (stable across retries; dedupe on it) and `x-hitly-key-id`; otherwise only `x-hitly-event-id`. **Redirects are not followed** — a 3xx fails the delivery.
 
-The body is the HTTP-plugin decided/answered event: `event_id`, `type` (`decided`, or `answered` for an `ask_user` answer), `request_id`, `occurred_at`, `state`, `decision`, `answer` (the reviewer's typed `ask_user` answer as an object `{ kind, value }` - e.g. `{"kind": "single_choice", "value": "blue"}` - exactly as the host stored it; the key is OMITTED when there is no typed answer, never sent as `answer: null`), `reason`, `argsHash`, `editedArgs` (reviewer amendments — act on these), `response` (plain text reply), `metadata`, `idempotency_key`, `decisionDetail` (`outcome`, `reason`, `decidedBy`, `client`).
+The body is the HTTP-plugin decided/answered event: `event_id`, `type` (`decided`, or `answered` for an `ask_user` answer), `request_id`, `occurred_at`, `state`, `decision`, `answer` (the reviewer's typed `ask_user` answer as an object `{ kind, value }` - e.g. `{"kind": "single", "value": "blue"}` - exactly as the host stored it; the key is OMITTED when there is no typed answer, never sent as `answer: null`), `reason`, `argsHash`, `editedArgs` (reviewer amendments — act on these), `response` (plain text reply), `metadata`, `idempotency_key`, `decisionDetail` (`outcome`, `reason`, `decidedBy`, `client`).
 
-The same outcome in spec form is what `get_decision` returns: a `hitl/response/v0` object (hitl-spec section 4) with `spec`, `requestId`, `status` (`answered` | `declined` | `cancelled` | `expired`), `value` (the decision value: `"approve"`, `"reject"`, or the reply text; the typed `ask_user` answer arrives as `answer` `{ kind, value }`), `reason`, `decidedBy`, `decidedAt`, `argsHash`, `activity`. A decided response carries either `answer` (a typed `ask_user` reply) or the decision fields (`value` etc.), never both.
+The same outcome in spec form is what `get_decision` returns: a `hitl/response/v0` object (hitl-spec section 4) with `spec`, `requestId`, `status` (`answered` | `declined` | `cancelled` | `expired`), `value` (the decision value: `"approve"`, `"reject"`, or the reply text; the typed `ask_user` answer arrives as `answer` `{ kind, value }`), `argsHash`, `activity`. `reason`, `decidedBy` and `decidedAt` pass through when the host reports them at the top level of its read; HITLy reports the reviewer's identity and reason on the callback `decisionDetail` and the REST `hitl` view. A decided response carries either `answer` (a typed `ask_user` reply) or the decision fields (`value` etc.), never both.
 
 The callback is a **hint**; `get_decision` is the source of truth. If you don't pass `callback_url`, HITLy attempts **no callback at all** (no `resumeUrl` is stored and the create is not refused — `HITLY_MCP_PUBLIC_URL` is never used as a sink); the agent learns the decision with `get_decision`. Example: a Grok Bot agent passes its own agent webhook URL as `callback_url` (e.g. `https://example.com/hooks/hitly`) and a secret only it knows as `cb_auth_token`. `cb_auth_token` requires the host to advertise the `cb_auth_token` capability; the tool refuses with a clear error otherwise.
 
@@ -96,7 +96,7 @@ The callback is a **hint**; `get_decision` is the source of truth. If you don't 
     "idempotencyKey": "refund-1842-colour",
     "prompt": "Which colour should we ship as the replacement?",
     "detail": "The customer returned a **blue** mug; we have blue, green and red left.",
-    "answerSchema": { "type": "single_choice", "options": ["blue", "green", "red"] }
+    "answerSchema": { "type": "single", "options": ["blue", "green", "red"] }
 } }
 ```
 
@@ -106,15 +106,14 @@ The callback is a **hint**; `get_decision` is the source of truth. If you don't 
 
 ```json
 { "spec": "hitl/response/v0", "requestId": "apr_…", "status": "answered",
-  "answer": { "kind": "single_choice", "value": "blue" },
-  "reason": "fine to ship", "decidedBy": { "kind": "human", "id": "usr_…", "display": "…" },
-  "decidedAt": "2026-11-10T10:02:00.000Z", "argsHash": "…",
+  "answer": { "kind": "single", "value": "blue" },
+  "argsHash": "…",
   "activity": { "presentedAt": "2026-11-10T09:58:00.000Z", "items": [] } }
 ```
 
 `status` is `pending` | `answered` | `declined` | `cancelled` | `expired`. `editedArgs` (full merged args) appears when the reviewer amended the action - act on those, not the original args. `callbackDelivery: "failed"` appears when the callback POST failed; `get_decision` remains the source of truth.
 
-`list_pending` call `{ "projectId": "prj_…" }` -> `{ "items": [ { "id", "kind", "question", "createdAt", "deadline" } ], "nextCursor": null }`; pass `nextCursor` back as `cursor` to page.
+`list_pending` call `{ "projectId": "prj_…" }` -> `{ "items": [ { "id", "requestId", "kind", "question", "createdAt", "deadline" } ], "nextCursor": null }` (`requestId` mirrors `id` and is the handle `get_decision`/`cancel` take); pass `nextCursor` back as `cursor` to page.
 
 ## Origin, Host and rate limiting
 

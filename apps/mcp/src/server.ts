@@ -34,7 +34,10 @@ export const MCP_DOCS_URL = 'https://hitly.net/docs/mcp'
  */
 export function isBrowserVisit(req: IncomingMessage): boolean {
   if (req.method !== 'GET') return false
-  if (req.headers.authorization) return false
+  // ANY Authorization header counts as a credential attempt, even an empty
+  // or whitespace-only one: a machine sent a header, this is not a person
+  // pasting the URL into a browser.
+  if (req.headers.authorization !== undefined) return false
   const accept = (req.headers.accept ?? '').toLowerCase()
   return accept.includes('text/html') && !accept.includes('text/event-stream')
 }
@@ -129,7 +132,10 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         res.writeHead(302, { location: MCP_DOCS_URL, 'cache-control': 'no-store' }).end()
         return
       }
-      if (url.pathname !== MCP_PATH) {
+      // The endpoint answers at /mcp and /mcp/ alike (the browser redirect
+      // above already treats them as one); everything else is unknown.
+      const mcpPath = url.pathname === `${MCP_PATH}/` ? MCP_PATH : url.pathname
+      if (mcpPath !== MCP_PATH) {
         sendJson(res, 404, { error: 'Not found' })
         return
       }

@@ -97,7 +97,7 @@ const askAnswerSchemaInput = z.preprocess(
   z
     .object({
       type: z.enum(['text', 'single', 'multi', 'number', 'free_text', 'single_choice', 'multi_choice']).describe(
-        'One answer type for this request: text | single | multi | number (legacy aliases free_text, single_choice, multi_choice are accepted and stored as the spec name). hitl/v0 is one question per ask_user: no multi-field forms.',
+        'One answer type for this request: text | single | multi | number. hitl/v0 is one question per ask_user: no multi-field forms.',
       ),
       options: z
         .array(answerOptionInput)
@@ -404,7 +404,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Ask the user',
       description:
-        'Ask a human a question and get a typed answer later. The prompt is the headline shown to the reviewer: one line, at most 160 characters, ending with "?". Use the optional markdown detail (at most 8000 characters) to explain; it renders under the headline. Returns immediately with requestId and state "pending"; it never waits. Confirm with get_decision before acting; the reviewer\'s typed answer comes back as answer {kind, value} (e.g. {"kind":"single_choice","value":"blue"}) - use it verbatim. Ask one question per request: hitl/v0 answers exactly one ask, so issue one ask_user per field; simple_form is refused with an error - send a separate ask_user for each field.',
+        'Ask a human a question and get a typed answer later. The prompt is the headline shown to the reviewer: one line, at most 160 characters, ending with "?". Use the optional markdown detail (at most 8000 characters) to explain; it renders under the headline. Returns immediately with requestId and state "pending"; it never waits. Confirm with get_decision before acting; the reviewer\'s typed answer comes back as answer {kind, value} (e.g. {"kind":"single","value":"blue"}) - use it verbatim. Ask one question per request: hitl/v0 answers exactly one ask, so issue one ask_user per field; simple_form is refused with an error - send a separate ask_user for each field.',
       inputSchema: {
         ...common,
         prompt: z.string().describe('Headline question: one sentence, at most 160 characters, ending with "?".'),
@@ -564,7 +564,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'List pending requests',
       description:
-        'List open requests created with this credential (id, kind, question or prompt, createdAt, deadline). Optional cursor pages through the host list; the result includes nextCursor when more items remain.',
+        'List open requests created with this credential (requestId, kind, question or prompt, createdAt, deadline). Optional cursor pages through the host list; the result includes nextCursor when more items remain.',
       inputSchema: {
         projectId: z.string().min(1).max(64).optional(),
         cursor: z.string().min(1).max(512).optional().describe('Opaque nextCursor from a previous list_pending page.'),

@@ -346,6 +346,16 @@ test('ask_user tools/list advertises the spec answer types; no simple_form, no f
       assert.ok(types.includes(alias), `legacy alias ${alias} stays accepted`)
     }
     assert.ok(!types.includes('simple_form'))
+    // Advertised text speaks the spec kind names only: the description example
+    // and the type describe must not mention the legacy aliases (they stay
+    // accepted as INPUT above, but clients should never learn them from us).
+    const description = String(tool?.description ?? '')
+    const typeDescribe = String((answerSchema.properties.type as Record<string, unknown>).description ?? '')
+    for (const legacy of ['single_choice', 'free_text', 'multi_choice']) {
+      assert.ok(!description.includes(legacy), `ask_user description must not advertise ${legacy}`)
+      assert.ok(!typeDescribe.includes(legacy), `answerSchema.type describe must not advertise ${legacy}`)
+    }
+    assert.match(description, /\{"kind":"single","value":"blue"\}/, 'description must show the spec kind name')
   } finally {
     await h.close()
   }
