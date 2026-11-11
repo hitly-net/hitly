@@ -179,6 +179,38 @@ test('presented() surfaces server errors so callers can swallow them', async () 
   await assert.rejects(() => client.presented('apr_123'), { message: /boom/ })
 })
 
+test('registerPushToken POSTs /api/v1/push-tokens', async () => {
+  let capturedUrl: string | undefined
+  let capturedInit: RequestInit | undefined
+  const mockFetch = async (url: string, init?: RequestInit) => {
+    capturedUrl = url
+    capturedInit = init
+    return { ok: true, status: 200, json: async () => ({ id: 'ptk_1', created: true }) } as Response
+  }
+  globalThis.fetch = mockFetch as typeof fetch
+  const client = createHitlyClient({ baseUrl: 'http://localhost:3001', token: 'test-token' })
+  await client.registerPushToken('ExponentPushToken[abc]', 'android')
+  assert.ok(capturedUrl?.endsWith('/api/v1/push-tokens'), `URL was ${capturedUrl}`)
+  assert.equal(capturedInit?.method, 'POST')
+  assert.equal(capturedInit?.body, JSON.stringify({ token: 'ExponentPushToken[abc]', platform: 'android' }))
+})
+
+test('unregisterPushToken DELETEs /api/v1/push-tokens', async () => {
+  let capturedUrl: string | undefined
+  let capturedInit: RequestInit | undefined
+  const mockFetch = async (url: string, init?: RequestInit) => {
+    capturedUrl = url
+    capturedInit = init
+    return { ok: true, status: 200, json: async () => ({ ok: true }) } as Response
+  }
+  globalThis.fetch = mockFetch as typeof fetch
+  const client = createHitlyClient({ baseUrl: 'http://localhost:3001', token: 'test-token' })
+  await client.unregisterPushToken('ExponentPushToken[abc]')
+  assert.ok(capturedUrl?.endsWith('/api/v1/push-tokens'), `URL was ${capturedUrl}`)
+  assert.equal(capturedInit?.method, 'DELETE')
+  assert.equal(capturedInit?.body, JSON.stringify({ token: 'ExponentPushToken[abc]' }))
+})
+
 test('x-hitly-client header carries platform and appVersion when provided', async () => {
   let capturedHeaders: Record<string, string> | undefined
   const mockFetch = async (_url: string, init?: RequestInit) => {

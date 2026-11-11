@@ -79,3 +79,33 @@ export async function withTenant<T>(workspaceId: string, fn: () => Promise<T>): 
   }
   return result as T
 }
+
+const pendingAfterTenantCommit: Promise<void>[] = []
+
+/**
+ * Run work on the next event-loop turn with tenant ALS cleared so it cannot
+ * join (or hold) the open tenant transaction. Used for fire-and-forget push.
+ */
+export function afterTenantCommit(work: () => Promise<void>): void {
+  const task = new Promise<void>((resolve) => {
+    const run = () => {
+      void Promise.resolve()
+        .then(work)
+        .catch((error) => {
+          console.error('[hitly push]', error instanceof Error ? error.message : error)
+        })
+        .finally(resolve)
+    }
+    tenantAls.exit(() => {
+      setImmediate(run)
+    })
+  })
+  pendingAfterTenantCommit.push(task)
+}
+
+export async function flushAfterTenantCommitForTests() {
+  for (let i = 0; i < 10 && pendingAfterTenantCommit.length > 0; i++) {
+    const batch = pendingAfterTenantCommit.splice(0)
+    await Promise.all(batch)
+  }
+}

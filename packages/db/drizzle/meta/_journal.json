@@ -85,6 +85,13 @@
       "when": 1794391584798,
       "tag": "0011_approvals_workspace_created_at_id",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794393159799,
+      "tag": "0012_push_tokens",
+      "breakpoints": true
     }
   ]
 }

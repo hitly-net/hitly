@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import type { PluginId, Decision } from '@hitly/core'
+import { workItemTitle, type PluginId, type Decision } from '@hitly/core'
 import { Badge, PluginMark } from '@hitly/ui'
 import { formatStatusLabel } from '@/lib/status-label'
 
@@ -45,7 +45,7 @@ export function WorkItemList({
               <div className="min-w-0 flex-1">
                 {/* ask_user rows are titled by the question itself (truncated);
                     request_approval rows keep the action name, unchanged. */}
-                <p className="truncate font-medium">{item.prompt || item.actionName}</p>
+                <p className="truncate font-medium">{workItemTitle(item.prompt, item.actionName)}</p>
                 <div className="flex items-center gap-2">
                   {item.kind === 'question' ? (
                     <Badge variant="secondary">ask_user</Badge>

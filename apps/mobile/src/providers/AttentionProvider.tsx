@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AppState } from 'react-native'
 import { usePathname } from 'expo-router'
+import { setAppBadge } from '../badge'
 import { useSession } from './SessionProvider'
 import type { InboxSummary } from '../types'
 
@@ -25,10 +26,13 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (!client || !token) {
       setSummary(empty)
+      void setAppBadge(0)
       return
     }
     try {
-      setSummary(await client.summary())
+      const next = await client.summary()
+      setSummary(next)
+      void setAppBadge(next.pending)
     } catch {
       // Keep the last known counts if the probe fails.
     }

@@ -152,7 +152,7 @@ Reviewer routes authenticate with Better Auth: session cookie (web) or `Authoriz
 | `GET` | `/api/v1/health` | Public | Probe a hosted URL. `{ "ok": true, "product": "hitly", "edition": "oss" \| "cloud" }` |
 | `GET` | `/api/v1/inbox` | Session | List items. Query: `scope=all\|open\|closed`, `q`, `projectId` |
 | `GET` | `/api/v1/inbox/summary` | Session | `{ pending, failedResume, decidedToday, projectCount }` |
-| `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct`, `answerSchema` |
+| `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct`, `answerSchema`, and when present top-level `answer` |
 | `GET` | `/api/v1/approvals/:id/original-request` | Session | Canonical JSON of the stored create-once request (see below) |
 | `POST` | `/api/v1/approvals/:id/decide` | Session | Decide JSON (see *Decide & answer gating*) |
 | `POST` | `/api/v1/approvals/:id/opens` | Session | `{ "ref" }` — record that THIS reviewer opened a context item |
@@ -229,6 +229,8 @@ Query: `scope`, `q`, `projectId`, `limit` (1–200, default 100), `cursor` (opaq
   "decisions": []
 }
 ```
+
+When the latest decision includes a typed ask_user answer, the same payload also includes top-level `answer` (`{kind, value}`). The field is **omitted** when there is none — never `answer: null`. Pending items (empty `decisions`) therefore look like the example above.
 
 #### `openedRefs`
 
