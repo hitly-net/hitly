@@ -42,7 +42,7 @@ A project is `live`, `paused`, or `archived`. Workspace admins change this on Co
 | Status | New requests | Open items | Inbox and lists |
 | --- | --- | --- | --- |
 | `live` | Accepted | Respond, decide, cancel, retry, delegate as usual | Visible |
-| `paused` | Refused (`409`, `{ "error": "project paused", "code": "project_paused" }`) | Respond, cancel, retry, and delegate stay allowed | Visible |
+| `paused` | Refused (`409`, `{ "error": "project paused", "code": "project_paused" }`) | Respond, decide, cancel, retry, and delegate stay allowed | Visible |
 | `archived` | Refused (`409`, `{ "error": "project archived", "code": "project_archived" }`) | Read-only: no respond, decide, edits, cancel, retry, or delegate - each refused with the same `409` `project_archived` | Hidden |
 
 Expiration is not blocked by project status: the hourly sweeper still flips overdue open items to `expired` and sends the `expired` callback (where the request opted in) for `paused` and `archived` projects alike.
