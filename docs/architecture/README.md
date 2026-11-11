@@ -82,8 +82,12 @@ flowchart TB
   HOST --> PLUGINS
   PLUGINS --> CORE
   HOST --> CORE
-  PLUGINS -->|"resume: callback POST, run.resume, Command, Temporal signal, gRPC"| MASTRA
-  PLUGINS --> OPENSHELL
+  PLUGINS -->|"resume: resume-stream/resume-async POST"| MASTRA
+  PLUGINS -->|"resume: Command resume"| LANGGRAPH
+  PLUGINS -->|"resume: hitly.decision signal"| TEMPORAL
+  PLUGINS -->|"resume: decided POST to resumeUrl"| HTTPORIGIN
+  PLUGINS -->|"resume: decided POST to resumeUrl"| PEERAGENT
+  PLUGINS -->|"resume: gRPC gateway call"| OPENSHELL
   HOST -->|"Drizzle client"| DB
   DB --> PG
   HOST -->|"decision-needed, invites, auth mail"| MAIL
@@ -110,9 +114,9 @@ flowchart TB
    (`decision_records`) with project events and evidence.
 5. Unless the decision is "ignore", the host calls `HitlyPlugin.resume` for
    the approval's plugin, which resumes the origin (callback POST to a
-   `resumeUrl`, `run.resume`/`bail`, a LangGraph `Command`, a Temporal signal,
-   or a gateway call). A failed resume sets status `failed_resume` and can be
-   retried via `retry-resume`.
+   `resumeUrl`, a POST to Mastra's resume-stream/resume-async endpoints, a
+   LangGraph `Command`, a Temporal signal, or a gateway call). A failed
+   resume sets status `failed_resume` and can be retried via `retry-resume`.
 6. The origin branches on the decision payload (`{ approved }` for agent
    frameworks, `{ decision, id, metadata }` for HTTP callbacks).
 
@@ -120,8 +124,9 @@ flowchart TB
 
 Every workspace package declares `hitly.role` in its `package.json`:
 `sdk` (publishable later: core, mail, plugins), `app` (app, web, mobile),
-`internal` (db, ui), `edition-stub` (cloud), and `example` (samples under
-`examples/`).
+`internal` (db, ui), `edition-stub` (cloud), and `example` (the
+`@hitly/example-*` samples under `examples/`). Exception verified in code:
+`examples/openshell` (`hitly-openshell-example`) declares no `hitly.role`.
 
 ## Reading rules for these pages
 

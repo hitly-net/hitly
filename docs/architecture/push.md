@@ -17,7 +17,9 @@ Host side (`apps/app`):
   tokens from receipts.
 - `lib/push-tokens.ts` - token store operations (register, list, delete).
 - `app/api/v1/push-tokens/route.ts` - `POST`/`DELETE` token registration for
-  the authenticated mobile user; `app/api/v1/devices/route.ts` lists devices.
+  the authenticated mobile user; `app/api/v1/devices/route.ts` - `POST`/
+  `DELETE` device (token + platform) register/deregister for the
+  authenticated session; there is no device-listing route.
 - `lib/notify.ts` - the fan-out that pairs this with email
   ([email.md](email.md)).
 - `lib/devices.ts` - device bookkeeping.

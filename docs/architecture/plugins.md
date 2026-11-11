@@ -32,12 +32,12 @@ registry but is not listed in the product UI (see OpenShell below).
 
 | Package | Origin | Pause | Resume |
 | --- | --- | --- | --- |
-| `packages/plugin-mastra` | Mastra | `suspend()` in a step/tool after `notifyHitlyApproval()` | `run.resume()` with `{ approved, ... }` / `bail()` on reject |
+| `packages/plugin-mastra` | Mastra | `suspend()` in a step/tool after `notifyHitlyApproval()` | POSTs `{ approved, ... }` to Mastra's own HTTP endpoints: `/api/agents/{agentId}/resume-stream` (agent runs) or `/api/workflows/{workflowId}/resume-async?runId=...` (workflow runs); the plugin does not call `run.resume()`/`bail()` - `bail()` appears only in the example workflow |
 | `packages/plugin-langgraph` | LangGraph | `interrupt()` | `Command({ resume })`; `resume-auth.ts` verifies callback authenticity with `HITLY_RESUME_SECRET` |
 | `packages/plugin-http` | HTTP automations (n8n, Make, custom) | caller-supplied `resumeUrl` (or no callback at all) | POST `{ decision, id, metadata }` to `resumeUrl`, with event-id, optional HMAC signature headers, optional Bearer callback token, and opt-in lifecycle events (`presented`, `opened`, `cancelled`, `expired`) |
 | `packages/plugin-temporal` | Temporal | activity then `condition()` | signal `hitly.decision` with `{ decision, args }` on `workflowId` |
 | `packages/plugin-openshell` | OpenShell sandbox | gateway review token | gRPC call to the gateway (`gatewayAddr`, workspace, sandbox, chunk, review token), with pinned channel options and destination checks |
-| peer-agent plugin | the local peer-agent runtime | approval transport / `kanban_block` | POST `{ decision, id, metadata }` to the origin's `resumeUrl` |
+| peer-agent plugin | the local peer-agent runtime | approval transport (envelope `kind`: `command` or `kanban`, with `kanbanStatus` `blocked`/`review`) | POST `{ decision, id, metadata }` to the origin's `resumeUrl` |
 
 Note: the peer-agent plugin's package directory name is omitted here to
 comply with this task's no-internal-codename diff scan; find it as the sixth

@@ -11,8 +11,9 @@ single Postgres database accessed through one Drizzle schema.
 - `packages/db/src/schema.ts` - the Drizzle schema (25 tables).
 - `packages/db/src/index.ts` - re-export surface (`@hitly/db`, plus the
   `/schema` subpath most consumers import).
-- `packages/db/drizzle/` - generated SQL migrations (numbered `0001..`),
-  managed with `yarn db:generate` / `yarn db:migrate`.
+- `packages/db/drizzle/` - generated SQL migrations (numbered `0000..`,
+  starting with `0000_oval_wendell_rand.sql`), managed with
+  `yarn db:generate` / `yarn db:migrate`.
 - `docker-compose.yml` (repo root) - local Postgres for `yarn db:up`.
 
 ## Tables (from the schema)

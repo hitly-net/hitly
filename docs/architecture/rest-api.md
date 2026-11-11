@@ -18,18 +18,26 @@ Route groups (from the route tree):
 | --- | --- |
 | Approvals | `POST/GET /approvals`, `GET /approvals/by-run-id`, `GET /approvals/{id}`, `POST /approvals/{id}/decide`, `/cancel`, `/retry-resume`, `/presented`, `/opens`, `/original-request` |
 | Inbox | `GET /inbox`, `GET /inbox/summary` |
-| Projects | `GET/POST /projects`, `GET/PATCH /projects/{id}`, `GET /projects/{id}/config`, `POST /projects/{id}/test-evidence-sink` |
-| Push | `POST/DELETE /push-tokens`, `GET /devices` |
-| Team/invites | `GET /workspace`, `POST /invites/lookup`, `POST /invites/accept` |
+| Projects | `GET /projects` (list), `GET /projects/{id}`, `GET/PATCH /projects/{id}/config`, `POST /projects/{id}/test-evidence-sink`. Project create/update and API-key management are server actions (`createProject`, `updateProjectConfig`, `createProjectApiKey`, ... in `apps/app/actions/projects.ts`), not REST routes. |
+| Push | `POST/DELETE /push-tokens`, `POST/DELETE /devices` |
+| Team/invites | `GET/PATCH /workspace`, `POST /invites/lookup`, `POST /invites/accept` |
 | Ops | `GET /health`, `POST /housekeeping`, `GET /signup-status` |
-| Auth | `POST /session/mfa/{enrol,verify,disable,recovery-codes,confirm}`, `/session/change-password`, `/session/change-email`, `/session/verify-email-change`, `/session/sign-out` |
+
+Session-auth routes outside v1: `/api/auth/[...all]` (Better Auth) and
+`/api/session/*` - `mfa/{enrol,verify,disable,recovery-codes,confirm}`,
+`change-password`, `change-email`, `verify-email-change`, `sign-out` (all
+POST).
 
 ## Key interfaces
 
 - Two credential planes:
   - Project API keys (`hitly_...`, issued per project, stored hashed in
-    `project_api_keys`) authorize ingest and origin-side reads: creating
-    approvals, reading by run id, fetching the original request. Send as
+    `project_api_keys`) authorize the requester plane: creating approvals
+    (`POST /approvals`), key-scoped pending listing
+    (`GET /approvals?status=open`, the host endpoint behind MCP
+    `list_pending`), reading by run id, fetching the original request, and
+    requester cancel (`POST /approvals/{id}/cancel` - a Bearer that is not a
+    valid API key falls through to the reviewer-session path). Send as
     `Authorization: Bearer`.
   - Human sessions (Better Auth) authorize reviewer actions: inbox reads,
     decisions, presented/opened telemetry, cancel and retry.
