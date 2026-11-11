@@ -48,6 +48,7 @@ export const DISALLOWED_ROUTES = [
   '/forgot-password',
   '/reset-password',
   '/verify-email',
+  '/verify-email-change',
 ] as const
 
 export function buildRobots(): MetadataRoute.Robots {
