@@ -53,6 +53,12 @@ export function NativePushProvider({ children }: { children: ReactNode }) {
       status = asked.status
     }
     if (status !== 'granted') return
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('hitly', {
+        name: 'HITLy',
+        importance: Notifications.AndroidImportance.DEFAULT,
+      })
+    }
     const projectId = expoProjectId()
     if (!projectId) return
     const expoToken = await Notifications.getExpoPushTokenAsync({ projectId })

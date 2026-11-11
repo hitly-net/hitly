@@ -14,4 +14,6 @@ test('native push registers with projectId and unregisters on sign-out', () => {
   assert.match(code, /addPushTokenListener/)
   assert.match(code, /parsePushData/)
   assert.match(code, /setAppBadge/)
+  assert.match(code, /setNotificationChannelAsync/)
+  assert.match(code, /name: 'HITLy'/)
 })

@@ -39,7 +39,7 @@ export function pushCopy(args: {
   const sla = expiresLabel(args.expiresAt)
   const bodyParts = [args.projectName?.trim(), sla].filter(Boolean)
   return {
-    title: `Hitly: ${args.actionName} needs a decision`,
+    title: `HITLy: ${args.actionName} needs a decision`,
     body: bodyParts.length > 0 ? bodyParts.join(' · ') : 'A work item is waiting for you.',
   }
 }
@@ -95,6 +95,7 @@ export async function sendExpoPush(args: {
         title: args.title,
         body: args.body,
         sound: 'default',
+        channelId: 'hitly',
         ...(typeof args.badge === 'number' ? { badge: args.badge } : {}),
         data: args.data,
       })),
