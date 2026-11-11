@@ -11,6 +11,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     name: project.name,
     description: project.description,
     plugin: project.plugin,
+    status: project.status,
     canAdmin: ctx.canAdmin,
   })
 }

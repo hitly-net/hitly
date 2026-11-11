@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { projects } from '@hitly/db/schema'
 import { generateResumeSecret } from './keys'
+import { mutationBlockedForProjectStatus } from './project-lifecycle'
 import { requireDb, requireTenantWorkspaceId } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 
@@ -119,6 +120,8 @@ export async function saveProjectConfig(projectId: string, input: ProjectConfigI
     .limit(1)
   const project = rows[0]
   if (!project) return { error: 'Project not found' as const }
+  const archived = mutationBlockedForProjectStatus(project.status)
+  if (archived) return { error: archived.error, code: archived.code, status: archived.status }
   const current = await decodeTenantJson(workspaceId, project.credentials)
 
   const credentials: Record<string, unknown> = { plugin: project.plugin, ...current }

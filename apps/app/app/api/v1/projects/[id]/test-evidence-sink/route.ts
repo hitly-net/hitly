@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireApiProject } from '@/lib/api-project'
+import { mutationBlockedForProjectStatus } from '@/lib/project-lifecycle'
 import { withApiTenant } from '@/lib/api-session'
 import { pingEvidenceSink } from '@/lib/evidence-sink'
 import { decodeTenantJson } from '@/lib/tenant-crypto'
@@ -12,6 +13,10 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     if (!ctx.canAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const { project } = ctx.access
+    const archivedSink = mutationBlockedForProjectStatus(project.status)
+    if (archivedSink) {
+      return NextResponse.json({ error: archivedSink.error, code: archivedSink.code }, { status: archivedSink.status })
+    }
 
     if (project.evidenceSinkType !== 'http') {
       return NextResponse.json({ error: 'Evidence sink is not configured' }, { status: 400 })

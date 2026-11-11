@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { userDevices } from '@hitly/db/schema'
 import { newId } from './ids'
+import { registerPushToken, unregisterPushToken } from './push-tokens'
 import { requireDb } from './require-db'
 
 export const DEVICE_PLATFORMS = ['ios', 'android'] as const
@@ -27,6 +28,7 @@ export async function registerUserDevice(args: {
       .update(userDevices)
       .set({ userId: args.userId, platform: args.platform })
       .where(eq(userDevices.id, row.id))
+    await registerPushToken({ userId: args.userId, token: args.token, platform: args.platform }).catch(() => undefined)
     return { id: row.id, created: false as const }
   }
   const id = newId('dev').slice(0, 36)
@@ -36,6 +38,7 @@ export async function registerUserDevice(args: {
     expoPushToken: args.token,
     platform: args.platform,
   })
+  await registerPushToken({ userId: args.userId, token: args.token, platform: args.platform }).catch(() => undefined)
   return { id, created: true as const }
 }
 
@@ -44,6 +47,7 @@ export async function unregisterUserDevice(args: { userId: string; token: string
   await database
     .delete(userDevices)
     .where(and(eq(userDevices.userId, args.userId), eq(userDevices.expoPushToken, args.token)))
+  await unregisterPushToken(args).catch(() => undefined)
 }
 
 export async function listUserDeviceTokens(userId: string) {

@@ -20,6 +20,7 @@ export async function GET() {
         name: projects.name,
         description: projects.description,
         plugin: projects.plugin,
+        status: projects.status,
       })
       .from(projects)
       .where(inArray(projects.id, ids))

@@ -1,4 +1,4 @@
-import { CHANNEL_TYPES, DECISIONS, PLUGIN_IDS, PROJECT_ROLES, WORKSPACE_ROLES } from '@hitly/core'
+import { CHANNEL_TYPES, DECISIONS, PLUGIN_IDS, PROJECT_ROLES, PROJECT_STATUSES, WORKSPACE_ROLES } from '@hitly/core'
 import {
   boolean,
   index,
@@ -23,6 +23,7 @@ const updatedAt = () =>
 
 export const workspaceRoleEnum = pgEnum('workspace_role', WORKSPACE_ROLES)
 export const projectRoleEnum = pgEnum('project_role', PROJECT_ROLES)
+export const projectStatusEnum = pgEnum('project_status', PROJECT_STATUSES)
 export const pluginIdEnum = pgEnum('plugin_id', PLUGIN_IDS)
 export const channelTypeEnum = pgEnum('channel_type', CHANNEL_TYPES)
 export const approvalStatusEnum = pgEnum('approval_status', [
@@ -272,6 +273,8 @@ export const projects = pgTable(
     name: varchar('name', { length: 255 }).notNull(),
     description: text('description'),
     plugin: pluginIdEnum('plugin').notNull(),
+    /** live = accepting requests; paused = no new requests; archived = hidden + read-only. */
+    status: projectStatusEnum('status').notNull().default('live'),
     credentials: jsonb('credentials').$type<Record<string, unknown>>().notNull(),
     defaultAssigneeUserId: id('default_assignee_user_id').references(() => users.id, {
       onDelete: 'set null',
@@ -282,7 +285,10 @@ export const projects = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => [index('projects_workspace_idx').on(table.workspaceId)],
+  (table) => [
+    index('projects_workspace_idx').on(table.workspaceId),
+    index('projects_workspace_status_idx').on(table.workspaceId, table.status),
+  ],
 )
 
 export const projectMemberships = pgTable(
@@ -435,6 +441,16 @@ export const approvals = pgTable(
     index('approvals_workspace_status_updated_idx').on(table.workspaceId, table.status, table.updatedAt),
     index('approvals_project_status_idx').on(table.projectId, table.status),
     index('approvals_created_at_idx').on(table.createdAt),
+    // Keyset list pages (inbox + requester pending): always filter workspace_id,
+    // then ORDER BY created_at DESC, id DESC. Postgres DESC is NULLS FIRST;
+    // .desc() alone is NULLS LAST and the planner will not use this index.
+    // Leading workspace_id beats a (created_at, id) index; project_id is an
+    // IN-list on inbox, so it is not leading.
+    index('approvals_workspace_created_at_id_idx').on(
+      table.workspaceId,
+      table.createdAt.desc().nullsFirst(),
+      table.id.desc().nullsFirst(),
+    ),
     index('approvals_project_idempotency_idx').on(table.projectId, table.idempotencyKey),
     index('approvals_requester_key_status_idx').on(table.requesterKeyId, table.status),
   ],
@@ -453,6 +469,26 @@ export const userDevices = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [index('user_devices_user_id_idx').on(table.userId)],
+)
+
+/**
+ * Expo push tokens for the reviewer app. A token belongs to one user;
+ * re-registering an existing token moves it to the current user.
+ * User-scoped (not a workspace tenant table).
+ */
+export const pushTokens = pgTable(
+  'push_tokens',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    token: varchar('token', { length: 255 }).notNull().unique(),
+    platform: devicePlatformEnum('platform').notNull(),
+    createdAt: createdAt(),
+    lastSeenAt: timestamp('last_seen_at', { precision: 3, withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('push_tokens_user_id_idx').on(table.userId)],
 )
 
 export const housekeepingJobs = pgTable('housekeeping_jobs', {

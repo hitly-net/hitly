@@ -19,6 +19,11 @@ import { guardProjectAdminChange } from '@/lib/member-guard'
 import { newId } from '@/lib/ids'
 import { insertNewProject } from '@/lib/project-create'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
+import {
+  deleteProject as deleteProjectRecord,
+  mutationBlockedForProjectStatus,
+  setProjectStatus,
+} from '@/lib/project-lifecycle'
 import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from '@/lib/rbac'
 import { clientFromHeaders } from '@/lib/request-client'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
@@ -55,6 +60,8 @@ async function requireProjectAdmin(projectId: string) {
   if (!access || access.project.workspaceId !== ctx.workspace.id || !canAdminProject(access)) {
     throw new Error('Forbidden')
   }
+  const archived = mutationBlockedForProjectStatus(access.project.status)
+  if (archived) throw new Error(archived.error)
   return { ...ctx, access }
 }
 
@@ -333,6 +340,8 @@ export async function retryWorkItem(approvalId: string) {
       workspaceRole: role,
     })
     if (!canDecide(access)) throw new Error('You cannot retry this work item')
+    const archivedRetry = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
+    if (archivedRetry) throw new Error(archivedRetry.error)
     const { retryResume } = await import('@/lib/approvals')
     const result = await retryResume({ approvalId, workspaceId: workspace.id })
     if (result.error && (result.status === 500 || result.status === 400)) {
@@ -361,6 +370,8 @@ export async function cancelWorkItem(approvalId: string) {
       workspaceRole: role,
     })
     if (!canDecide(access)) throw new Error('You cannot cancel this work item')
+    const archivedCancel = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
+    if (archivedCancel) throw new Error(archivedCancel.error)
     const { cancelApproval } = await import('@/lib/approvals')
     const result = await cancelApproval({ approvalId, actorUserId: user.id, workspaceId: workspace.id })
     throwUnlessConflict(result)
@@ -391,6 +402,8 @@ export async function delegateWorkItem(approvalId: string, formData: FormData) {
       workspaceRole: role,
     })
     if (!canDecide(access)) throw new Error('You cannot delegate this work item')
+    const archivedDelegate = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
+    if (archivedDelegate) throw new Error(archivedDelegate.error)
     if (userId === approval.assignedUserId) throw new Error('Already assigned to that person')
 
     const memberRows = await database
@@ -417,6 +430,7 @@ export async function delegateWorkItem(approvalId: string, formData: FormData) {
       payload: { fromUserId: approval.assignedUserId, toUserId: userId, byUserId: user.id },
     })
     await notifyAssignee({
+      workspaceId: workspace.id,
       projectId: approval.projectId,
       approvalId: approval.id,
       assignedUserId: userId,
@@ -444,6 +458,8 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
       workspaceRole: role,
     })
     if (!canDecide(access)) throw new Error('You cannot decide this work item')
+    const archivedDecide = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
+    if (archivedDecide) throw new Error(archivedDecide.error)
     const decision = String(formData.get('decision') ?? '')
     const response = String(formData.get('response') ?? '').trim()
     // Typed ask_user answer (JSON written by the widget): refused on malformed
@@ -483,6 +499,66 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     throwUnlessConflict(result)
     revalidateWorkItem(approvalId, approval.projectId)
     redirect(workItemReturnPath(formData, approval))
+  })
+}
+
+export type ProjectLifecycleState = { ok: true } | { ok: false; error: string }
+
+async function runLifecycle(
+  projectId: string,
+  status: 'live' | 'paused' | 'archived',
+): Promise<ProjectLifecycleState> {
+  return withAppTenant(async ({ role, workspace }) => {
+    if (!canManageWorkspace(role)) {
+      return { ok: false as const, error: 'Only workspace admins can change project status' }
+    }
+    const result = await setProjectStatus({
+      projectId,
+      status,
+      workspaceRole: role,
+      workspace: { id: workspace.id, plan: workspace.plan },
+    })
+    if (!result.ok) return { ok: false as const, error: result.error }
+    revalidatePath('/projects')
+    revalidatePath('/inbox')
+    revalidatePath(`/projects/${projectId}`)
+    revalidatePath(`/projects/${projectId}/config`)
+    return { ok: true as const }
+  })
+}
+
+export async function pauseProject(projectId: string): Promise<ProjectLifecycleState> {
+  return runLifecycle(projectId, 'paused')
+}
+
+export async function resumeProject(projectId: string): Promise<ProjectLifecycleState> {
+  return runLifecycle(projectId, 'live')
+}
+
+export async function archiveProject(projectId: string): Promise<ProjectLifecycleState> {
+  return runLifecycle(projectId, 'archived')
+}
+
+export async function unarchiveProject(projectId: string): Promise<ProjectLifecycleState> {
+  return runLifecycle(projectId, 'live')
+}
+
+export async function deleteProject(projectId: string, formData: FormData): Promise<ProjectLifecycleState> {
+  return withAppTenant(async ({ role, workspace }) => {
+    if (!canManageWorkspace(role)) {
+      return { ok: false as const, error: 'Only workspace admins can delete projects' }
+    }
+    const confirmName = String(formData.get('confirmName') ?? '')
+    const result = await deleteProjectRecord({
+      projectId,
+      workspaceRole: role,
+      workspace: { id: workspace.id, plan: workspace.plan },
+      confirmName,
+    })
+    if (!result.ok) return { ok: false as const, error: result.error }
+    revalidatePath('/projects')
+    revalidatePath('/inbox')
+    redirect('/projects')
   })
 }
 

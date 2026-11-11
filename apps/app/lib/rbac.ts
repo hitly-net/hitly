@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne } from 'drizzle-orm'
 import { projectMemberships, projects } from '@hitly/db/schema'
 import { isWorkspaceAdmin, type ProjectRole, type WorkspaceRole } from '@hitly/core'
 import { requireDb, requireTenantWorkspaceId, withTenant } from './tenant'
@@ -59,21 +59,26 @@ export function canAdminProject(access: { projectRole: ProjectRole } | null) {
   return access?.projectRole === 'admin'
 }
 
-export async function listVisibleProjectIds(args: { workspaceId: string; userId: string; workspaceRole: WorkspaceRole }) {
+export async function listVisibleProjectIds(args: {
+  workspaceId: string
+  userId: string
+  workspaceRole: WorkspaceRole
+  /** Archived projects are hidden from inbox and lists unless this is set. */
+  includeArchived?: boolean
+}) {
   return withTenant(args.workspaceId, async () => {
     const database = requireDb()
+    const scope = [eq(projects.workspaceId, args.workspaceId)]
+    if (!args.includeArchived) scope.push(ne(projects.status, 'archived'))
     if (isWorkspaceAdmin(args.workspaceRole)) {
-      const rows = await database
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.workspaceId, args.workspaceId))
+      const rows = await database.select({ id: projects.id }).from(projects).where(and(...scope))
       return rows.map((row) => row.id)
     }
     const rows = await database
       .select({ id: projects.id })
       .from(projects)
       .innerJoin(projectMemberships, eq(projectMemberships.projectId, projects.id))
-      .where(and(eq(projects.workspaceId, args.workspaceId), eq(projectMemberships.userId, args.userId)))
+      .where(and(...scope, eq(projectMemberships.userId, args.userId)))
     return rows.map((row) => row.id)
   })
 }
@@ -87,9 +92,30 @@ export async function listVisibleProjects(args: {
   if (ids.length === 0) return []
   return withTenant(args.workspaceId, async () =>
     requireDb()
-      .select({ id: projects.id, name: projects.name })
+      .select({ id: projects.id, name: projects.name, status: projects.status })
       .from(projects)
       .where(and(eq(projects.workspaceId, args.workspaceId), inArray(projects.id, ids)))
+      .orderBy(asc(projects.name)),
+  )
+}
+
+/** Workspace admins only: archived projects for unarchive/delete. Members get []. */
+export async function listArchivedProjects(args: {
+  workspaceId: string
+  workspaceRole: WorkspaceRole
+}) {
+  if (!isWorkspaceAdmin(args.workspaceRole)) return []
+  return withTenant(args.workspaceId, async () =>
+    requireDb()
+      .select({
+        id: projects.id,
+        name: projects.name,
+        description: projects.description,
+        plugin: projects.plugin,
+        status: projects.status,
+      })
+      .from(projects)
+      .where(and(eq(projects.workspaceId, args.workspaceId), eq(projects.status, 'archived')))
       .orderBy(asc(projects.name)),
   )
 }

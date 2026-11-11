@@ -25,6 +25,7 @@ export function buildAgentsMarkdown(): string {
     '- `ask_user` — ask the reviewer a question and return their answer.',
     '- `get_decision` — poll the outcome of a previously submitted request.',
     '- `list_pending` — list pending approvals visible to the project.',
+    '- `cancel` — withdraw an open request the same key created.',
     '',
     'There is intentionally **no decide tool**: agents cannot approve or reject their',
     'own work. Decisions are made only by human reviewers in the HITLy inbox.',

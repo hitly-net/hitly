@@ -13,9 +13,11 @@ export type ProjectApiKeyRow = {
 export function ProjectApiKeys({
   projectId,
   keys,
+  readOnly,
 }: {
   projectId: string
   keys: ProjectApiKeyRow[]
+  readOnly?: boolean
 }) {
   const [raw, setRaw] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -63,7 +65,7 @@ export function ProjectApiKeys({
               </span>
               <button
                 type="button"
-                disabled={busyId !== null}
+                disabled={readOnly || busyId !== null}
                 onClick={() => void onRegenerate(key.id)}
                 className="shrink-0 text-xs text-zinc-500 hover:text-zinc-900 disabled:opacity-50 dark:hover:text-zinc-100"
               >
@@ -71,7 +73,7 @@ export function ProjectApiKeys({
               </button>
               <button
                 type="button"
-                disabled={busyId !== null}
+                disabled={readOnly || busyId !== null}
                 onClick={() => void onDelete(key.id)}
                 className="shrink-0 text-xs text-zinc-500 hover:text-red-600 disabled:opacity-50"
               >
@@ -81,6 +83,7 @@ export function ProjectApiKeys({
           ))
         )}
       </ul>
+      {readOnly ? null : (
       <form className="mt-4 flex max-w-xl flex-col gap-3" action={onCreate}>
         <div className="flex gap-2">
           <input
@@ -103,6 +106,7 @@ export function ProjectApiKeys({
           </p>
         ) : null}
       </form>
+      )}
     </>
   )
 }

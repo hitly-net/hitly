@@ -71,6 +71,27 @@
       "when": 1794324552293,
       "tag": "0009_default_sla_24h",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794387566598,
+      "tag": "0010_project_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794391584798,
+      "tag": "0011_approvals_workspace_created_at_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794393159799,
+      "tag": "0012_push_tokens",
+      "breakpoints": true
     }
   ]
 }

@@ -152,7 +152,7 @@ Reviewer routes authenticate with Better Auth: session cookie (web) or `Authoriz
 | `GET` | `/api/v1/health` | Public | Probe a hosted URL. `{ "ok": true, "product": "hitly", "edition": "oss" \| "cloud" }` |
 | `GET` | `/api/v1/inbox` | Session | List items. Query: `scope=all\|open\|closed`, `q`, `projectId` |
 | `GET` | `/api/v1/inbox/summary` | Session | `{ pending, failedResume, decidedToday, projectCount }` |
-| `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct`, `answerSchema` |
+| `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct`, `answerSchema`, and when present top-level `answer` |
 | `GET` | `/api/v1/approvals/:id/original-request` | Session | Canonical JSON of the stored create-once request (see below) |
 | `POST` | `/api/v1/approvals/:id/decide` | Session | Decide JSON (see *Decide & answer gating*) |
 | `POST` | `/api/v1/approvals/:id/opens` | Session | `{ "ref" }` — record that THIS reviewer opened a context item |
@@ -230,6 +230,8 @@ Query: `scope`, `q`, `projectId`, `limit` (1–200, default 100), `cursor` (opaq
 }
 ```
 
+When the latest decision includes a typed ask_user answer, the same payload also includes top-level `answer` (`{kind, value}`). The field is **omitted** when there is none — never `answer: null`. Pending items (empty `decisions`) therefore look like the example above.
+
 #### `openedRefs`
 
 `openedRefs` is the list of **gating keys** (hitl-spec 3.7 `ref`) that **this reviewer** has already recorded as opened on this approval.
@@ -245,7 +247,7 @@ A project API key on the same GET route still returns the slim origin-poll paylo
 `GET /api/v1/approvals/:id/original-request` (session auth) returns the stored create-once `hitl/request/v0` record (host-normalised envelope) for reviewer verification. It is **not** the requester's raw wire bytes: key order, whitespace, `\u` escapes and number forms are normalised at ingest. The web detail page shows it under "View original request" with **Copy** and **Download (JSON)**.
 
 - **Redacted JSON.** Display, copy and download redact `cb_auth_token`, resume handles, and secret-like fields (the read path strips them; the UI redacts again). `editedArgs` are never shown as the request — they have their own labelled section after a decide/edit.
-- **Hashes of the stored original.** `payloadHash` and `argsHash` are hitl-spec `b64url(SHA-256(JCS(...)))` over the stored (pre-redaction) payload and action args, so a reviewer can verify off-host. `payloadSha256` / `argsSha256` remain hex over Hitly `canonicalJson` for the evidence chain.
+- **Hashes of the stored original.** `payloadHash` and `argsHash` are hitl-spec `b64url(SHA-256(JCS(...)))` over the stored (pre-redaction) payload and action args, so a reviewer can verify off-host. `payloadSha256` / `argsSha256` remain hex over HITLy `canonicalJson` for the evidence chain.
 - **Same viewers as the approval detail.** A signed-in workspace member with project access can read it. **Unauthenticated requests get `401`** (independent of the id). A session with no workspace, unknown ids, other workspaces and members without project access all get `404`. Project API keys cannot read it (a bare bearer key with no session is refused as `401`). Responses are `Cache-Control: no-store`.
 - **Never logged.** Payload contents are never written to logs. Logs carry only ids and hashes.
 - **Known limitation (ingest precision).** Integers above `Number.MAX_SAFE_INTEGER` lose precision at ingest `JSON.parse` (for example `12345678901234567890` is stored and served as `12345678901234567000`). That is a property of the stored record; this view does not attempt to repair it.

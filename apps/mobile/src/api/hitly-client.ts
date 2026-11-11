@@ -162,11 +162,17 @@ export function createHitlyClient(options: ClientOptions) {
     updateProjectConfig(id: string, body: Partial<ProjectConfig> & { sla?: string; token?: string }) {
       return request<{ ok: true }>(`/api/v1/projects/${id}/config`, { method: 'PATCH', body: JSON.stringify(body) })
     },
+    registerPushToken(token: string, platform: 'ios' | 'android') {
+      return request('/api/v1/push-tokens', { method: 'POST', body: JSON.stringify({ token, platform }) })
+    },
+    unregisterPushToken(token: string) {
+      return request('/api/v1/push-tokens', { method: 'DELETE', body: JSON.stringify({ token }) })
+    },
     registerDevice(token: string, platform: 'ios' | 'android') {
-      return request('/api/v1/devices', { method: 'POST', body: JSON.stringify({ token, platform }) })
+      return request('/api/v1/push-tokens', { method: 'POST', body: JSON.stringify({ token, platform }) })
     },
     unregisterDevice(token: string) {
-      return request('/api/v1/devices', { method: 'DELETE', body: JSON.stringify({ token }) })
+      return request('/api/v1/push-tokens', { method: 'DELETE', body: JSON.stringify({ token }) })
     },
   }
 }
