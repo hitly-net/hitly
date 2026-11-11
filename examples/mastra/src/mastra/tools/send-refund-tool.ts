@@ -49,7 +49,7 @@ type AgentToolContext = {
 
 export const sendRefundTool = createTool({
   id: 'send-refund',
-  description: 'Issue a customer refund. Always requires a human reviewer in Hitly before money is sent.',
+  description: 'Issue a customer refund. Always requires a human reviewer in HITLy before money is sent.',
   inputSchema: refundInputSchema,
   outputSchema: z.object({
     sent: z.boolean(),
@@ -93,7 +93,7 @@ export const sendRefundTool = createTool({
 
     if (!resumeData?.approved) {
       if (!runId) {
-        throw new Error('Mastra tool context is missing runId; cannot notify Hitly')
+        throw new Error('Mastra tool context is missing runId; cannot notify HITLy')
       }
       await notifyHitly({
         config: {
@@ -124,9 +124,9 @@ export const sendRefundTool = createTool({
         attachments: attachments?.length ? attachments : undefined,
       })
       if (!agent?.suspend) {
-        throw new Error('Mastra tool context is missing suspend(); cannot wait for Hitly')
+        throw new Error('Mastra tool context is missing suspend(); cannot wait for HITLy')
       }
-      return await agent.suspend({ reason: 'Human approval required in Hitly.' })
+      return await agent.suspend({ reason: 'Human approval required in HITLy.' })
     }
 
     return {
