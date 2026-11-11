@@ -88,6 +88,82 @@ test('a GET with Accept text/html but an Authorization header is not redirected'
   }
 })
 
+test('an empty or whitespace-only Authorization header is a credential, not a browser visit', async () => {
+  // Raw HTTP: fetch() would drop an empty header value, so write the request
+  // with node:http to prove the header is PRESENT (Node trims it to '' on
+  // the server side) and still suppresses the docs redirect.
+  const { request } = await import('node:http')
+  const h = await startHarness()
+  try {
+    for (const value of ['', ' ', '\t']) {
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = request(`${h.url}/mcp`, { method: 'GET', headers: { accept: 'text/html', authorization: value } }, (res) => {
+          res.resume()
+          resolve(res.statusCode ?? 0)
+        })
+        req.on('error', reject)
+        req.end()
+      })
+      // Any Authorization header, even an empty one, is treated as a machine
+      // request: no redirect, and GET stays 405 on this stateless endpoint.
+      assert.notEqual(status, 302, `authorization: ${JSON.stringify(value)} must not 302`)
+      assert.equal(status, 405, `authorization: ${JSON.stringify(value)}`)
+    }
+  } finally {
+    await h.close()
+  }
+})
+
+test('/mcp/ is the same endpoint as /mcp for non-browser requests', async () => {
+  const h = await startHarness()
+  try {
+    // HEAD and non-HTML GET: 405 like /mcp, not 404.
+    for (const [method, accept] of [
+      ['HEAD', 'text/html'],
+      ['HEAD', '*/*'],
+      ['GET', '*/*'],
+    ] as const) {
+      const res = await fetch(`${h.url}/mcp/`, { method, redirect: 'manual', headers: { accept } })
+      assert.equal(res.status, 405, `${method} /mcp/ with Accept: ${accept}`)
+      assert.equal(res.headers.get('location'), null)
+    }
+    // POST /mcp/ reaches the credential check, same as POST /mcp.
+    const post = await fetch(`${h.url}/mcp/`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+    })
+    assert.equal(post.status, 401)
+    assert.match(post.headers.get('www-authenticate') ?? '', /^Bearer/)
+    // Unknown paths still 404.
+    const unknown = await browserGet(`${h.url}/mcp/x`, { accept: '*/*' })
+    assert.equal(unknown.status, 404)
+  } finally {
+    await h.close()
+  }
+})
+
+test('the server instructions advertise only the spec answer kind names', async () => {
+  // The initialize result is the other half of the advertised surface:
+  // `answer {kind, value}` must be described with a spec example only - the
+  // legacy input aliases (free_text/single_choice/multi_choice) are accepted
+  // at ingest but must never be taught to clients.
+  const h = await startHarness()
+  try {
+    const res = await rawPost(h.url, { authorization: `Bearer ${TEST_KEY}` })
+    assert.equal(res.status, 200)
+    const body = (await res.json()) as { result?: { instructions?: string } }
+    const instructions = body.result?.instructions ?? ''
+    assert.ok(instructions.length > 0, 'initialize must return server instructions')
+    for (const legacy of ['single_choice', 'free_text', 'multi_choice']) {
+      assert.ok(!instructions.includes(legacy), `instructions must not advertise ${legacy}`)
+    }
+  } finally {
+    await h.close()
+  }
+})
+
 test('GET /healthz is unchanged', async () => {
   const h = await startHarness()
   try {

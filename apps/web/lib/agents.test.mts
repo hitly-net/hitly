@@ -19,7 +19,7 @@ test('GET /agents.md returns the agent guide with MCP details', async () => {
   assert.match(body, /^# HITLy — guide for AI agents/m)
   assert.match(body, /https:\/\/mcp\.hitly\.net\/mcp/)
   assert.match(body, /Authorization: Bearer <project API key>/)
-  for (const tool of ['request_approval', 'ask_user', 'get_decision', 'list_pending']) {
+  for (const tool of ['request_approval', 'ask_user', 'get_decision', 'list_pending', 'cancel']) {
     assert.match(body, new RegExp(`\`?${tool}\`?`), `missing tool: ${tool}`)
   }
   assert.match(body, /no decide tool/i)

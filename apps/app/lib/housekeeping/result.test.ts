@@ -1,9 +1,10 @@
 /**
- * M0h (PR hitly#106) support: the expire sweep's `expired` count and the
- * housekeeping scheduler's claim both flow through affectedRows(). The
- * node-postgres driver returns a pg Result whose count is `rowCount` - if
- * this helper ever stops reading it, the sweep reports 0 while rows really
- * expired (and scheduler claims silently fail). These vectors fail on revert.
+ * M0h (PR hitly#106) support: the housekeeping scheduler's claim and the
+ * audit-purge count flow through affectedRows(). (The expire sweep's
+ * `expired` count no longer does: it counts rows won via a guarded
+ * `UPDATE ... RETURNING id`.) The node-postgres driver returns a pg Result
+ * whose count is `rowCount` - if this helper ever stops reading it, claims
+ * silently fail. These vectors fail on revert.
  */
 import { strict as assert } from 'node:assert'
 import { describe, it } from 'node:test'
