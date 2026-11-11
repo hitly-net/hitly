@@ -16,6 +16,7 @@ import { gateAccountCreation } from './invites'
 import { resolveAuthSecret } from './auth-secret'
 import { trustedProxyAuthOptions } from './trusted-proxies'
 import { authLogger, handleAuthApiError } from './auth-logging'
+import { PASSKEY_USER_VERIFICATION } from './passkey'
 import { webAuthnRelyingParty } from './webauthn-rp'
 
 export { resolveAuthSecret } from './auth-secret'
@@ -84,6 +85,10 @@ function createAuth(database: NonNullable<typeof db>) {
       nextCookies(),
       passkey({
         ...webAuthnRelyingParty(),
+        authenticatorSelection: {
+          residentKey: 'preferred',
+          userVerification: PASSKEY_USER_VERIFICATION,
+        },
         authentication: {
           afterVerification: async ({ clientData }) => {
             try {

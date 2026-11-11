@@ -21,7 +21,7 @@ The marketing/docs site is optional (`yarn dev:web`). The Expo reviewer app is `
 
 Signed-in users manage email, password, authenticator-app MFA, and passkeys at **Settings → Security**.
 
-**Passkeys** (WebAuthn) sign you in with a device credential instead of a password. Adding or removing a passkey asks for your current password. Signing in with a passkey is phishing-resistant and does not prompt for the authenticator-app code.
+**Passkeys** (WebAuthn) sign you in with a device credential instead of a password. Adding or removing a passkey asks for your current password. Registration and sign-in require **user verification** (biometric, PIN, or device passcode), so a passkey is a phishing-resistant multi-factor credential and does not prompt for the authenticator-app code.
 
 The WebAuthn relying-party ID and origin are the hostname and origin of `BETTER_AUTH_URL`. Optional `HITLY_WEBAUTHN_RP_NAME` is a display name only.
 

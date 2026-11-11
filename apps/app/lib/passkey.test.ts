@@ -14,6 +14,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { passkey as passkeyPlugin } from '@better-auth/passkey'
 import { and, eq, inArray, like } from 'drizzle-orm'
 import {
   accountSecurityEvents,
@@ -28,11 +31,15 @@ import { auth } from './auth'
 import { db, pool } from './db'
 import { CURRENT_PASSWORD_INCORRECT_MESSAGE } from './password-change'
 import { newId } from './ids'
+import { PasskeySetup } from '../components/passkey-setup'
 import {
+  PASSKEY_PLUGIN_AUTHENTICATE_PATHS,
   PASSKEY_PLUGIN_MANAGEMENT_PATHS,
   PASSKEY_REGISTER_ENDPOINT,
   PASSKEY_REGISTER_OPTIONS_ENDPOINT,
   PASSKEY_CHALLENGE_COOKIE,
+  PASSKEY_USER_VERIFICATION,
+  assertionHasUserVerification,
   buildPasskeyAddedEmail,
   isPasskeyPluginManagementPath,
   passkeyDeleteEndpoint,
@@ -40,6 +47,7 @@ import {
   submitPasskeyRegisterOptions,
 } from './passkey'
 import {
+  consumePasskeyRegisterChallenge,
   handlePasskeyDelete,
   handlePasskeyGet,
   handlePasskeyRegister,
@@ -64,6 +72,8 @@ const emailDomain = `passkey-${run}.example.com`
 const PASSWORD = 'correct-horse-battery'
 const NOW = 1_700_000_040_000
 const PUBLIC_KEY = new Uint8Array([1, 2, 3, 4, 5])
+/** Host that disagrees with BETTER_AUTH_URL; RP ID/origin must ignore it. */
+const SPOOF_HOST = 'spoof.example.net:8443'
 
 const logged: string[] = []
 const restore: Array<() => void> = []
@@ -108,17 +118,19 @@ async function userByEmail(address: string) {
   return rows[0] ?? null
 }
 
-function post(endpoint: string, cookie: string | undefined, body: unknown) {
+function post(endpoint: string, cookie: string | undefined, body: unknown, extraHeaders: Record<string, string> = {}) {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     origin: APP_URL,
+    host: SPOOF_HOST,
+    ...extraHeaders,
   }
   if (cookie) headers.cookie = cookie
   return new Request(`${APP_URL}${endpoint}`, { method: 'POST', headers, body: JSON.stringify(body) })
 }
 
 function get(endpoint: string, cookie: string | undefined) {
-  const headers: Record<string, string> = { origin: APP_URL }
+  const headers: Record<string, string> = { origin: APP_URL, host: SPOOF_HOST }
   if (cookie) headers.cookie = cookie
   return new Request(`${APP_URL}${endpoint}`, { method: 'GET', headers })
 }
@@ -163,18 +175,25 @@ function routeMocks(overrides: Partial<PasskeyRouteDeps> = {}, credentialID = `c
     log: () => {},
     now: () => NOW,
     allowReauth: () => true,
-    generateRegistrationOptions: async () =>
-      ({
+    generateRegistrationOptions: async (opts) => {
+      const rp = webAuthnRelyingParty()
+      assert.equal(opts.rpID, rp.rpID)
+      assert.ok(!opts.rpID.includes(':'), 'rpID must strip the port')
+      assert.notEqual(opts.rpID, 'spoof.example.net')
+      assert.equal(opts.authenticatorSelection?.userVerification, PASSKEY_USER_VERIFICATION)
+      return {
         challenge: 'test-challenge',
-        rp: { name: 'HITLy', id: 'localhost' },
+        rp: { name: 'HITLy', id: rp.rpID },
         user: { id: 'dGVzdA', name: 'alex@example.com', displayName: 'Alex' },
         pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-      }) as Awaited<ReturnType<NonNullable<PasskeyRouteDeps['generateRegistrationOptions']>>>,
+      } as Awaited<ReturnType<NonNullable<PasskeyRouteDeps['generateRegistrationOptions']>>>
+    },
     verifyRegistrationResponse: async (opts) => {
+      const rp = webAuthnRelyingParty()
       assert.equal(opts.expectedChallenge, 'test-challenge')
-      assert.equal(opts.expectedRPID, webAuthnRelyingParty().rpID)
-      assert.equal(opts.expectedOrigin, webAuthnRelyingParty().origin)
-      assert.equal(opts.requireUserVerification, false)
+      assert.equal(opts.expectedRPID, rp.rpID)
+      assert.equal(opts.expectedOrigin, rp.origin)
+      assert.equal(opts.requireUserVerification, true)
       return verifiedRegistration(credentialID, 0)
     },
     notifyAdded: async () => {},
@@ -244,6 +263,64 @@ describe('passkey RP config', () => {
     assert.equal(named.rpName, 'Example Inbox')
     const source = fs.readFileSync(path.join(__dirname, 'webauthn-rp.ts'), 'utf-8')
     assert.ok(!/1(?:0|27|69|72|92)\.\d+/.test(source), 'RP helper must not hardcode private IPs')
+    assert.ok(!/headers\.get\(\s*['"]host['"]\s*\)/i.test(source), 'RP helper must not read Host')
+  })
+
+  it('a Host header that disagrees with BETTER_AUTH_URL does not change rpID or expected origin', async () => {
+    const address = email('rp-host')
+    await createUser(address)
+    const cookie = await signInCookie(address)
+    const cred = `cred-host-${run}`
+    const captured: {
+      rpID?: string
+      expectedRPID?: string
+      expectedOrigin?: string
+    } = {}
+    const deps = routeMocks(
+      {
+        generateRegistrationOptions: async (opts) => {
+          captured.rpID = opts.rpID
+          assert.equal(opts.authenticatorSelection?.userVerification, PASSKEY_USER_VERIFICATION)
+          return {
+            challenge: 'test-challenge',
+            rp: { name: 'HITLy', id: captured.rpID },
+            user: { id: 'dGVzdA', name: 'alex@example.com', displayName: 'Alex' },
+            pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+          } as Awaited<ReturnType<NonNullable<PasskeyRouteDeps['generateRegistrationOptions']>>>
+        },
+        verifyRegistrationResponse: async (opts) => {
+          captured.expectedRPID = Array.isArray(opts.expectedRPID) ? opts.expectedRPID[0] : opts.expectedRPID
+          captured.expectedOrigin = Array.isArray(opts.expectedOrigin) ? opts.expectedOrigin[0] : opts.expectedOrigin
+          assert.equal(opts.requireUserVerification, true)
+          return verifiedRegistration(cred, 0)
+        },
+      },
+      cred,
+    )
+    const options = await handlePasskeyRegisterOptions(
+      post(PASSKEY_REGISTER_OPTIONS_ENDPOINT, cookie, { currentPassword: PASSWORD, name: 'Laptop' }, { host: SPOOF_HOST }),
+      deps,
+    )
+    assert.equal(options.status, 200)
+    const rp = webAuthnRelyingParty()
+    assert.equal(captured.rpID, rp.rpID)
+    assert.ok(!captured.rpID!.includes(':'), 'rpID must strip the port from BETTER_AUTH_URL')
+    assert.notEqual(captured.rpID, 'spoof.example.net')
+    const challenge = challengeCookie(options)
+    const registered = await handlePasskeyRegister(
+      post(
+        PASSKEY_REGISTER_ENDPOINT,
+        mergeCookie(cookie, challenge),
+        { response: attestation(cred), name: 'Laptop' },
+        { host: SPOOF_HOST },
+      ),
+      deps,
+    )
+    assert.equal(registered.status, 200)
+    assert.equal(captured.expectedRPID, rp.rpID)
+    assert.equal(captured.expectedOrigin, rp.origin)
+    const routeSrc = fs.readFileSync(path.join(__dirname, 'passkey-route.ts'), 'utf-8')
+    assert.ok(!/headers\.get\(\s*['"]host['"]\s*\)/i.test(routeSrc), 'register routes must not take RP ID from Host')
   })
 })
 
@@ -284,7 +361,7 @@ describe('passkey registration', () => {
     assert.equal(options.status, 200)
     const payload = (await options.json()) as { challenge: string; rp: { id: string } }
     assert.equal(payload.challenge, 'test-challenge')
-    assert.equal(payload.rp.id, 'localhost')
+    assert.equal(payload.rp.id, webAuthnRelyingParty().rpID)
     const challenge = challengeCookie(options)
     assert.ok(challenge.startsWith(`${PASSKEY_CHALLENGE_COOKIE}=`))
 
@@ -322,6 +399,39 @@ describe('passkey registration', () => {
     )
     assert.equal(replay.status, 400)
     assert.deepEqual(await replay.json(), { error: 'challenge_not_found' })
+  })
+
+  it('consumes a registration challenge atomically so a concurrent replay cannot succeed', async () => {
+    const address = email('register-race')
+    const cred = `cred-race-${run}`
+    await createUser(address)
+    const cookie = await signInCookie(address)
+    const options = await handlePasskeyRegisterOptions(
+      post(PASSKEY_REGISTER_OPTIONS_ENDPOINT, cookie, { currentPassword: PASSWORD, name: 'Laptop' }),
+      routeMocks({}, cred),
+    )
+    assert.equal(options.status, 200)
+    const challenge = challengeCookie(options)
+    const [first, second] = await Promise.all([
+      handlePasskeyRegister(
+        post(PASSKEY_REGISTER_ENDPOINT, mergeCookie(cookie, challenge), { response: attestation(`${cred}-a`), name: 'Laptop' }),
+        routeMocks({}, `${cred}-a`),
+      ),
+      handlePasskeyRegister(
+        post(PASSKEY_REGISTER_ENDPOINT, mergeCookie(cookie, challenge), { response: attestation(`${cred}-b`), name: 'Laptop' }),
+        routeMocks({}, `${cred}-b`),
+      ),
+    ])
+    const statuses = [first.status, second.status].sort()
+    assert.deepEqual(statuses, [200, 400])
+    const loser = first.status === 400 ? first : second
+    assert.deepEqual(await loser.json(), { error: 'challenge_not_found' })
+    const user = await userByEmail(address)
+    assert.ok(user)
+    assert.equal((await database.select().from(passkeys).where(eq(passkeys.userId, user.id))).length, 1)
+    const routeSrc = fs.readFileSync(path.join(__dirname, 'passkey-route.ts'), 'utf-8')
+    assert.match(routeSrc, /delete\(verifications\)[\s\S]*?\.returning\(/)
+    assert.equal(typeof consumePasskeyRegisterChallenge, 'function')
   })
 })
 
@@ -392,6 +502,25 @@ describe('passkey delete re-auth', () => {
   })
 })
 
+describe('passkey settings list rendering', () => {
+  it('server-rendered settings list omits publicKey and credential bytes', async () => {
+    const address = email('list-ssr')
+    const cred = `cred-ssr-${run}-CANARYCRED`
+    const { user, passkey } = await registerPasskey(address, cred)
+    assert.ok(passkey.publicKey)
+    assert.ok(passkey.credentialID)
+    const listed = await listPasskeysForUser(user.id)
+    const html = renderToStaticMarkup(createElement(PasskeySetup, { passkeys: listed }))
+    const output = `${JSON.stringify(listed)}\n${html}`
+    assert.match(html, /Laptop/)
+    assert.ok(!output.includes(passkey.publicKey), 'rendered list must not include the public key')
+    assert.ok(!output.includes(passkey.credentialID), 'rendered list must not include the credential id')
+    const page = fs.readFileSync(path.join(__dirname, '../app/settings/security/page.tsx'), 'utf-8')
+    assert.ok(page.includes('listPasskeysForUser'))
+    assert.ok(!page.includes('publicKey'))
+  })
+})
+
 describe('passkey client helpers and static wiring', () => {
   it('maps INVALID_PASSWORD through the shared current-password message', async () => {
     const fake: typeof fetch = async () =>
@@ -408,20 +537,38 @@ describe('passkey client helpers and static wiring', () => {
   })
 
   it('plugin management paths 404; authenticate paths stay open; MFA hold is email-only', () => {
+    const stock = Object.values(passkeyPlugin().endpoints)
+      .map((endpoint) => endpoint.path as string)
+      .sort()
+    const authenticate = new Set<string>(PASSKEY_PLUGIN_AUTHENTICATE_PATHS)
+    const expectedBlocklist = stock.filter((pathName) => !authenticate.has(pathName)).sort()
+    assert.deepEqual([...PASSKEY_PLUGIN_MANAGEMENT_PATHS].slice().sort(), expectedBlocklist)
+    assert.ok(PASSKEY_PLUGIN_AUTHENTICATE_PATHS.every((pathName) => stock.includes(pathName)))
     for (const pathName of PASSKEY_PLUGIN_MANAGEMENT_PATHS) {
       assert.equal(isPasskeyPluginManagementPath(`http://localhost:3001/api/auth${pathName}`), true)
+      assert.equal(isPasskeyPluginManagementPath(`http://localhost:3001/api/auth${pathName}/`), true)
+      assert.equal(isPasskeyPluginManagementPath(`http://localhost:3001/API/AUTH${pathName.toUpperCase()}`), true)
     }
     assert.equal(
       isPasskeyPluginManagementPath('http://localhost:3001/api/auth/passkey/generate-authenticate-options'),
       false,
     )
     assert.equal(isPasskeyPluginManagementPath('http://localhost:3001/api/auth/passkey/verify-authentication'), false)
+    assert.equal(isPasskeyPluginManagementPath('http://localhost:3001/api/auth/passkey/verify-authentication/'), false)
+    assert.equal(
+      assertionHasUserVerification({
+        response: { response: { authenticatorData: Buffer.from([0, 0, 0]).toString('base64url') } },
+      }),
+      false,
+    )
     const route = fs.readFileSync(path.join(__dirname, '../app/api/auth/[...all]/route.ts'), 'utf-8')
     assert.ok(route.includes('isPasskeyPluginManagementPath'))
     const authSource = fs.readFileSync(path.join(__dirname, 'auth.ts'), 'utf-8')
     assert.ok(authSource.includes('passkey('))
     assert.ok(authSource.includes('webAuthnRelyingParty'))
     assert.ok(authSource.includes('passkey: schema.passkeys'))
+    assert.ok(authSource.includes('PASSKEY_USER_VERIFICATION'))
+    assert.ok(authSource.includes('authenticatorSelection'))
     const page = fs.readFileSync(path.join(__dirname, '../app/settings/security/page.tsx'), 'utf-8')
     assert.ok(page.includes('<PasskeySetup'))
     assert.ok(page.includes('listPasskeysForUser'))
@@ -429,6 +576,11 @@ describe('passkey client helpers and static wiring', () => {
     assert.ok(login.includes('<PasskeySignIn'))
     const form = fs.readFileSync(path.join(__dirname, '../components/auth-form.tsx'), 'utf-8')
     assert.ok(form.includes('username webauthn'))
+    const docs = fs.readFileSync(path.join(__dirname, '../../web/content/docs/self-host.mdx'), 'utf-8')
+    assert.match(docs, /user verification/i)
+    const routeSrc = fs.readFileSync(path.join(__dirname, 'passkey-route.ts'), 'utf-8')
+    assert.match(routeSrc, /requireUserVerification:\s*true/)
+    assert.match(routeSrc, /userVerification:\s*PASSKEY_USER_VERIFICATION/)
     assert.equal(isEmailPasswordSignIn(new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' })), true)
     assert.equal(
       isEmailPasswordSignIn(new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, { method: 'POST' })),

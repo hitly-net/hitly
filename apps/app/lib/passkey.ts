@@ -42,9 +42,18 @@ export const PASSKEY_CANCELLED_MESSAGE = 'Passkey sign-in was cancelled.'
 export const PASSKEY_UNSUPPORTED_MESSAGE = 'Passkeys are not available in this browser.'
 export const PASSKEY_INVALID_NAME_MESSAGE = 'Enter a name for this passkey.'
 
+/** WebAuthn userVerification is required so a passkey is a multi-factor credential. */
+export const PASSKEY_USER_VERIFICATION = 'required' as const
+const USER_VERIFIED_FLAG = 0b0000_0100
+
 export { CURRENT_PASSWORD_INCORRECT_MESSAGE }
 
-/** Plugin HTTP paths that skip current-password re-auth; the auth catch-all 404s these. */
+/**
+ * Plugin HTTP paths that skip current-password re-auth. Authenticate stays
+ * open (`PASSKEY_PLUGIN_AUTHENTICATE_PATHS`). Keep this list equal to every
+ * stock Better Auth passkey endpoint except those two — the tests enumerate
+ * `passkey().endpoints` so a new plugin path fails CI until it is blocked.
+ */
 export const PASSKEY_PLUGIN_MANAGEMENT_PATHS = [
   '/passkey/generate-register-options',
   '/passkey/verify-registration',
@@ -53,13 +62,72 @@ export const PASSKEY_PLUGIN_MANAGEMENT_PATHS = [
   '/passkey/list-user-passkeys',
 ] as const
 
-export function isPasskeyPluginManagementPath(url: string): boolean {
+export const PASSKEY_PLUGIN_AUTHENTICATE_PATHS = [
+  '/passkey/generate-authenticate-options',
+  '/passkey/verify-authentication',
+] as const
+
+/** Lowercase pathname with trailing slashes stripped, or null if `url` is not a URL. */
+export function passkeyPluginPathname(url: string): string | null {
   try {
-    const pathname = new URL(url).pathname
-    return PASSKEY_PLUGIN_MANAGEMENT_PATHS.some((path) => pathname.endsWith(path))
+    const pathname = new URL(url).pathname.replace(/\/+$/, '') || '/'
+    return pathname.toLowerCase()
   } catch {
-    return false
+    return null
   }
+}
+
+function pathEndsWith(pathname: string, suffix: string): boolean {
+  return pathname.endsWith(suffix.toLowerCase())
+}
+
+export function isPasskeyPluginManagementPath(url: string): boolean {
+  const pathname = passkeyPluginPathname(url)
+  if (!pathname) return false
+  return PASSKEY_PLUGIN_MANAGEMENT_PATHS.some((path) => pathEndsWith(pathname, path))
+}
+
+export function isPasskeyPluginAuthenticatePath(url: string, suffix?: (typeof PASSKEY_PLUGIN_AUTHENTICATE_PATHS)[number]): boolean {
+  const pathname = passkeyPluginPathname(url)
+  if (!pathname) return false
+  const suffixes = suffix ? [suffix] : PASSKEY_PLUGIN_AUTHENTICATE_PATHS
+  return suffixes.some((path) => pathEndsWith(pathname, path))
+}
+
+function decodeWebAuthnBytes(value: string): Uint8Array | null {
+  try {
+    const b64 = value.replace(/-/g, '+').replace(/_/g, '/')
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4))
+    const binary = atob(b64 + pad)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+    return bytes
+  } catch {
+    return null
+  }
+}
+
+function authenticatorDataFromAssertion(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null
+  const wrapper = body as { response?: unknown }
+  const assertion = wrapper.response
+  if (!assertion || typeof assertion !== 'object') return null
+  const inner = assertion as { response?: { authenticatorData?: unknown }; authenticatorData?: unknown }
+  const data = inner.response && typeof inner.response === 'object' ? inner.response.authenticatorData : inner.authenticatorData
+  return typeof data === 'string' ? data : null
+}
+
+/** True when the assertion's authenticatorData has the UV flag set. Fail closed. */
+export function assertionHasUserVerification(body: unknown): boolean {
+  const data = authenticatorDataFromAssertion(body)
+  if (!data) return false
+  const bytes = decodeWebAuthnBytes(data)
+  if (!bytes || bytes.length < 33) return false
+  return (bytes[32]! & USER_VERIFIED_FLAG) !== 0
+}
+
+export function withRequiredUserVerification<T extends Record<string, unknown>>(options: T): T {
+  return { ...options, userVerification: PASSKEY_USER_VERIFICATION }
 }
 
 export function passkeyItemEndpoint(id: string): string {

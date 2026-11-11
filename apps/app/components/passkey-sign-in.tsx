@@ -7,8 +7,9 @@ import { PASSKEY_SIGN_IN_FAILED_MESSAGE, PASSKEY_UNSUPPORTED_MESSAGE } from '@/l
 /**
  * Sign in with a registered passkey. Conditional UI / autofill starts when
  * the browser supports it (the login email field includes `webauthn` in
- * autocomplete). A successful passkey sign-in is a full session and does
- * not continue to the authenticator-app MFA step.
+ * autocomplete). User verification is required, so a successful passkey
+ * sign-in is a phishing-resistant multi-factor session and does not
+ * continue to the authenticator-app MFA step.
  */
 export function PasskeySignIn({ redirectTo }: { redirectTo?: string }) {
   const [error, setError] = useState<string | null>(null)

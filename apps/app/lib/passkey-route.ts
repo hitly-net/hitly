@@ -38,6 +38,7 @@ import {
   PASSKEY_CHALLENGE_COOKIE,
   PASSKEY_CHALLENGE_TTL_MS,
   PASSKEY_DEFAULT_NAME,
+  PASSKEY_USER_VERIFICATION,
   createSendPasskeyAddedNotice,
   normalisePasskeyName,
   type PasskeyListItem,
@@ -109,6 +110,23 @@ export function hashPasskeyChallengeToken(token: string): string {
 
 function registerChallengeIdentifier(tokenHash: string): string {
   return `${REGISTER_CHALLENGE_PREFIX}${tokenHash}`
+}
+
+/**
+ * Single-statement consume: DELETE ... RETURNING so two concurrent verifies
+ * cannot both read the same registration challenge.
+ */
+export async function consumePasskeyRegisterChallenge(
+  database: Database,
+  identifier: string,
+  nowMs: number,
+): Promise<RegisterChallengeValue | null> {
+  const rows = await database.delete(verifications).where(eq(verifications.identifier, identifier)).returning()
+  const row = rows[0]
+  if (!row || row.expiresAt.getTime() <= nowMs) return null
+  const stored = JSON.parse(row.value) as RegisterChallengeValue
+  if (!stored || stored.type !== 'registration') return null
+  return stored
 }
 
 function toListItem(row: {
@@ -322,7 +340,7 @@ export async function handlePasskeyRegisterOptions(
       })),
       authenticatorSelection: {
         residentKey: 'preferred',
-        userVerification: 'preferred',
+        userVerification: PASSKEY_USER_VERIFICATION,
       },
     })
 
@@ -385,23 +403,20 @@ export async function handlePasskeyRegister(
   const identifier = registerChallengeIdentifier(hashPasskeyChallengeToken(token))
   let stored: RegisterChallengeValue | null = null
   try {
-    const rows = await database.select().from(verifications).where(eq(verifications.identifier, identifier)).limit(1)
-    const row = rows[0]
-    await database.delete(verifications).where(eq(verifications.identifier, identifier))
-    if (!row || row.expiresAt.getTime() <= now()) {
-      const expired = json({ error: 'challenge_not_found' }, 400)
-      expireChallengeCookie(expired)
-      return expired
-    }
-    stored = JSON.parse(row.value) as RegisterChallengeValue
+    stored = await consumePasskeyRegisterChallenge(database, identifier, now())
   } catch (error) {
     log(`[hitly passkey] Could not consume the registration challenge: ${error instanceof Error ? error.name : 'error'}`)
     const failed = json({ error: 'passkey_failed' }, 500)
     expireChallengeCookie(failed)
     return failed
   }
+  if (!stored) {
+    const expired = json({ error: 'challenge_not_found' }, 400)
+    expireChallengeCookie(expired)
+    return expired
+  }
 
-  if (!stored || stored.type !== 'registration' || stored.userId !== user.id) {
+  if (stored.userId !== user.id) {
     const rejected = json({ error: 'challenge_not_found' }, 400)
     expireChallengeCookie(rejected)
     return rejected
@@ -421,7 +436,7 @@ export async function handlePasskeyRegister(
       expectedChallenge: stored.expectedChallenge,
       expectedOrigin: rp.origin,
       expectedRPID: rp.rpID,
-      requireUserVerification: false,
+      requireUserVerification: true,
     })
   } catch {
     const failed = json({ error: 'verification_failed' }, 400)

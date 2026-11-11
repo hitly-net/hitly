@@ -110,7 +110,8 @@ export function PasskeySetup({ passkeys: initial }: { passkeys: PasskeyListItem[
     <div className="flex max-w-md flex-col gap-6">
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
         Passkeys let you sign in with this device instead of a password. Adding or removing one
-        requires your current password. A passkey sign-in does not ask for an authenticator code.
+        requires your current password. Sign-in requires user verification (biometric, PIN, or
+        device passcode) and does not ask for an authenticator-app code.
       </p>
       {message ? (
         <p role="status" className="text-sm text-zinc-700 dark:text-zinc-300">

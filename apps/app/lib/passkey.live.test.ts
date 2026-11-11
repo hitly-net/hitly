@@ -15,13 +15,18 @@ import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { and, eq, inArray, like } from 'drizzle-orm'
 import { base64 } from '@better-auth/utils/base64'
-import { accounts, memberships, passkeys, sessions, users, workspaces } from '@hitly/db/schema'
+import { accounts, memberships, passkeys, sessions, userMfa, users, workspaces } from '@hitly/db/schema'
 import { auth } from './auth'
 import { db, pool } from './db'
 import { handleAuthRequest } from '../app/api/auth/[...all]/route'
 import { newId } from './ids'
 import { holdPasswordSignInIfMfa } from './mfa-sign-in'
-import { PASSKEY_PLUGIN_MANAGEMENT_PATHS } from './passkey'
+import {
+  PASSKEY_PLUGIN_AUTHENTICATE_PATHS,
+  PASSKEY_PLUGIN_MANAGEMENT_PATHS,
+  PASSKEY_USER_VERIFICATION,
+  assertionHasUserVerification,
+} from './passkey'
 
 if (!db || !auth) throw new Error('DATABASE_URL and BETTER_AUTH_SECRET required for tests')
 const database = db
@@ -70,14 +75,20 @@ async function insertPasskey(userId: string, credentialID: string) {
   return id
 }
 
-function fakeAssertion(credentialID: string) {
+function authenticatorData(userVerified: boolean): string {
+  const bytes = new Uint8Array(37)
+  bytes[32] = 0b0000_0001 | (userVerified ? 0b0000_0100 : 0)
+  return Buffer.from(bytes).toString('base64url')
+}
+
+function fakeAssertion(credentialID: string, userVerified = true) {
   return {
     id: credentialID,
     rawId: credentialID,
     type: 'public-key',
     response: {
       clientDataJSON: 'e30',
-      authenticatorData: 'AA',
+      authenticatorData: authenticatorData(userVerified),
       signature: 'AA',
       userHandle: '',
     },
@@ -186,25 +197,97 @@ describe('passkey plugin sign-in', () => {
     assert.equal(held, fakeSession)
   })
 
+  it('a TOTP-enrolled user presenting a passkey assertion without UV gets no session', async () => {
+    const address = email('uv-totp')
+    await createUser(address)
+    const user = await userByEmail(address)
+    assert.ok(user)
+    await database.insert(userMfa).values({
+      id: newId('mfa').slice(0, 36),
+      userId: user.id,
+      totpCiphertext: 'placeholder-ciphertext',
+      enabled: true,
+    })
+    const credentialID = `live-uv-${run}`
+    await insertPasskey(user.id, credentialID)
+    const sessionsBefore = await database.select({ id: sessions.id }).from(sessions).where(eq(sessions.userId, user.id))
+
+    const uvLess = { response: fakeAssertion(credentialID, false) }
+    assert.equal(assertionHasUserVerification(uvLess), false)
+
+    const verify = await handleAuthRequest(
+      new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, {
+        method: 'POST',
+        headers: {
+          origin: APP_URL,
+          host: 'spoof.example.net:8443',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(uvLess),
+      }),
+      async () => {
+        throw new Error('plugin must not run for a UV-less assertion')
+      },
+    )
+    assert.equal(verify.status, 400)
+    const body = (await verify.json().catch(() => ({}))) as { code?: string }
+    assert.equal(body.code, 'USER_VERIFICATION_REQUIRED')
+    const setCookies = verify.headers.getSetCookie().join(';')
+    assert.ok(!/session_token/i.test(setCookies))
+    const sessionsAfter = await database.select({ id: sessions.id }).from(sessions).where(eq(sessions.userId, user.id))
+    assert.equal(sessionsAfter.length, sessionsBefore.length)
+  })
+
+  it('authenticate options require user verification even when Host disagrees with BETTER_AUTH_URL', async () => {
+    const options = await handleAuthRequest(
+      new Request(`${APP_URL}/api/auth/passkey/generate-authenticate-options`, {
+        method: 'GET',
+        headers: { origin: APP_URL, host: 'spoof.example.net:8443' },
+      }),
+      (request) => authInstance.handler(request),
+    )
+    assert.equal(options.status, 200)
+    const body = (await options.json()) as { userVerification?: string; rpId?: string }
+    assert.equal(body.userVerification, PASSKEY_USER_VERIFICATION)
+    const rpHost = new URL(APP_URL).hostname
+    assert.equal(body.rpId, rpHost)
+    assert.ok(!body.rpId?.includes(':'))
+    assert.notEqual(body.rpId, 'spoof.example.net')
+  })
+
   it('404s plugin management paths so register/delete cannot skip the password check', async () => {
     const runHandler = async () => new Response('should-not-run', { status: 200 })
     for (const pathName of PASSKEY_PLUGIN_MANAGEMENT_PATHS) {
-      const response = await handleAuthRequest(
-        new Request(`${APP_URL}/api/auth${pathName}`, { method: pathName.includes('generate') || pathName.includes('list') ? 'GET' : 'POST' }),
-        runHandler,
-      )
-      assert.equal(response.status, 404, pathName)
-      assert.deepEqual(await response.json(), { error: 'Not found' })
+      const method = pathName.includes('generate') || pathName.includes('list') ? 'GET' : 'POST'
+      for (const suffix of ['', '/']) {
+        const response = await handleAuthRequest(
+          new Request(`${APP_URL}/api/auth${pathName}${suffix}`, { method }),
+          runHandler,
+        )
+        assert.equal(response.status, 404, `${pathName}${suffix}`)
+        assert.deepEqual(await response.json(), { error: 'Not found' })
+      }
     }
     let ran = false
     const allowed = await handleAuthRequest(
       new Request(`${APP_URL}/api/auth/passkey/generate-authenticate-options`, { method: 'GET' }),
       async () => {
         ran = true
-        return new Response('ok', { status: 200 })
+        return new Response(JSON.stringify({ challenge: 'x', userVerification: 'preferred' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
       },
     )
     assert.equal(ran, true)
     assert.equal(allowed.status, 200)
+    assert.equal(((await allowed.json()) as { userVerification?: string }).userVerification, PASSKEY_USER_VERIFICATION)
+    for (const pathName of PASSKEY_PLUGIN_AUTHENTICATE_PATHS) {
+      const slashed = await handleAuthRequest(
+        new Request(`${APP_URL}/api/auth${pathName}/`, { method: 'GET' }),
+        async () => new Response('ok', { status: 200 }),
+      )
+      assert.notEqual(slashed.status, 404, pathName)
+    }
   })
 })

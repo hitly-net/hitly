@@ -1,6 +1,8 @@
 /**
  * WebAuthn relying-party id and origin. Both come from the app's public
- * base URL (`BETTER_AUTH_URL`), never from a hardcoded hostname.
+ * base URL (`BETTER_AUTH_URL`), never from a request Host header and never
+ * from a hardcoded hostname. `rpID` is the URL hostname (port stripped);
+ * `origin` is the URL origin (scheme + host + port).
  *
  * Optional `HITLY_WEBAUTHN_RP_NAME` is a display name only (not a host).
  */
