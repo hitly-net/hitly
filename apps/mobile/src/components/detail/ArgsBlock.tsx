@@ -1,8 +1,10 @@
 import { Text, StyleSheet } from 'react-native'
+import { isEmptyPayload } from '@hitly/core'
 import { colors } from '../../theme'
 
-export function ArgsBlock({ args }: { args: Record<string, unknown> }) {
-  return <Text style={styles.pre}>{JSON.stringify(args ?? {}, null, 2)}</Text>
+export function ArgsBlock({ args }: { args: unknown }) {
+  if (isEmptyPayload(args)) return null
+  return <Text style={styles.pre}>{JSON.stringify(args, null, 2)}</Text>
 }
 
 const styles = StyleSheet.create({

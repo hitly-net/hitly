@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Dimensions, Modal, Pressable, Text, View, StyleSheet } from 'react-native'
 import Ionicons from '@expo/vector-icons/Ionicons'
+import { workItemTitle } from '@hitly/core'
 import type { ApprovalDetail } from '../../types'
 import { colors } from '../../theme'
 import { PluginMark } from '../inbox/PluginMark'
@@ -38,7 +39,7 @@ export function StatusHeader({
     <View style={styles.row}>
       <PluginMark plugin={detail.plugin} />
       <View style={styles.body}>
-        <Text style={styles.title}>{detail.actionName}</Text>
+        <Text style={styles.title}>{workItemTitle(detail.envelope.prompt, detail.actionName)}</Text>
         <Text style={styles.meta}>
           {formatStatusLabel(detail.status, latestDecision)} · {detail.projectName}
         </Text>

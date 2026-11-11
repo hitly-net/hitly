@@ -42,6 +42,20 @@ test('source: inbox screens and client send nextCursor on later fetches', () => 
   assert.match(listSrc, /More items — load more/, 'list must show an honest remaining-items control')
 })
 
+test('source: inbox list has pull-to-refresh and a header refresh button', () => {
+  const inboxSrc = fs.readFileSync(path.join(dir, '../app/(tabs)/inbox.tsx'), 'utf8')
+  const listSrc = fs.readFileSync(path.join(dir, 'components/inbox/WorkItemList.tsx'), 'utf8')
+  assert.match(listSrc, /RefreshControl/, 'list must use RefreshControl for pull-to-refresh')
+  assert.match(inboxSrc, /createInboxRefreshGate/, 'inbox screen must single-flight page-1 refreshes')
+  assert.match(inboxSrc, /accessibilityLabel="Refresh inbox"/, 'inbox screen must show a visible refresh button')
+  assert.match(inboxSrc, /onRefresh=\{\(\) => void refreshFromStart\(\)\}/, 'pull-to-refresh must re-fetch from page 1')
+  assert.match(
+    inboxSrc,
+    /fetchInboxPage\(client\.inbox, \{ scope, q: q\.trim\(\) \|\| undefined \}\)/,
+    'refresh must call fetchInboxPage without a cursor (page 1)',
+  )
+})
+
 test('collectInboxPages follows nextCursor so item 101 is reachable', async () => {
   const catalog = Array.from({ length: 101 }, (_, i) => row(`apr_${String(i + 1).padStart(4, '0')}`, `reach-${i + 1}`))
   const pageSize = 50

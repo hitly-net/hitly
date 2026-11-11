@@ -71,6 +71,11 @@ export type ApprovalDetail = {
    * Null when the request has none (legacy asks). Always present on GET /api/v1/approvals/:id.
    */
   answerSchema: AnswerSchema | null
+  /**
+   * Typed ask_user answer from the latest decision. Omitted when the request
+   * has none (pending, or a legacy respond with only free-text `response`).
+   */
+  answer?: unknown
   envelope: ApprovalEnvelope
   origin: OriginRef
   originFields: OriginField[]
