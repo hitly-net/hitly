@@ -109,7 +109,7 @@ Query: `scope=all|open|closed`, `q`, `projectId`, `limit` (1–200, default 100)
 
 `GET /api/v1/inbox/summary` returns `{ pending, failedResume, decidedToday, projectCount }`.
 
-`GET /api/v1/approvals/:id` (session cookie or reviewer Bearer token) returns envelope, origin, `originFields`, decisions, `canAct`, top-level `answerSchema` (the stored ask_user schema, or `null` when the request has none), and — when the item is actionable for this reviewer — `openedRefs`. `answerSchema` stays nested on `envelope.answerSchema` for existing clients.
+`GET /api/v1/approvals/:id` (session cookie or reviewer Bearer token) returns envelope, origin, `originFields`, decisions, `canAct`, top-level `answerSchema` (the stored ask_user schema, or `null` when the request has none), top-level `answer` (the reviewer's typed ask_user `{kind, value}` from the latest decision, **omitted when absent** — never `answer: null`), and — when the item is actionable for this reviewer — `openedRefs`. `answerSchema` stays nested on `envelope.answerSchema` for existing clients.
 
 `openedRefs` is the gating keys (hitl-spec 3.7) **this** reviewer has already recorded opens for. It is built from `opened` audit events written by `POST /api/v1/approvals/:id/opens`. Reviewer clients hydrate the must-open checklist from it so re-entering an approval does not force opening every item again. The field is omitted when `canAct` is false. The host still re-validates decide against the recorded events, not against this field.
 

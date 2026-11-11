@@ -60,6 +60,35 @@ test('formatTypedAnswer: number is shown as a number', () => {
   })
 })
 
+test('formatTypedAnswer: number 0 renders as the text 0 (not empty / falsy)', () => {
+  const formatted = formatTypedAnswer({ kind: 'number', value: 0 }, { type: 'number' })
+  assert.deepEqual(formatted, { kind: 'text', text: '0' })
+  assert.equal(formatted?.kind, 'text')
+  assert.equal(formatted && formatted.kind === 'text' ? formatted.text : null, '0')
+  assert.notEqual(formatted && formatted.kind === 'text' ? formatted.text : '0', '')
+})
+
+test('formatTypedAnswer: negative number renders as its signed decimal', () => {
+  assert.deepEqual(formatTypedAnswer({ kind: 'number', value: -2.5 }, { type: 'number' }), {
+    kind: 'text',
+    text: '-2.5',
+  })
+})
+
+test('formatTypedAnswer: empty multi-choice is an empty list and does not throw', () => {
+  const schema: AnswerSchema = {
+    type: 'multi',
+    options: [
+      { value: 'secret', label: 'Secret' },
+      { value: 'forms', label: 'Forms' },
+    ],
+  }
+  assert.deepEqual(formatTypedAnswer({ kind: 'multi', value: [] }, schema), {
+    kind: 'list',
+    items: [],
+  })
+})
+
 test('formatTypedAnswer: missing option label falls back to the value', () => {
   const schema: AnswerSchema = {
     type: 'single',
@@ -149,4 +178,22 @@ test('workItemTitle: question wins; tool name is the fallback', () => {
   assert.equal(workItemTitle(null, 'ask_user'), 'ask_user')
   assert.equal(workItemTitle(undefined, 'send-refund'), 'send-refund')
   assert.equal(workItemTitle('   ', 'ask_user'), 'ask_user')
+})
+
+test('workItemTitle: a very long question does not throw', () => {
+  const long = `${'Which auth method should we enable for this workspace? '.repeat(40)}end`
+  const title = workItemTitle(long, 'ask_user')
+  assert.equal(title, long)
+  assert.ok(title.length > 200)
+})
+
+test('formatTypedAnswer: a label containing <script> stays literal text', () => {
+  const schema: AnswerSchema = {
+    type: 'single',
+    options: [{ value: 'xss', label: '<script>alert(1)</script>' }],
+  }
+  assert.deepEqual(formatTypedAnswer({ kind: 'single', value: 'xss' }, schema), {
+    kind: 'text',
+    text: '<script>alert(1)</script>',
+  })
 })
