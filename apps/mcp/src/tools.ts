@@ -97,7 +97,7 @@ const askAnswerSchemaInput = z.preprocess(
   z
     .object({
       type: z.enum(['text', 'single', 'multi', 'number', 'free_text', 'single_choice', 'multi_choice']).describe(
-        'One answer type for this request: text | single | multi | number (legacy aliases free_text, single_choice, multi_choice are accepted and stored as the spec name). hitl/v0 is one question per ask_user: no multi-field forms.',
+        'One answer type for this request: text | single | multi | number. hitl/v0 is one question per ask_user: no multi-field forms.',
       ),
       options: z
         .array(answerOptionInput)
@@ -121,7 +121,7 @@ const common = {
     .string()
     .datetime({ offset: true })
     .optional()
-    .describe('ISO 8601 deadline. When omitted the host default rules: the project timeout if set, else 24 hours from now. Expiry never counts as approval.'),
+    .describe('ISO 8601 deadline. An explicit deadline always wins and is never clamped down to the project timeout; when omitted the host falls back to the matched rule SLA, then the project default timeout, then 24 hours from now. Must be in the future and at most 30 days out. Expiry never counts as approval.'),
   callback_url: httpsUrl
     .optional()
     .describe(
@@ -311,7 +311,14 @@ function normaliseList(data: unknown): Record<string, unknown>[] {
   return raw
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
     .map((item) => {
-      const out: Record<string, unknown> = { id: item.id, kind: item.kind ?? 'approval' }
+      // Every item carries a top-level `requestId` (the handle get_decision
+      // and cancel take). Hosts that label the field `id` only are mapped so
+      // clients never see requestId missing from a listed item.
+      const out: Record<string, unknown> = {
+        id: item.id,
+        requestId: item.requestId ?? item.id,
+        kind: item.kind ?? 'approval',
+      }
       for (const key of ['question', 'prompt', 'createdAt', 'deadline', 'expiresAt', 'status'] as const) {
         if (item[key] !== undefined) out[key] = item[key]
       }
@@ -397,7 +404,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Ask the user',
       description:
-        'Ask a human a question and get a typed answer later. The prompt is the headline shown to the reviewer: one line, at most 160 characters, ending with "?". Use the optional markdown detail (at most 8000 characters) to explain; it renders under the headline. Returns immediately with requestId and state "pending"; it never waits. Confirm with get_decision before acting; the reviewer\'s typed answer comes back as answer {kind, value} (e.g. {"kind":"single_choice","value":"blue"}) - use it verbatim. Ask one question per request: hitl/v0 answers exactly one ask, so issue one ask_user per field; simple_form is refused with an error - send a separate ask_user for each field.',
+        'Ask a human a question and get a typed answer later. The prompt is the headline shown to the reviewer: one line, at most 160 characters, ending with "?". Use the optional markdown detail (at most 8000 characters) to explain; it renders under the headline. Returns immediately with requestId and state "pending"; it never waits. Confirm with get_decision before acting; the reviewer\'s typed answer comes back as answer {kind, value} (e.g. {"kind":"single","value":"blue"}) - use it verbatim. Ask one question per request: hitl/v0 answers exactly one ask, so issue one ask_user per field; simple_form is refused with an error - send a separate ask_user for each field.',
       inputSchema: {
         ...common,
         prompt: z.string().describe('Headline question: one sentence, at most 160 characters, ending with "?".'),
@@ -557,7 +564,7 @@ export function registerTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'List pending requests',
       description:
-        'List open requests created with this credential (id, kind, question or prompt, createdAt, deadline). Optional cursor pages through the host list; the result includes nextCursor when more items remain.',
+        'List open requests created with this credential (requestId, kind, question or prompt, createdAt, deadline). Optional cursor pages through the host list; the result includes nextCursor when more items remain.',
       inputSchema: {
         projectId: z.string().min(1).max(64).optional(),
         cursor: z.string().min(1).max(512).optional().describe('Opaque nextCursor from a previous list_pending page.'),

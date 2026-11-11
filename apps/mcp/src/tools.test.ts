@@ -327,6 +327,26 @@ test('ask_user accepts optional markdown detail, passes it through under the hea
   }
 })
 
+test('the deadline advertise states the full host precedence and the 30-day cap', async () => {
+  const h = await startHarness()
+  try {
+    const client = await h.client()
+    const { tools } = await client.listTools()
+    const tool = tools.find((t: { name: string }) => t.name === 'request_approval')
+    const deadline = (tool?.inputSchema as { properties?: Record<string, { description?: string }> })
+      ?.properties?.deadline
+    const text = String(deadline?.description ?? '')
+    assert.ok(text.length > 0, 'deadline must carry a description')
+    assert.match(text, /explicit .*(always wins|never clamped)/i, 'explicit deadline wins')
+    assert.match(text, /rule SLA/, 'rule SLA step must be advertised')
+    assert.match(text, /project default timeout/, 'project timeout step must be advertised')
+    assert.match(text, /24 hours/, '24h default must be advertised')
+    assert.match(text, /30 days/, 'cap must be advertised')
+  } finally {
+    await h.close()
+  }
+})
+
 test('ask_user tools/list advertises the spec answer types; no simple_form, no fields', async () => {
   const h = await startHarness()
   try {
@@ -346,6 +366,16 @@ test('ask_user tools/list advertises the spec answer types; no simple_form, no f
       assert.ok(types.includes(alias), `legacy alias ${alias} stays accepted`)
     }
     assert.ok(!types.includes('simple_form'))
+    // Advertised text speaks the spec kind names only: the description example
+    // and the type describe must not mention the legacy aliases (they stay
+    // accepted as INPUT above, but clients should never learn them from us).
+    const description = String(tool?.description ?? '')
+    const typeDescribe = String((answerSchema.properties.type as Record<string, unknown>).description ?? '')
+    for (const legacy of ['single_choice', 'free_text', 'multi_choice']) {
+      assert.ok(!description.includes(legacy), `ask_user description must not advertise ${legacy}`)
+      assert.ok(!typeDescribe.includes(legacy), `answerSchema.type describe must not advertise ${legacy}`)
+    }
+    assert.match(description, /\{"kind":"single","value":"blue"\}/, 'description must show the spec kind name')
   } finally {
     await h.close()
   }
@@ -627,6 +657,12 @@ test('list_pending returns this key\u2019s open requests [M0]', async () => {
     assert.deepEqual(items.map((item) => item.kind), ['approval', 'question'])
     assert.equal(items[0].question, baseApproval.question)
     assert.equal(items[1].prompt, 'Which day?')
+    // Every item carries a top-level requestId (the handle get_decision and
+    // cancel take) - pinned against a host that labels rows by `id` only.
+    for (const item of items) {
+      assert.equal(typeof item.requestId, 'string', `item ${JSON.stringify(item)} lacks requestId`)
+      assert.equal(item.requestId, item.id)
+    }
   } finally {
     await h.close()
   }

@@ -42,10 +42,13 @@ let lastAdminDecisionHook: LastAdminDecisionHook | null = null
  * the last-admin check has passed and BEFORE returning to the caller's
  * write, while the project advisory lock is held. The guard suite uses it to
  * force a deterministic two-connection interleave (hold A between count and
- * write, run B against the held lock, then release). Production never sets
- * it; null restores normal behaviour.
+ * write, run B against the held lock, then release). Installing a hook is a
+ * no-op unless NODE_ENV === 'test' (lib/member-guard.test.ts opts itself
+ * in), so no production import can arm it even by mistake; null always
+ * restores normal behaviour.
  */
 export function setLastAdminDecisionHookForTests(hook: LastAdminDecisionHook | null): void {
+  if (hook !== null && process.env.NODE_ENV !== 'test') return
   lastAdminDecisionHook = hook
 }
 
