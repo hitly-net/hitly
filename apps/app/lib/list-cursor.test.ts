@@ -74,6 +74,26 @@ describe('list cursor', () => {
     )
   })
 
+  it('registers a workspace + created_at DESC + id DESC index for those list queries', () => {
+    const dir = path.dirname(fileURLToPath(import.meta.url))
+    const drizzleDir = path.join(dir, '../../../packages/db/drizzle')
+    const journal = JSON.parse(fs.readFileSync(path.join(drizzleDir, 'meta/_journal.json'), 'utf8')) as {
+      entries: Array<{ tag: string }>
+    }
+    const entry = journal.entries.find((e) => e.tag === '0010_approvals_workspace_created_at_id')
+    assert.ok(entry, 'drizzle journal must list 0010_approvals_workspace_created_at_id')
+    const migration = fs.readFileSync(path.join(drizzleDir, `${entry.tag}.sql`), 'utf8')
+    assert.match(
+      migration,
+      /CREATE INDEX IF NOT EXISTS "approvals_workspace_created_at_id_idx" ON "approvals" USING btree \("workspace_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST\)/,
+    )
+    const schema = fs.readFileSync(path.join(dir, '../../../packages/db/src/schema.ts'), 'utf8')
+    assert.match(
+      schema,
+      /index\('approvals_workspace_created_at_id_idx'\)\.on\(table\.workspaceId, table\.createdAt\.desc\(\), table\.id\.desc\(\)\)/,
+    )
+  })
+
   it('takeListPage encodes nextCursor only when more rows exist', () => {
     const createdAt = new Date('2026-08-13T18:00:00.000Z')
     const rows = [

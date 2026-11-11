@@ -159,6 +159,16 @@ test('migration 0006: approvals.requester_key_id is nullable, FK set null, index
   assert.equal(idx.rows.length, 1)
 })
 
+test('migration 0010: approvals keyset list index is (workspace_id, created_at DESC, id DESC)', async () => {
+  const idx = await client.query(
+    `select indexdef from pg_indexes where tablename = 'approvals' and indexname = 'approvals_workspace_created_at_id_idx'`,
+  )
+  assert.equal(idx.rows.length, 1)
+  assert.match(String(idx.rows[0].indexdef), /workspace_id/)
+  assert.match(String(idx.rows[0].indexdef), /created_at DESC/)
+  assert.match(String(idx.rows[0].indexdef), /id DESC/)
+})
+
 test('ingest records the requester key and returns JCS argsHash and the create-once policy', async () => {
   const response = await ingestRoute(
     new Request('http://localhost/api/v1/approvals', {

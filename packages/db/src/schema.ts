@@ -435,6 +435,10 @@ export const approvals = pgTable(
     index('approvals_workspace_status_updated_idx').on(table.workspaceId, table.status, table.updatedAt),
     index('approvals_project_status_idx').on(table.projectId, table.status),
     index('approvals_created_at_idx').on(table.createdAt),
+    // Keyset list pages (inbox + requester pending): always filter workspace_id,
+    // then ORDER BY created_at DESC, id DESC. Leading workspace_id beats a
+    // (created_at, id) index; project_id is IN-list on inbox, so it is not leading.
+    index('approvals_workspace_created_at_id_idx').on(table.workspaceId, table.createdAt.desc(), table.id.desc()),
     index('approvals_project_idempotency_idx').on(table.projectId, table.idempotencyKey),
     index('approvals_requester_key_status_idx').on(table.requesterKeyId, table.status),
   ],
