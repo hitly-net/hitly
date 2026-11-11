@@ -6,6 +6,7 @@ import { WorkItemFilters } from '@/components/work-item-filters'
 import { WorkItemList } from '@/components/work-item-list'
 import { listInboxItemsForWeb } from '@/lib/inbox'
 import { parseListFilters, projectItemsFilterStorageKey } from '@/lib/list-filters'
+import { ProjectHeading, ProjectStatusBanner } from '@/components/project-status-banner'
 import { requireVisibleProject } from '@/lib/project-page'
 
 export const metadata = { title: 'Project' }
@@ -33,8 +34,9 @@ export default async function ProjectItemsPage({
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
-      <h1 className="text-2xl font-semibold">{project.name}</h1>
+      <ProjectHeading name={project.name} status={project.status} />
       <ProjectTabs projectId={id} current="Items" />
+      <ProjectStatusBanner status={project.status} />
       <p className="mt-4 text-sm text-zinc-500">Work items for this project.</p>
       <Suspense>
         <WorkItemFilters

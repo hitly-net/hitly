@@ -7,7 +7,10 @@ import { ProjectApiKeys } from '@/components/project-api-keys'
 import { ProjectResumeSecret } from '@/components/project-resume-secret'
 import { ProjectTabs } from '@/components/project-tabs'
 import { TestEvidenceSink } from '@/components/test-evidence-sink'
-import { canAdminProject } from '@/lib/rbac'
+import { ProjectLifecyclePanel } from '@/components/project-lifecycle-panel'
+import { ProjectHeading, ProjectStatusBanner } from '@/components/project-status-banner'
+import { canAdminProject, canManageWorkspace } from '@/lib/rbac'
+import { canUseProjectLifecycle } from '@/lib/project-lifecycle'
 import { requireVisibleProject } from '@/lib/project-page'
 import { publicOriginFields } from '@/lib/project-config'
 import { ensureProjectResumeSecret } from '@/lib/resume-secret'
@@ -19,10 +22,12 @@ import { decodeTenantJson } from '@/lib/tenant-crypto'
 export const metadata = { title: 'Config' }
 
 export default async function ProjectConfigPage({ params }: { params: Promise<{ id: string }> }) {
-  return withAppTenant(async () => {
+  return withAppTenant(async ({ role, workspace }) => {
   const { id } = await params
   const { project: loaded, access } = await requireVisibleProject(id)
   if (!canAdminProject(access)) redirect(`/projects/${id}`)
+  const archived = loaded.status === 'archived'
+  const showLifecycle = canManageWorkspace(role)
   const { project, resumeSecret } = await ensureProjectResumeSecret(loaded)
 
   const database = requireDb()
@@ -47,8 +52,9 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
-      <h1 className="text-2xl font-semibold">{project.name}</h1>
+      <ProjectHeading name={project.name} status={project.status} />
       <ProjectTabs projectId={id} current="Config" />
+      <ProjectStatusBanner status={project.status} />
 
       <ProjectConfigForm
         projectId={id}
@@ -75,9 +81,10 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
           forcePathStyle:
             typeof sinkConfig.forcePathStyle === 'boolean' ? sinkConfig.forcePathStyle : undefined,
         }}
+        readOnly={archived}
       />
 
-      {project.evidenceSinkType === 'http' && typeof sinkConfig.url === 'string' && sinkConfig.url && (
+      {!archived && project.evidenceSinkType === 'http' && typeof sinkConfig.url === 'string' && sinkConfig.url && (
         <div className="mt-3 max-w-xl">
           <TestEvidenceSink projectId={id} />
         </div>
@@ -87,6 +94,7 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
       <p className="mt-1 text-sm text-zinc-500">Authenticate ingest. The secret is shown once when you create or regenerate a key.</p>
       <ProjectApiKeys
         projectId={id}
+        readOnly={archived}
         keys={keys.map((key) => ({
           id: key.id,
           name: key.name,
@@ -100,7 +108,16 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
         HITLY_RESUME_SECRET is independent of ingest API keys. Mastra verifies a signed proof on resume so a guessed
         runId cannot spoof an approval. Rotate if it leaks; update the origin .env and restart.
       </p>
-      <ProjectResumeSecret projectId={id} secret={resumeSecret} />
+      <ProjectResumeSecret projectId={id} secret={resumeSecret} readOnly={archived} />
+
+      {showLifecycle ? (
+        <ProjectLifecyclePanel
+          projectId={id}
+          projectName={project.name}
+          status={project.status}
+          lifecycleAvailable={canUseProjectLifecycle(workspace)}
+        />
+      ) : null}
 
       <h2 className="mt-10 text-lg font-semibold">Origin .env</h2>
       <p className="mt-1 text-sm text-zinc-500">
