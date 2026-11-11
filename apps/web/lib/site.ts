@@ -29,9 +29,31 @@ export function buildSitemap(): MetadataRoute.Sitemap {
   return urls.map((path) => ({ url: absoluteUrl(path), changeFrequency: 'monthly' }))
 }
 
+/**
+ * Paths kept out of crawlers: API endpoints, the not-yet-GA cloud
+ * placeholder, and the self-hosted app's authenticated surfaces
+ * (login, inbox, project/settings pages).
+ */
+export const DISALLOWED_ROUTES = [
+  '/api/',
+  '/cloud',
+  '/inbox',
+  '/projects',
+  '/settings',
+  '/connections',
+  '/audit',
+  '/invite',
+  '/login',
+  '/signup',
+  '/forgot-password',
+  '/reset-password',
+  '/verify-email',
+  '/verify-email-change',
+] as const
+
 export function buildRobots(): MetadataRoute.Robots {
   return {
-    rules: { userAgent: '*', allow: '/' },
+    rules: { userAgent: '*', allow: '/', disallow: [...DISALLOWED_ROUTES] },
     sitemap: `${SITE_URL}/sitemap.xml`,
   }
 }

@@ -38,3 +38,11 @@ test('agents guide exposes no internal hosts or private IPs', async () => {
   const body = await bodyOf(agentsMd())
   for (const pattern of BANNED) assert.ok(!pattern.test(body), `forbidden match: ${pattern}`)
 })
+
+test('agents guide links to llms.txt, the sitemap and the docs', async () => {
+  const body = await bodyOf(agentsMd())
+  assert.match(body, /https:\/\/hitly\.net\/llms\.txt/, 'missing llms.txt link')
+  assert.match(body, /https:\/\/hitly\.net\/sitemap\.xml/, 'missing sitemap link')
+  assert.match(body, /https:\/\/hitly\.net\/docs\/mcp/, 'missing docs/mcp link')
+  assert.match(body, /https:\/\/hitly\.net\/docs/, 'missing docs link')
+})
