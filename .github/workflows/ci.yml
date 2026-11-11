@@ -10,7 +10,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     env:
-      # HITLY_TELEMETRY unset (default off). Next and Turbo CLIs do not phone home.
+      # Next and Turbo CLIs are always off (HITLY_TELEMETRY does not control them).
       NEXT_TELEMETRY_DISABLED: '1'
       TURBO_TELEMETRY_DISABLED: '1'
     services:

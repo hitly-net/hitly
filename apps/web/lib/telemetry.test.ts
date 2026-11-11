@@ -3,9 +3,9 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
-  applyNextTelemetryDisabled,
+  applyCliTelemetryDisabled,
   HITLY_TELEMETRY_ENV,
   isHitlyTelemetryEnabled,
   PLAUSIBLE_DOMAIN_ENV,
@@ -39,26 +39,17 @@ test('HITLY_TELEMETRY is off unless trimmed value is 1 or true', () => {
   assert.equal(isHitlyTelemetryEnabled({ [HITLY_TELEMETRY_ENV]: ' true ' }), true)
 })
 
-test('applyNextTelemetryDisabled: unset flag → Next and Turbo CLIs disabled', () => {
-  const env: Record<string, string | undefined> = {}
-  applyNextTelemetryDisabled(env)
-  assert.equal(env.NEXT_TELEMETRY_DISABLED, '1')
-  assert.equal(env.TURBO_TELEMETRY_DISABLED, '1')
-  const already = { NEXT_TELEMETRY_DISABLED: '0', TURBO_TELEMETRY_DISABLED: '0' }
-  applyNextTelemetryDisabled(already)
-  assert.equal(already.NEXT_TELEMETRY_DISABLED, '1')
-  assert.equal(already.TURBO_TELEMETRY_DISABLED, '1')
-})
-
-test('applyNextTelemetryDisabled: enabled flag clears Next and Turbo disable flags', () => {
-  const env = { [HITLY_TELEMETRY_ENV]: '1', NEXT_TELEMETRY_DISABLED: '1', TURBO_TELEMETRY_DISABLED: '1' }
-  applyNextTelemetryDisabled(env)
-  assert.equal(env.NEXT_TELEMETRY_DISABLED, undefined)
-  assert.equal(env.TURBO_TELEMETRY_DISABLED, undefined)
-  const viaTrue = { [HITLY_TELEMETRY_ENV]: 'true', NEXT_TELEMETRY_DISABLED: '1', TURBO_TELEMETRY_DISABLED: '1' }
-  applyNextTelemetryDisabled(viaTrue)
-  assert.equal(viaTrue.NEXT_TELEMETRY_DISABLED, undefined)
-  assert.equal(viaTrue.TURBO_TELEMETRY_DISABLED, undefined)
+test('applyCliTelemetryDisabled always sets Next and Turbo disable flags', () => {
+  for (const flag of [undefined, '1', 'true', '0']) {
+    const env: Record<string, string | undefined> = {
+      [HITLY_TELEMETRY_ENV]: flag,
+      NEXT_TELEMETRY_DISABLED: '0',
+      TURBO_TELEMETRY_DISABLED: '0',
+    }
+    applyCliTelemetryDisabled(env)
+    assert.equal(env.NEXT_TELEMETRY_DISABLED, '1', `HITLY_TELEMETRY=${String(flag)}`)
+    assert.equal(env.TURBO_TELEMETRY_DISABLED, '1', `HITLY_TELEMETRY=${String(flag)}`)
+  }
 })
 
 test('plausibleScript: absent when HITLY_TELEMETRY is unset', () => {
@@ -123,18 +114,6 @@ test('inbox app layout never loads Plausible', () => {
   assert.doesNotMatch(layout, /next\/script/)
 })
 
-test('Next configs derive Next and Turbo disable flags from HITLY_TELEMETRY', () => {
-  for (const rel of ['../next.config.mjs', '../../app/next.config.mjs']) {
-    const src = readFileSync(join(here, rel), 'utf8')
-    assert.match(src, /HITLY_TELEMETRY/, rel)
-    assert.match(src, /NEXT_TELEMETRY_DISABLED/, rel)
-    assert.match(src, /TURBO_TELEMETRY_DISABLED/, rel)
-    assert.match(src, /\.trim\(\)/, rel)
-    assert.match(src, /=== '1'/, rel)
-    assert.match(src, /=== 'true'/, rel)
-  }
-})
-
 function printDisabled(env: Record<string, string | undefined>): string {
   const merged: Record<string, string | undefined> = { ...process.env, ...env }
   for (const key of Object.keys(merged)) {
@@ -150,44 +129,32 @@ function printDisabled(env: Record<string, string | undefined>): string {
   )
 }
 
-const FLAG_PARITY: Array<[string | undefined, boolean]> = [
-  [undefined, false],
-  ['', false],
-  ['   ', false],
-  ['0', false],
-  ['false', false],
-  ['yes', false],
-  ['TRUE', false],
-  ['1', true],
-  ['true', true],
-  ['1 ', true],
-  [' true', true],
-  [' 1 ', true],
-  [' true ', true],
-]
-
-test('with-hitly-telemetry.sh matches JS flag parsing (trim, 1/true only)', () => {
-  for (const [raw, on] of FLAG_PARITY) {
-    assert.equal(isHitlyTelemetryEnabled({ [HITLY_TELEMETRY_ENV]: raw }), on, `js ${JSON.stringify(raw)}`)
-    const printed = printDisabled({
-      HITLY_TELEMETRY: raw,
-      NEXT_TELEMETRY_DISABLED: '1',
-      TURBO_TELEMETRY_DISABLED: '1',
-    })
-    assert.equal(printed === '|', on, `sh ${JSON.stringify(raw)} → ${printed}`)
-    if (!on) assert.equal(printed, '1|1', `sh off ${JSON.stringify(raw)}`)
+test('Next configs always apply CLI telemetry disable and never read HITLY_TELEMETRY', () => {
+  for (const rel of ['../next.config.mjs', '../../app/next.config.mjs']) {
+    const src = readFileSync(join(here, rel), 'utf8')
+    assert.match(src, /disable-cli-telemetry/, rel)
+    assert.match(src, /applyCliTelemetryDisabled/, rel)
+    assert.doesNotMatch(src, /HITLY_TELEMETRY/, rel)
   }
 })
 
-test('with-hitly-telemetry.sh defaults Next and Turbo telemetry disabled', () => {
-  assert.equal(printDisabled({ HITLY_TELEMETRY: undefined, NEXT_TELEMETRY_DISABLED: undefined, TURBO_TELEMETRY_DISABLED: undefined }), '1|1')
-  assert.equal(printDisabled({ HITLY_TELEMETRY: '', NEXT_TELEMETRY_DISABLED: undefined, TURBO_TELEMETRY_DISABLED: undefined }), '1|1')
-  assert.equal(printDisabled({ HITLY_TELEMETRY: '0', NEXT_TELEMETRY_DISABLED: undefined, TURBO_TELEMETRY_DISABLED: undefined }), '1|1')
+test('wrapper keeps Next and Turbo telemetry disabled whether HITLY_TELEMETRY is set or not', () => {
+  assert.equal(printDisabled({ HITLY_TELEMETRY: undefined, NEXT_TELEMETRY_DISABLED: '0', TURBO_TELEMETRY_DISABLED: '0' }), '1|1')
+  assert.equal(printDisabled({ HITLY_TELEMETRY: '1', NEXT_TELEMETRY_DISABLED: '0', TURBO_TELEMETRY_DISABLED: '0' }), '1|1')
+  assert.equal(printDisabled({ HITLY_TELEMETRY: 'true', NEXT_TELEMETRY_DISABLED: undefined, TURBO_TELEMETRY_DISABLED: undefined }), '1|1')
 })
 
-test('with-hitly-telemetry.sh leaves Next and Turbo telemetry on when HITLY_TELEMETRY is 1 or true', () => {
-  assert.equal(printDisabled({ HITLY_TELEMETRY: '1', NEXT_TELEMETRY_DISABLED: '1', TURBO_TELEMETRY_DISABLED: '1' }), '|')
-  assert.equal(printDisabled({ HITLY_TELEMETRY: 'true', NEXT_TELEMETRY_DISABLED: '1', TURBO_TELEMETRY_DISABLED: '1' }), '|')
-  assert.equal(printDisabled({ HITLY_TELEMETRY: '1 ', NEXT_TELEMETRY_DISABLED: '1', TURBO_TELEMETRY_DISABLED: '1' }), '|')
-  assert.equal(printDisabled({ HITLY_TELEMETRY: ' true', NEXT_TELEMETRY_DISABLED: '1', TURBO_TELEMETRY_DISABLED: '1' }), '|')
+test('next.config path keeps Next and Turbo telemetry disabled whether HITLY_TELEMETRY is set or not', async () => {
+  const helperUrl = pathToFileURL(join(repoRoot, 'scripts/disable-cli-telemetry.mjs')).href
+  const { applyCliTelemetryDisabled: applyFromNextConfig } = await import(helperUrl)
+  for (const flag of [undefined, '1']) {
+    const env: Record<string, string | undefined> = {
+      HITLY_TELEMETRY: flag,
+      NEXT_TELEMETRY_DISABLED: '0',
+      TURBO_TELEMETRY_DISABLED: '0',
+    }
+    applyFromNextConfig(env)
+    assert.equal(env.NEXT_TELEMETRY_DISABLED, '1', `HITLY_TELEMETRY=${String(flag)}`)
+    assert.equal(env.TURBO_TELEMETRY_DISABLED, '1', `HITLY_TELEMETRY=${String(flag)}`)
+  }
 })
