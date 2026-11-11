@@ -34,3 +34,15 @@ Reveal, copy, or regenerate the resume secret on Config. It is not the ingest AP
 Workspace owner/admin can open every project. Members only see projects they are added to. Project admin cannot invite people to the workspace.
 
 Home and Inbox list work items from **all visible projects** in the current workspace. Opening a work item from Inbox stays on `/inbox/:id`; opening it from a project stays on `/projects/:id/item/:itemId`.
+
+## Status
+
+A project is `live`, `paused`, or `archived`. Workspace admins change this on Config (web only; not MCP).
+
+| Status | New requests | Pending items | Inbox and lists |
+| --- | --- | --- | --- |
+| `live` | Accepted | Decide as usual | Visible |
+| `paused` | Refused (`409`, `{ "error": "project paused", "code": "project_paused" }`) | Decide as usual | Visible |
+| `archived` | Refused (`409`, `{ "error": "project archived", "code": "project_archived" }`) | Read-only (no decide, no edits) | Hidden |
+
+Unarchive restores `live`. Delete is allowed only after archive (in-flight items go with the project). On plans that do not offer pause/archive, Config offers direct delete: type the project name to confirm.

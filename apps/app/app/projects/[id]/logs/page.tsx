@@ -5,6 +5,7 @@ import { AppShell } from '@/components/app-shell'
 import { JsonDisclosure } from '@/components/json-disclosure'
 import { ProjectTabs } from '@/components/project-tabs'
 import { asOriginRef, originSummary } from '@/lib/origin'
+import { ProjectHeading, ProjectStatusBanner } from '@/components/project-status-banner'
 import { requireVisibleProject } from '@/lib/project-page'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
 import { withAppTenant } from '@/lib/context'
@@ -24,8 +25,9 @@ export default async function ProjectLogsPage({ params }: { params: Promise<{ id
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
-      <h1 className="text-2xl font-semibold">{project.name}</h1>
+      <ProjectHeading name={project.name} status={project.status} />
       <ProjectTabs projectId={id} current="Logs" />
+      <ProjectStatusBanner status={project.status} />
       <ul className="mt-6 max-w-3xl divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
         {events.length === 0 ? (
           <li className="text-zinc-500">No events yet. Ingest an approval to see logs.</li>

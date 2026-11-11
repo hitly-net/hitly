@@ -4,6 +4,7 @@ import { projectChannels } from '@hitly/db/schema'
 import { toggleProjectChannel } from '@/actions/projects'
 import { AppShell } from '@/components/app-shell'
 import { ProjectTabs } from '@/components/project-tabs'
+import { ProjectHeading, ProjectStatusBanner } from '@/components/project-status-banner'
 import { canAdminProject } from '@/lib/rbac'
 import { requireVisibleProject } from '@/lib/project-page'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
@@ -23,8 +24,9 @@ export default async function ProjectChannelsPage({ params }: { params: Promise<
 
   return (
     <AppShell project={{ id: project.id, name: project.name }}>
-      <h1 className="text-2xl font-semibold">{project.name}</h1>
+      <ProjectHeading name={project.name} status={project.status} />
       <ProjectTabs projectId={id} current="Channels" />
+      <ProjectStatusBanner status={project.status} />
       <p className="mt-4 text-sm text-zinc-500">
         How assignees learn there is a work item. Decisions stay in the inbox. Slack and Telegram adapters come later.
       </p>
@@ -36,7 +38,7 @@ export default async function ProjectChannelsPage({ params }: { params: Promise<
               <p className="text-xs text-zinc-500">{channel.enabled ? 'Enabled' : 'Disabled'}</p>
             </div>
             <form action={toggleProjectChannel.bind(null, id, channel.id, !channel.enabled)}>
-              <button type="submit" className="text-xs underline">
+              <button type="submit" disabled={project.status === 'archived'} className="text-xs underline disabled:opacity-50">
                 {channel.enabled ? 'Disable' : 'Enable'}
               </button>
             </form>

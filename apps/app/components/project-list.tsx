@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import type { PluginId } from '@hitly/core'
-import { PluginMark, pluginBrand } from '@hitly/ui'
+import { Badge, PluginMark, pluginBrand } from '@hitly/ui'
 import { CreateProjectModal } from '@/components/create-project-modal'
 
 export type ProjectListItem = {
@@ -11,6 +11,7 @@ export type ProjectListItem = {
   name: string
   description: string | null
   plugin: PluginId
+  status?: string
 }
 
 export function ProjectList({
@@ -57,7 +58,14 @@ export function ProjectList({
                   <PluginMark plugin={project.plugin} className="h-8 w-8" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{project.name}</p>
+                  <p className="flex items-center gap-2 truncate font-medium">
+                    <span className="truncate">{project.name}</span>
+                    {project.status && project.status !== 'live' ? (
+                      <Badge variant={project.status === 'paused' ? 'warning' : 'secondary'} className="capitalize">
+                        {project.status}
+                      </Badge>
+                    ) : null}
+                  </p>
                   {project.description ? (
                     <p className="truncate text-xs text-zinc-500">{project.description}</p>
                   ) : null}
