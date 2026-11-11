@@ -109,11 +109,11 @@ Query: `scope=all|open|closed`, `q`, `projectId`, `limit` (1–200, default 100)
 
 `GET /api/v1/inbox/summary` returns `{ pending, failedResume, decidedToday, projectCount }`.
 
-`GET /api/v1/approvals/:id` (session cookie or reviewer Bearer token) returns envelope, origin, `originFields`, decisions, `canAct`, and — when the item is actionable for this reviewer — `openedRefs`.
+`GET /api/v1/approvals/:id` (session cookie or reviewer Bearer token) returns envelope, origin, `originFields`, decisions, `canAct`, top-level `answerSchema` (the stored ask_user schema, or `null` when the request has none), and — when the item is actionable for this reviewer — `openedRefs`. `answerSchema` stays nested on `envelope.answerSchema` for existing clients.
 
 `openedRefs` is the gating keys (hitl-spec 3.7) **this** reviewer has already recorded opens for. It is built from `opened` audit events written by `POST /api/v1/approvals/:id/opens`. Reviewer clients hydrate the must-open checklist from it so re-entering an approval does not force opening every item again. The field is omitted when `canAct` is false. The host still re-validates decide against the recorded events, not against this field.
 
-A **project** API key on the same route returns the requester view. It keeps the origin-poll fields `{ id, status, decision?, response?, presentedAt }` that Hermes polls while `present()` waits, and adds:
+A **project** API key on the same route returns the requester view. It keeps the origin-poll fields `{ id, status, decision?, response?, presentedAt, answerSchema }` that Hermes polls while `present()` waits (`answerSchema` is the stored ask_user schema, or `null` when the request has none), and adds:
 
 - `hitl`: the `hitl/response/v0` object once the request is closed (`null` while it is open). `status` is `answered` (accept and edit carry `value: "approve"`, reject `value: "reject"`, respond carries the reply text), `declined` (ignore), `cancelled` or `expired`. `decidedBy` is the reviewer's user id, never their name or email. `signature` is `null` for now. HITL<sub><i>y</i></sub> specifics sit in `_meta` under `net.hitly/…` keys: `net.hitly/decision`, `net.hitly/editedArgs` (edit only), `net.hitly/cancelledBy` (`requester` or `reviewer`).
 - `state`: the current status, with an overdue `pending` request reported as `expired`.
