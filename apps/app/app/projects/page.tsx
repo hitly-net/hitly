@@ -3,7 +3,7 @@ import { projects } from '@hitly/db/schema'
 import { AppShell } from '@/components/app-shell'
 import { ProjectList } from '@/components/project-list'
 import { withAppTenant } from '@/lib/context'
-import { canManageWorkspace, listVisibleProjectIds } from '@/lib/rbac'
+import { canManageWorkspace, listArchivedProjects, listVisibleProjectIds } from '@/lib/rbac'
 import { requireDb } from '@/lib/tenant'
 
 export const metadata = { title: 'Projects' }
@@ -24,11 +24,13 @@ export default async function ProjectsPage() {
             name: projects.name,
             description: projects.description,
             plugin: projects.plugin,
+            status: projects.status,
           })
           .from(projects)
           .where(inArray(projects.id, ids))
           .orderBy(asc(projects.name))
   const canCreate = canManageWorkspace(role)
+  const archived = await listArchivedProjects({ workspaceId: workspace.id, workspaceRole: role })
 
   return (
     <AppShell>
@@ -39,6 +41,13 @@ export default async function ProjectsPage() {
         </div>
       </div>
       <ProjectList projects={list} canCreate={canCreate} />
+      {archived.length > 0 ? (
+        <div className="mt-10">
+          <h2 className="text-lg font-semibold">Archived</h2>
+          <p className="mt-1 text-sm text-zinc-500">Hidden from the inbox. Unarchive from Config to restore.</p>
+          <ProjectList projects={archived} canCreate={false} />
+        </div>
+      ) : null}
     </AppShell>
   )
   })

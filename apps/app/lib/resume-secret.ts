@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { projects } from '@hitly/db/schema'
 import { generateResumeSecret } from './keys'
+import { mutationBlockedForProjectStatus } from './project-lifecycle'
 import { requireDb, requireTenantWorkspaceId } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 
@@ -9,6 +10,9 @@ export async function ensureProjectResumeSecret(project: typeof projects.$inferS
   const credentials = await decodeTenantJson(workspaceId, project.credentials)
   const existing = typeof credentials.resumeSecret === 'string' ? credentials.resumeSecret.trim() : ''
   if (existing) return { project: { ...project, credentials }, resumeSecret: existing }
+  if (mutationBlockedForProjectStatus(project.status)) {
+    return { project: { ...project, credentials }, resumeSecret: '' }
+  }
   const resumeSecret = generateResumeSecret()
   const next = { ...credentials, resumeSecret }
   await requireDb()
@@ -28,6 +32,8 @@ export async function rotateProjectResumeSecret(projectId: string) {
     .limit(1)
   const project = rows[0]
   if (!project) return { error: 'Project not found' as const }
+  const archived = mutationBlockedForProjectStatus(project.status)
+  if (archived) return { error: archived.error }
   const credentials = await decodeTenantJson(workspaceId, project.credentials)
   const resumeSecret = generateResumeSecret()
   const next = { ...credentials, resumeSecret }
