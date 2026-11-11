@@ -1,6 +1,7 @@
 import { auth } from '@/lib/auth'
 import { withNativeAuthOrigin } from '@/lib/cors'
 import { holdPasswordSignInIfMfa } from '@/lib/mfa-sign-in'
+import { isPasskeyPluginManagementPath } from '@/lib/passkey'
 import { toNextJsHandler } from 'better-auth/next-js'
 import { NextResponse } from 'next/server'
 
@@ -22,6 +23,12 @@ export async function handleAuthRequest(
   request: Request,
   run: (request: Request) => Promise<Response>,
 ): Promise<Response> {
+  // Register / list / rename / delete go through /api/session/passkey so
+  // they can require the current password. The plugin's own management
+  // paths would skip that check.
+  if (isPasskeyPluginManagementPath(request.url)) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
   const response = await run(withNativeAuthOrigin(request))
   if (response instanceof Response) {
     if (response.status === 404) return NextResponse.json({ error: 'Not found' }, { status: 404 })

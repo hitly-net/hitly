@@ -66,7 +66,7 @@ export function AuthForm({
         type="email"
         required
         placeholder="Email"
-        autoComplete="username"
+        autoComplete={action.includes('sign-up') ? 'username' : 'username webauthn'}
         defaultValue={fixedEmail}
         readOnly={fixedEmail !== undefined}
         className="h-10 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />

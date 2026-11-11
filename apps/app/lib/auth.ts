@@ -2,6 +2,8 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { nextCookies } from 'better-auth/next-js'
 import { bearer } from 'better-auth/plugins'
+import { passkey } from '@better-auth/passkey'
+import { eq } from 'drizzle-orm'
 import { socialProviders } from '@hitly/cloud/auth/providers'
 import * as schema from '@hitly/db/schema'
 import { db } from './db'
@@ -14,6 +16,7 @@ import { gateAccountCreation } from './invites'
 import { resolveAuthSecret } from './auth-secret'
 import { trustedProxyAuthOptions } from './trusted-proxies'
 import { authLogger, handleAuthApiError } from './auth-logging'
+import { webAuthnRelyingParty } from './webauthn-rp'
 
 export { resolveAuthSecret } from './auth-secret'
 
@@ -36,6 +39,7 @@ function createAuth(database: NonNullable<typeof db>) {
         session: schema.sessions,
         account: schema.accounts,
         verification: schema.verifications,
+        passkey: schema.passkeys,
       },
     }),
     emailAndPassword: emailAndPasswordOptions(appUrl, sendMail),
@@ -75,7 +79,25 @@ function createAuth(database: NonNullable<typeof db>) {
     onAPIError: { onError: handleAuthApiError },
     // advanced.ipAddress.trustedProxies from HITLY_TRUSTED_PROXIES; nothing when unset.
     ...trustedProxyAuthOptions(),
-    plugins: [bearer(), nextCookies()],
+    plugins: [
+      bearer(),
+      nextCookies(),
+      passkey({
+        ...webAuthnRelyingParty(),
+        authentication: {
+          afterVerification: async ({ clientData }) => {
+            try {
+              await database
+                .update(schema.passkeys)
+                .set({ lastUsedAt: new Date() })
+                .where(eq(schema.passkeys.credentialID, clientData.id))
+            } catch {
+              // Sign-in already succeeded; last-used is best-effort.
+            }
+          },
+        },
+      }),
+    ],
   })
 }
 
