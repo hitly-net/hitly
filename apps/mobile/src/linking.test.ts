@@ -78,6 +78,22 @@ test('parsePushData: approval type with approvalId', () => {
   })
 })
 
+test('parsePushData: itemId opens the pending item', () => {
+  const result = parsePushData({ type: 'approval', itemId: 'apr_item' })
+  assert.deepEqual(result, {
+    approvalId: 'apr_item',
+    instanceUrl: undefined,
+  })
+})
+
+test('parsePushData: itemId wins over approvalId', () => {
+  const result = parsePushData({ type: 'approval', itemId: 'apr_item', approvalId: 'apr_old' })
+  assert.deepEqual(result, {
+    approvalId: 'apr_item',
+    instanceUrl: undefined,
+  })
+})
+
 test('parsePushData: approval type with approvalId and instanceUrl', () => {
   const result = parsePushData({ type: 'approval', approvalId: 'apr_123', instanceUrl: 'https://cloud.hitly.net' })
   assert.deepEqual(result, {

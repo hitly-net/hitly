@@ -29,7 +29,12 @@ export function parseAttentionLink(url: string | null | undefined): AttentionLin
 
 export function parsePushData(data: Record<string, unknown> | undefined): AttentionLink | null {
   if (!data || data.type !== 'approval') return null
-  const approvalId = typeof data.approvalId === 'string' ? data.approvalId : null
+  const approvalId =
+    typeof data.itemId === 'string'
+      ? data.itemId
+      : typeof data.approvalId === 'string'
+        ? data.approvalId
+        : null
   if (!approvalId) return null
   const instanceUrl = typeof data.instanceUrl === 'string' ? normalizeBaseUrl(data.instanceUrl) : undefined
   return { approvalId, instanceUrl }
