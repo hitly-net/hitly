@@ -49,11 +49,14 @@ export async function expireOverdueApprovals(options?: ExpireSweepOptions) {
         )
       if (rows.length === 0) return 0
       await options?.afterSelect?.(space.id, rows)
-      // Guarded flip, returning the ids this sweep actually won: a row a
-      // concurrent read-path settle already flipped matches nothing here.
-      // The `expired` callback goes ONLY to flip winners (same guarded-UPDATE
-      // winner rule as settleExpiredApproval) - delivering it for every
-      // SELECTed row double-fired it whenever a read settled in between.
+      // Guarded flip limited to the SELECTed ids, returning the rows this
+      // sweep actually won: a row a concurrent read-path settle already
+      // flipped matches nothing here, and a row that only became overdue
+      // after the SELECT is left for the next sweep (never flipped without
+      // its callback). The `expired` callback goes ONLY to flip winners
+      // (same guarded-UPDATE winner rule as settleExpiredApproval) -
+      // delivering it for every SELECTed row double-fired it whenever a
+      // read settled in between.
       const flipped = await tenantDb
         .update(approvals)
         .set({ status: 'expired', updatedAt: now })
@@ -63,6 +66,10 @@ export async function expireOverdueApprovals(options?: ExpireSweepOptions) {
             eq(approvals.status, 'pending'),
             isNotNull(approvals.expiresAt),
             lt(approvals.expiresAt, now),
+            inArray(
+              approvals.id,
+              rows.map((row) => row.id),
+            ),
           ),
         )
         .returning({ id: approvals.id })
