@@ -1,9 +1,10 @@
 /**
  * Signed-in password change (client-safe half): the endpoint constant, the
- * fixed messages, the notification email builder, and the client submit
- * helper used by the security page's form. The route handler that touches
- * auth, the database and the mailer lives in lib/password-change-route.ts,
- * so client components import only this file (same split as the reset flow,
+ * fixed messages, and the client submit helper used by the security page's
+ * form. The branded password-changed notification lives in
+ * lib/password-change-emails.ts, and the route handler that touches auth,
+ * the database and the mailer lives in lib/password-change-route.ts, so
+ * client components import only this file (same split as the reset flow,
  * whose client module stays free of server imports).
  *
  * The change itself runs through Better Auth's /change-password endpoint.
@@ -19,7 +20,6 @@
 import {
   RESET_REQUEST_NETWORK_MESSAGE,
   passwordPolicyMessage,
-  type MailFn,
 } from './password-reset'
 
 export const CHANGE_PASSWORD_ENDPOINT = '/api/session/change-password'
@@ -30,41 +30,6 @@ export const CHANGE_PASSWORD_THROTTLED_MESSAGE = 'Too many attempts. Please try 
 export const CHANGE_PASSWORD_FAILED_MESSAGE = 'Could not change the password. Check the details and try again.'
 export const CHANGE_PASSWORD_RETRY_MESSAGE = 'Could not change the password right now. Try again in a moment.'
 export const CHANGE_PASSWORD_SUCCEEDED_MESSAGE = 'Your password has been updated.'
-
-/**
- * The notification email sent after a successful change. Like the reset
- * email (buildResetEmail) it carries no secret: no token, no link, and
- * never any password.
- */
-export function buildPasswordChangedEmail({ to }: { to: string }) {
-  return {
-    to,
-    subject: 'HITLy: Your password was changed',
-    text: [
-      'The password for your HITLy account was changed.',
-      '',
-      'All other sessions were signed out; this device stays signed in.',
-      '',
-      'If this was not you, reset your password immediately from the HITLy sign-in page.',
-    ].join('\n'),
-  }
-}
-
-/**
- * Builds the password-changed notifier on the app's mail path (the same
- * send function the reset email uses). Sending is not awaited: the reply
- * does not depend on delivery.
- */
-export function createSendPasswordChangedNotification(send: MailFn) {
-  return async ({ email }: { email: string }) => {
-    void send(buildPasswordChangedEmail({ to: email })).catch((error: unknown) => {
-      console.error(
-        '[hitly password-change] Failed to send password-changed email:',
-        error instanceof Error ? error.message : error,
-      )
-    })
-  }
-}
 
 export type PasswordChangeOutcome = { ok: true } | { ok: false; message: string }
 

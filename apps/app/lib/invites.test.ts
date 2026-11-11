@@ -199,7 +199,8 @@ describe('invite email and token storage', () => {
     assert.equal(message.to, address)
     assert.ok(message.text.includes(`${APP_URL}/invite/${token}`), 'email links to <app>/invite/<token>')
     assert.equal(buildInviteUrl(APP_URL, token), `${APP_URL}/invite/${token}`)
-    assert.ok(message.text.startsWith("You've been invited"))
+    assert.ok(message.text.includes("You've been invited to join Invite Co on HITLy."), 'branded invitation wording')
+    assert.ok(message.html?.includes('Open in HITLy'), 'branded HTML with the primary button')
     assert.ok(!message.text.includes('/signup'), 'no bare signup link')
     assert.match(message.text, new RegExp(`expires in ${INVITE_TTL_DAYS} days`))
 

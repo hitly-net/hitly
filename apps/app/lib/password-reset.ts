@@ -1,6 +1,8 @@
 /**
- * Password reset: shared constants, the email Better Auth sends, and the
- * client-side request helper used by the forgot-password form.
+ * Password reset: shared constants and the client-side request helpers used
+ * by the forgot-password form. The branded reset email itself (which renders
+ * HTML) lives in lib/password-reset-emails.ts so client components never
+ * import the mail renderer.
  *
  * Better Auth 1.6 serves the request at /request-password-reset (the older
  * /forget-password path is no longer mounted), and /reset-password expects
@@ -30,22 +32,6 @@ export function buildResetPageUrl(appUrl: string, token: string): string {
   return url.toString()
 }
 
-export function buildResetEmail({ to, link }: { to: string; link: string }) {
-  return {
-    to,
-    subject: 'HITLy: Reset your password',
-    text: [
-      'Someone asked to reset the password for your HITLy account.',
-      '',
-      'Open this link to choose a new password (it expires in one hour):',
-      '',
-      link,
-      '',
-      'If you did not ask for this, you can ignore this email.',
-    ].join('\n'),
-  }
-}
-
 export type MailFn = (message: { to: string; subject: string; text: string }) => Promise<unknown>
 
 /**
@@ -60,21 +46,6 @@ export function passwordPolicyMessage(code: string | undefined): string | null {
   if (code === 'PASSWORD_TOO_SHORT') return `Use at least ${MIN_PASSWORD_LENGTH} characters.`
   if (code === 'PASSWORD_TOO_LONG') return 'That password is too long.'
   return null
-}
-
-/**
- * Builds the `sendResetPassword` hook for Better Auth. The email links straight
- * to the app's reset page (not the API callback), so it works whether or not
- * the client passed a redirect URL. Sending is not awaited, so the response
- * time and body are the same whether or not the account exists.
- */
-export function createSendResetPassword(appUrl: string, send: MailFn) {
-  return async ({ user, token }: { user: { email: string }; url: string; token: string }) => {
-    const message = buildResetEmail({ to: user.email, link: buildResetPageUrl(appUrl, token) })
-    void send(message).catch((error: unknown) => {
-      console.error('[hitly password-reset] Failed to send reset email:', error instanceof Error ? error.message : error)
-    })
-  }
 }
 
 export type ResetRequestOutcome =

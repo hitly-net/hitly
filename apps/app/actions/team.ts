@@ -13,6 +13,7 @@ import { newId } from '@/lib/ids'
 import { canManageWorkspace } from '@/lib/rbac'
 import { requireDb } from '@/lib/require-db'
 import { withTenant } from '@/lib/tenant'
+import { renderAddedToWorkspaceEmail } from '@hitly/mail'
 import { sendMail } from '@/lib/mail'
 import { createAndSendWorkspaceInvite, resendWorkspaceInvite, revokeWorkspaceInvite } from '@/lib/invites'
 import { findUserByEmail } from '@/lib/workspace'
@@ -20,11 +21,8 @@ import { findUserByEmail } from '@/lib/workspace'
 const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
 async function sendAddedToWorkspaceMail(args: { to: string; workspaceName: string }) {
-  await sendMail({
-    to: args.to,
-    subject: `You've been added to ${args.workspaceName} on HITLy`,
-    text: `You've been added to ${args.workspaceName}.\n\n${APP_URL}\n`,
-  })
+  const rendered = await renderAddedToWorkspaceEmail({ appUrl: APP_URL, workspaceName: args.workspaceName })
+  await sendMail({ to: args.to, ...rendered })
 }
 
 export async function inviteToWorkspace(formData: FormData) {

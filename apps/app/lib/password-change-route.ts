@@ -14,7 +14,7 @@
 import { NextResponse } from 'next/server'
 import { auth } from './auth'
 import { CHANGE_PASSWORD_LIMITED_LOG, changePasswordAttemptLimiter } from './change-password-limit'
-import { createSendPasswordChangedNotification } from './password-change'
+import { createSendPasswordChangedNotification } from './password-change-emails'
 import { sendMail } from './mail'
 import { MIN_PASSWORD_LENGTH } from './password-reset'
 import { resetCheckClientKey } from './reset-check-limit'

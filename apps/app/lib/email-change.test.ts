@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { NextRequest } from 'next/server'
 import { and, eq, inArray, like } from 'drizzle-orm'
 import { accounts, memberships, pendingEmailChanges, sessions, users, workspaces } from '@hitly/db/schema'
-import { clearSentMail, sentMail } from '@hitly/mail'
+import { clearSentMail as clearSentMailMemory, sendMail, sentMail } from '@hitly/mail'
 import { auth } from './auth'
 import { db, pool } from './db'
 import {
@@ -35,13 +35,32 @@ import {
   VERIFY_EMAIL_CHANGE_INVALID_MESSAGE,
   VERIFY_EMAIL_CHANGE_PAGE,
   buildEmailChangePageUrl,
+  submitEmailChange,
+  submitEmailChangeVerification,
+} from './email-change'
+import {
   buildEmailChangeVerificationEmail,
   buildEmailChangedNotice,
   createSendEmailChangeVerification,
   createSendEmailChangedNotice,
-  submitEmailChange,
-  submitEmailChangeVerification,
-} from './email-change'
+} from './email-change-emails'
+
+// Branded emails render on detached fire-and-forget chains; track them so
+// assertions drain pending sends deterministically instead of sleeping.
+const inflight = new Set<Promise<unknown>>()
+function trackMail(chain: Promise<unknown>) {
+  inflight.add(chain)
+  void chain.finally(() => inflight.delete(chain))
+}
+async function drainMail() {
+  while (inflight.size > 0) {
+    await Promise.allSettled([...inflight])
+  }
+}
+async function clearSentMail() {
+  await drainMail()
+  clearSentMailMemory()
+}
 import {
   EMAIL_CHANGE_ATTEMPT_LIMIT,
   createEmailChangeAttemptLimiter,
@@ -101,7 +120,7 @@ function email(local: string) {
 }
 
 async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await drainMail()
 }
 
 async function createUser(address: string, name = 'Alex') {
@@ -166,6 +185,9 @@ function changeRequest(cookie: string | undefined, body: unknown, extraHeaders: 
 function routeMocks(overrides: Partial<EmailChangeRouteDeps> = {}): EmailChangeRouteDeps {
   return {
     log: () => {},
+    // Same defaults the route would build, but tracked so tests can drain.
+    sendVerification: createSendEmailChangeVerification(APP_URL, sendMail, { track: trackMail }),
+    sendChangedNotice: createSendEmailChangedNotice(sendMail, { track: trackMail }),
     ...overrides,
   }
 }
@@ -182,7 +204,7 @@ async function startPendingChange(localOld: string, localNew: string, deps: Emai
   const newAddress = email(localNew)
   await createUser(oldAddress)
   const cookie = await signInCookie(oldAddress)
-  clearSentMail()
+  await clearSentMail()
   const response = await handleEmailChange(
     changeRequest(cookie, { currentPassword: PASSWORD, newEmail: newAddress }),
     { ...routeMocks(), allow: () => true, ...deps },
@@ -236,7 +258,7 @@ describe('changing the email while signed in', () => {
     const newAddress = email('keep-new')
     await createUser(oldAddress)
     const cookie = await signInCookie(oldAddress)
-    clearSentMail()
+    await clearSentMail()
 
     const response = await handleEmailChange(
       changeRequest(cookie, { currentPassword: PASSWORD, newEmail: newAddress }),
@@ -282,7 +304,7 @@ describe('changing the email while signed in', () => {
 
     const notice = sentMail.find((message) => message.to === oldAddress)
     assert.ok(notice, 'a notice is sent to the previous address')
-    const expectedNotice = buildEmailChangedNotice({ to: oldAddress })
+    const expectedNotice = await buildEmailChangedNotice({ to: oldAddress })
     assert.equal(notice.subject, expectedNotice.subject)
     assert.equal(notice.text, expectedNotice.text)
     assert.ok(!/https?:\/\//.test(notice.text), 'no link in the old-address notice')
@@ -293,7 +315,7 @@ describe('changing the email while signed in', () => {
     const address = email('wrong-password')
     await createUser(address)
     const cookie = await signInCookie(address)
-    clearSentMail()
+    await clearSentMail()
     const response = await handleEmailChange(
       changeRequest(cookie, { currentPassword: 'not-the-password', newEmail: email('unused-new') }),
       routeMocks(),
@@ -312,7 +334,7 @@ describe('changing the email while signed in', () => {
     const newAddress = email('expired-new')
     await createUser(oldAddress)
     const cookie = await signInCookie(oldAddress)
-    clearSentMail()
+    await clearSentMail()
     await handleEmailChange(changeRequest(cookie, { currentPassword: PASSWORD, newEmail: newAddress }), routeMocks())
     await settle()
     const token = tokenFrom(sentMail[0]!)
@@ -335,7 +357,7 @@ describe('changing the email while signed in', () => {
     const newAddress = email('reuse-new')
     await createUser(oldAddress)
     const cookie = await signInCookie(oldAddress)
-    clearSentMail()
+    await clearSentMail()
     await handleEmailChange(changeRequest(cookie, { currentPassword: PASSWORD, newEmail: newAddress }), routeMocks())
     await settle()
     const token = tokenFrom(sentMail[0]!)
@@ -353,11 +375,11 @@ describe('changing the email while signed in', () => {
     const secondNew = email('replace-second')
     await createUser(oldAddress)
     const cookie = await signInCookie(oldAddress)
-    clearSentMail()
+    await clearSentMail()
     await handleEmailChange(changeRequest(cookie, { currentPassword: PASSWORD, newEmail: firstNew }), routeMocks())
     await settle()
     const firstToken = tokenFrom(sentMail[0]!)
-    clearSentMail()
+    await clearSentMail()
     await handleEmailChange(changeRequest(cookie, { currentPassword: PASSWORD, newEmail: secondNew }), routeMocks())
     await settle()
     const secondToken = tokenFrom(sentMail[0]!)
@@ -380,7 +402,7 @@ describe('changing the email while signed in', () => {
     const newAddress = email('race-new')
     await createUser(oldAddress)
     const cookie = await signInCookie(oldAddress)
-    clearSentMail()
+    await clearSentMail()
     await handleEmailChange(changeRequest(cookie, { currentPassword: PASSWORD, newEmail: newAddress }), routeMocks())
     await settle()
     const token = tokenFrom(sentMail[0]!)
@@ -400,7 +422,7 @@ describe('changing the email while signed in', () => {
     const newAddress = email('case-new')
     await createUser(oldAddress)
     const cookie = await signInCookie(oldAddress)
-    clearSentMail()
+    await clearSentMail()
     await handleEmailChange(changeRequest(cookie, { currentPassword: PASSWORD, newEmail: newAddress }), routeMocks())
     await settle()
     const token = tokenFrom(sentMail[0]!)
@@ -430,7 +452,7 @@ describe('changing the email while signed in', () => {
     await createUser(requester)
     await createUser(taken, 'Already')
     const cookie = await signInCookie(requester)
-    clearSentMail()
+    await clearSentMail()
 
     const takenResponse = await handleEmailChange(
       changeRequest(cookie, { currentPassword: PASSWORD, newEmail: taken }),
@@ -707,16 +729,16 @@ describe('email change wiring (static)', () => {
     assert.notEqual(hashEmailChangeToken(a), a)
   })
 
-  it('the confirmation builder puts the token only in the link', () => {
+  it('the confirmation builder puts the token only in the link', async () => {
     const token = generateEmailChangeToken()
     tokensSeen.push(token)
-    const mail = buildEmailChangeVerificationEmail({
+    const mail = await buildEmailChangeVerificationEmail({
       to: email('builder'),
       link: buildEmailChangePageUrl(APP_URL, token),
     })
     assert.ok(mail.text.includes(token))
     assert.equal(mail.text.split(token).length - 1, 1)
-    const notice = buildEmailChangedNotice({ to: email('old') })
+    const notice = await buildEmailChangedNotice({ to: email('old') })
     assert.ok(!notice.text.includes(token))
     assert.ok(!/https?:\/\//.test(notice.text))
   })
@@ -729,12 +751,19 @@ describe('email change wiring (static)', () => {
     }
     const token = generateEmailChangeToken()
     tokensSeen.push(token)
-    await createSendEmailChangeVerification(APP_URL, send)({ to: email('send'), token })
-    await createSendEmailChangedNotice(send)({ to: email('notice') })
+    await createSendEmailChangeVerification(APP_URL, send, { track: trackMail })({ to: email('send'), token })
+    await createSendEmailChangedNotice(send, { track: trackMail })({ to: email('notice') })
     await settle()
     assert.equal(outbox.length, 2)
-    assert.deepEqual(outbox[0], buildEmailChangeVerificationEmail({ to: email('send'), link: buildEmailChangePageUrl(APP_URL, token) }))
-    assert.deepEqual(outbox[1], buildEmailChangedNotice({ to: email('notice') }))
+    // The two senders are independent fire-and-forget chains: match by
+    // recipient, not by arrival order.
+    const verifyMail = outbox.find((message) => message.to === email('send'))
+    const noticeMail = outbox.find((message) => message.to === email('notice'))
+    assert.deepEqual(
+      verifyMail,
+      await buildEmailChangeVerificationEmail({ to: email('send'), link: buildEmailChangePageUrl(APP_URL, token) }),
+    )
+    assert.deepEqual(noticeMail, await buildEmailChangedNotice({ to: email('notice') }))
   })
 })
 

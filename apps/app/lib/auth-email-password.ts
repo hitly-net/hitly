@@ -1,4 +1,5 @@
-import { createSendResetPassword, MIN_PASSWORD_LENGTH } from './password-reset'
+import { createSendResetPassword, type MailSendTracker } from './password-reset-emails'
+import { MIN_PASSWORD_LENGTH } from './password-reset'
 import { limitResetEmails } from './reset-request-limit'
 
 type MailFn = Parameters<typeof createSendResetPassword>[1]
@@ -12,13 +13,16 @@ type MailFn = Parameters<typeof createSendResetPassword>[1]
 export function emailAndPasswordOptions(
   appUrl: string,
   send: MailFn,
-  { allowResetEmail }: { allowResetEmail?: (key: string) => boolean } = {},
+  {
+    allowResetEmail,
+    track,
+  }: { allowResetEmail?: (key: string) => boolean; track?: MailSendTracker } = {},
 ) {
   return {
     enabled: true,
     minPasswordLength: MIN_PASSWORD_LENGTH,
     resetPasswordTokenExpiresIn: 60 * 60,
     revokeSessionsOnPasswordReset: true,
-    sendResetPassword: limitResetEmails(createSendResetPassword(appUrl, send), allowResetEmail),
+    sendResetPassword: limitResetEmails(createSendResetPassword(appUrl, send, { track }), allowResetEmail),
   }
 }
