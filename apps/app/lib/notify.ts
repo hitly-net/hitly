@@ -5,7 +5,7 @@ import { logProjectEvent } from './events'
 import { sendMail } from './mail'
 import { listUserDeviceTokens } from './devices'
 import { getApprovalProjectName } from './approval-detail'
-import { pushCopy, sendExpoPush } from './push'
+import { decisionNeededTitle, pushCopy, sendExpoPush } from './push'
 import { requireDb } from './require-db'
 
 const APP_URL = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001'
@@ -56,7 +56,7 @@ export async function notifyAssignee(args: {
     try {
       const result = await sendMail({
         to: assignee.email,
-        subject: `Hitly: ${args.actionName} needs a decision`,
+        subject: decisionNeededTitle(args.actionName),
         text: `A work item is waiting for you.\n\n${APP_URL}/inbox/${args.approvalId}\n`,
       })
       await logProjectEvent({

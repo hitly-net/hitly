@@ -5,7 +5,7 @@ import { sendResend } from './transports/resend'
 import { sendSmtp } from './transports/smtp'
 import type { MailMessage, MailResult, ResolvedMail } from './types'
 
-export const DEFAULT_FROM = 'Hitly <noreply@hitly.net>'
+export const DEFAULT_FROM = 'HITLy <noreply@hitly.net>'
 
 export type { MailMessage, MailResult, TransportName } from './types'
 export { resolveTransportName } from './resolve-transport'

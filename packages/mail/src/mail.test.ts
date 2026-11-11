@@ -51,7 +51,7 @@ test('defaults to console', () => {
 
 test('memory transport records messages', async () => {
   process.env.HITLY_MAIL_TRANSPORT = 'memory'
-  process.env.HITLY_MAIL_FROM = 'Hitly Test <noreply@hitly.net>'
+  process.env.HITLY_MAIL_FROM = 'HITLy Test <noreply@hitly.net>'
   const result = await sendMail({
     to: 'alex@example.com',
     subject: 'Reset your password',
@@ -60,7 +60,19 @@ test('memory transport records messages', async () => {
   assert.deepEqual(result, { delivered: true })
   assert.equal(sentMail.length, 1)
   assert.equal(sentMail[0]?.to, 'alex@example.com')
-  assert.equal(sentMail[0]?.from, 'Hitly Test <noreply@hitly.net>')
+  assert.equal(sentMail[0]?.from, 'HITLy Test <noreply@hitly.net>')
+})
+
+test('default From display name uses HITLy brand', async () => {
+  process.env.HITLY_MAIL_TRANSPORT = 'memory'
+  delete process.env.HITLY_MAIL_FROM
+  const result = await sendMail({
+    to: 'alex@example.com',
+    subject: 'HITLy: ask_user needs a decision',
+    text: 'A work item is waiting for you.',
+  })
+  assert.deepEqual(result, { delivered: true })
+  assert.equal(sentMail[0]?.from, 'HITLy <noreply@hitly.net>')
 })
 
 async function captureInfo(fn: () => Promise<unknown>): Promise<string> {

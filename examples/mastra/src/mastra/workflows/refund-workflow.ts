@@ -10,7 +10,7 @@ const refundInputSchema = z.object({
 
 const approvalStep = createStep({
   id: 'hitly-approval',
-  description: 'Pause for a Hitly reviewer before issuing the refund.',
+  description: 'Pause for a HITLy reviewer before issuing the refund.',
   inputSchema: refundInputSchema,
   outputSchema: refundInputSchema.extend({ approved: z.literal(true) }),
   resumeSchema: z
@@ -42,7 +42,7 @@ const approvalStep = createStep({
           workflowId: 'refund-workflow',
           workflowName: 'Refund workflow',
           stepId: 'hitly-approval',
-          stepName: 'Pause for a Hitly reviewer',
+          stepName: 'Pause for a HITLy reviewer',
           action: { name: 'send-refund', args: { orderId, amount } },
           // Evidence fields for audit trail
           systemId: 'refund-workflow-prod',
@@ -57,7 +57,7 @@ const approvalStep = createStep({
         runId,
         contextMarkdown: `Refund of ${amount} for ${orderId}. ${amount > 1000 ? 'High-value' : 'Standard'} refund requires approval.`,
       })
-      return await suspend({ reason: 'Human approval required in Hitly.' })
+      return await suspend({ reason: 'Human approval required in HITLy.' })
     }
 
     return { orderId, amount, approved: true as const }
@@ -66,7 +66,7 @@ const approvalStep = createStep({
 
 const issueRefundStep = createStep({
   id: 'issue-refund',
-  description: 'Mock sending the refund after Hitly approval.',
+  description: 'Mock sending the refund after HITLy approval.',
   inputSchema: refundInputSchema.extend({ approved: z.literal(true) }),
   outputSchema: z.object({
     sent: z.literal(true),
@@ -84,7 +84,7 @@ const issueRefundStep = createStep({
 
 export const refundWorkflow = createWorkflow({
   id: 'refund-workflow',
-  description: 'Workflow demo: a step suspends until Hitly approves the refund.',
+  description: 'Workflow demo: a step suspends until HITLy approves the refund.',
   inputSchema: refundInputSchema,
   outputSchema: z.object({
     sent: z.boolean(),
