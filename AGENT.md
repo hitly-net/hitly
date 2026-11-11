@@ -109,7 +109,7 @@ const approval = createStep({
           suspendPayload: { reason: `Refund ${amount} for order ${orderId}` },
         },
       )
-      return await suspend({ reason: 'Human approval required in Hitly.' })
+      return await suspend({ reason: 'Human approval required in HITLy.' })
     }
 
     return { orderId, amount, approved: true as const }
@@ -130,7 +130,7 @@ import { notifyHitlyApproval } from '@hitly/plugin-mastra'
 
 export const sendRefundTool = createTool({
   id: 'send-refund',
-  description: 'Issue a refund after a Hitly reviewer approves.',
+  description: 'Issue a refund after a HITLy reviewer approves.',
   inputSchema: z.object({
     orderId: z.string().describe('Order to refund'),
     amount: z.number().describe('Refund amount'),
@@ -169,7 +169,7 @@ export const sendRefundTool = createTool({
         { runId, suspendPayload: { reason: `Refund ${amount} for order ${orderId}` } },
       )
       if (!context.agent?.suspend) throw new Error('Mastra tool context is missing suspend()')
-      return await context.agent.suspend({ reason: 'Human approval required in Hitly.' })
+      return await context.agent.suspend({ reason: 'Human approval required in HITLy.' })
     }
 
     return { sent: true, orderId, amount, message: `Refund of ${amount} issued for order ${orderId}.` }
