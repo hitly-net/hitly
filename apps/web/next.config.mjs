@@ -1,4 +1,7 @@
 import { createMDX } from 'fumadocs-mdx/next'
+import { applyCliTelemetryDisabled } from '../../scripts/disable-cli-telemetry.mjs'
+
+applyCliTelemetryDisabled()
 
 const withMDX = createMDX()
 

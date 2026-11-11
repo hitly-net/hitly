@@ -6,11 +6,11 @@
     "role": "app"
   },
   "scripts": {
-    "dev": "next dev --port 3000",
-    "build": "next build",
-    "start": "next start --port 3000",
+    "dev": "bash ../../scripts/with-hitly-telemetry.sh next dev --port 3000",
+    "build": "bash ../../scripts/with-hitly-telemetry.sh next build",
+    "start": "bash ../../scripts/with-hitly-telemetry.sh next start --port 3000",
     "lint": "eslint",
-    "test": "tsx --test lib/host.test.ts && node --disable-warning=ExperimentalWarning --test --test-concurrency=1 lib/*.test.mts",
+    "test": "tsx --test lib/host.test.ts lib/telemetry.test.ts && node --disable-warning=ExperimentalWarning --test --test-concurrency=1 lib/*.test.mts",
     "typecheck": "tsc --noEmit",
     "postinstall": "fumadocs-mdx"
   },

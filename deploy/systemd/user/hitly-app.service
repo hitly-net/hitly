@@ -7,7 +7,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/hitly
 Environment=NODE_ENV=production
-ExecStart=/bin/bash -lc 'source "$HOME/.nvm/nvm.sh" && exec yarn workspace @hitly/app start --hostname 0.0.0.0'
+Environment=NEXT_TELEMETRY_DISABLED=1
+Environment=TURBO_TELEMETRY_DISABLED=1
+ExecStart=/bin/bash -lc 'source "$HOME/.nvm/nvm.sh" && exec ./scripts/with-hitly-telemetry.sh yarn workspace @hitly/app start --hostname 0.0.0.0'
 Restart=always
 RestartSec=5
 KillMode=mixed

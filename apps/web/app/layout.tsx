@@ -1,10 +1,9 @@
 import { RootProvider } from 'fumadocs-ui/provider/next'
 import { Geist, Geist_Mono } from 'next/font/google'
-import { headers } from 'next/headers'
 import Script from 'next/script'
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
-import { isCloudHost } from '@/lib/host'
+import { plausibleScript } from '@/lib/telemetry'
 import { SITE_URL } from '@/lib/site'
 import './globals.css'
 
@@ -42,19 +41,20 @@ export const metadata: Metadata = {
   },
 }
 
-export default async function Layout({ children }: { children: ReactNode }) {
-  const headersList = await headers()
-  const host = headersList.get('host')
-  const dataDomain = isCloudHost(host) ? 'cloud.hitly.net' : 'hitly.net'
+export default function Layout({ children }: { children: ReactNode }) {
+  // Direct env access so Next inlines NEXT_PUBLIC_* at `yarn build`.
+  const plausible = plausibleScript({
+    HITLY_TELEMETRY: process.env.HITLY_TELEMETRY,
+    NEXT_PUBLIC_PLAUSIBLE_DOMAIN: process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN,
+    NEXT_PUBLIC_PLAUSIBLE_SRC: process.env.NEXT_PUBLIC_PLAUSIBLE_SRC,
+  })
 
   return (
     <html lang="en" className={`${geist.variable} ${geistMono.variable}`} suppressHydrationWarning>
       <body className="flex min-h-screen flex-col font-sans">
-        <Script
-          src="https://click.hitly.net/js/script.js"
-          data-domain={dataDomain}
-          strategy="afterInteractive"
-        />
+        {plausible ? (
+          <Script src={plausible.src} data-domain={plausible.domain} strategy="afterInteractive" />
+        ) : null}
         <RootProvider>{children}</RootProvider>
       </body>
     </html>

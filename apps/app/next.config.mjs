@@ -1,3 +1,7 @@
+import { applyCliTelemetryDisabled } from '../../scripts/disable-cli-telemetry.mjs'
+
+applyCliTelemetryDisabled()
+
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,

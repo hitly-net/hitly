@@ -17,6 +17,24 @@ yarn dev:app
 
 The marketing/docs site is optional (`yarn dev:web`). The Expo reviewer app is `yarn dev:mobile` — see [Mobile](/docs/mobile).
 
+## Telemetry
+
+We don't collect telemetry or usage data anywhere.
+
+Next.js CLI telemetry and Turborepo CLI telemetry are **always off** (`NEXT_TELEMETRY_DISABLED=1` and `TURBO_TELEMETRY_DISABLED=1`), whatever `HITLY_TELEMETRY` says. That is applied on Next config, `yarn` scripts via `scripts/with-hitly-telemetry.sh`, systemd units, and `scripts/systemd/ensure-up.sh`. Docker Compose only runs Postgres, not HITLy. If you add a Dockerfile, set both `*_TELEMETRY_DISABLED=1` in the **build** and **runtime** stages (or run those stages through the wrapper).
+
+`HITLY_TELEMETRY` only turns on the marketing-site Plausible page script. Unset (the default) renders no script tag and makes no analytics request. Only `1` or `true` turns it on. The inbox (`apps/app`, http://localhost:3001) never loads Plausible.
+
+Plausible settings are baked in at **build** time. Changing `HITLY_TELEMETRY`, `NEXT_PUBLIC_PLAUSIBLE_DOMAIN`, or `NEXT_PUBLIC_PLAUSIBLE_SRC` requires a rebuild (`yarn build`); restarting the process is not enough.
+
+When `HITLY_TELEMETRY` is on, Plausible still needs both domain and src from env (no hardcoded defaults). hitly.net example only:
+
+```bash
+HITLY_TELEMETRY=1
+NEXT_PUBLIC_PLAUSIBLE_DOMAIN=hitly.net
+NEXT_PUBLIC_PLAUSIBLE_SRC=https://click.hitly.net/js/script.js
+```
+
 ## Account security
 
 Signed-in users manage email, password, authenticator-app MFA, and passkeys at **Settings → Security**.

@@ -9,6 +9,10 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # Next and Turbo CLIs are always off (HITLY_TELEMETRY does not control them).
+      NEXT_TELEMETRY_DISABLED: '1'
+      TURBO_TELEMETRY_DISABLED: '1'
     services:
       postgres:
         image: postgres:16

@@ -1,3 +1,6 @@
+# Compose only runs Postgres. HITLy Next/Turbo processes are started by yarn /
+# systemd via scripts/with-hitly-telemetry.sh, which always sets
+# NEXT_TELEMETRY_DISABLED=1 and TURBO_TELEMETRY_DISABLED=1.
 services:
   db:
     image: postgres:16
