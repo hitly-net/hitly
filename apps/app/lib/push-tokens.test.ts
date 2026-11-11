@@ -149,6 +149,7 @@ describe('push tokens', { concurrency: false }, () => {
     assert.equal(serialized.includes('do-not-push'), false, 'push payload must not include request args')
     assert.equal(serialized.includes('"amount"'), false, 'push payload must not include request arguments')
     assert.equal(messages[0].title, 'HITLy: refund needs a decision')
+    assert.equal(messages[0].channelId, 'hitly')
   })
 
   it('item creation still succeeds when Expo push fails', async () => {
