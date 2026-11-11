@@ -55,3 +55,10 @@ test('llms output exposes no internal hosts or private IPs', async () => {
     for (const pattern of BANNED) assert.ok(!pattern.test(body), `forbidden match: ${pattern}`)
   }
 })
+
+test('llms.txt links to the agent guide, MCP docs and the sitemap', async () => {
+  const body = await bodyOf(llmsTxt())
+  assert.ok(body.includes('https://hitly.net/agents.md'), 'llms.txt missing /agents.md link')
+  assert.ok(body.includes('https://hitly.net/docs/mcp'), 'llms.txt missing /docs/mcp link')
+  assert.ok(body.includes('https://hitly.net/sitemap.xml'), 'llms.txt missing sitemap link')
+})
