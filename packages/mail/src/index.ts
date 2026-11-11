@@ -10,6 +10,9 @@ export const DEFAULT_FROM = 'HITLy <noreply@hitly.net>'
 export type { MailMessage, MailResult, TransportName } from './types'
 export { resolveTransportName } from './resolve-transport'
 export { clearSentMail, sentMail } from './transports/memory'
+export * from './templates/brand'
+export * from './templates/decision-content'
+export * from './templates/messages'
 
 function resolveMessage(args: MailMessage): ResolvedMail {
   return {

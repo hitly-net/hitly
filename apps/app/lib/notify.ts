@@ -5,11 +5,20 @@ import {
   type ChannelType,
   type WorkspaceRole,
 } from '@hitly/core'
-import { approvals, memberships, projectChannels, projectMemberships, projects, users } from '@hitly/db/schema'
+import {
+  approvals,
+  memberships,
+  projectApiKeys,
+  projectChannels,
+  projectMemberships,
+  projects,
+  users,
+} from '@hitly/db/schema'
+import { renderDecisionNeededEmail } from '@hitly/mail'
 import { logProjectEvent } from './events'
 import { sendMail } from './mail'
 import { deletePushTokensByValue, listPushTokens } from './push-tokens'
-import { decisionNeededTitle, pushCopy, sendExpoPush } from './push'
+import { pushCopy, sendExpoPush } from './push'
 import { listVisibleProjectIds } from './rbac'
 import { requireDb } from './require-db'
 import { afterTenantCommit, withTenant } from './tenant'
@@ -35,11 +44,12 @@ export async function notifyAssignee(args: {
     })
   } else {
     await notifyAssigneeEmail({
+      workspaceId: args.workspaceId,
       projectId: args.projectId,
       approvalId: args.approvalId,
       assignedUserId: args.assignedUserId,
-      actionName: args.actionName,
       channelTypes: args.channelTypes,
+      expiresAt: args.expiresAt,
     })
   }
 
@@ -55,12 +65,21 @@ export async function notifyAssignee(args: {
   )
 }
 
+/**
+ * Branded decision-needed email. Content is built by the shared renderer,
+ * which reads ONLY an allowlist of human-facing fields from the stored
+ * envelope/origin (headline prompt, agent/workflow names, deadline): raw
+ * callback secrets (cb_auth_token), resume handles, payload secrets and raw
+ * tool names are never read, so they cannot reach the email. The email links
+ * to the inbox page; it carries no tokens of its own.
+ */
 async function notifyAssigneeEmail(args: {
+  workspaceId: string
   projectId: string
   approvalId: string
   assignedUserId: string
-  actionName: string
   channelTypes: ChannelType[]
+  expiresAt?: Date | string | null
 }) {
   const database = requireDb()
   const userRows = await database.select().from(users).where(eq(users.id, args.assignedUserId)).limit(1)
@@ -74,6 +93,52 @@ async function notifyAssigneeEmail(args: {
 
   const wanted = new Set(args.channelTypes)
   const channels = enabled.filter((channel) => wanted.has(channel.type))
+  if (channels.length === 0) return
+
+  let message: Awaited<ReturnType<typeof renderDecisionNeededEmail>> | null = null
+  try {
+    const approvalRows = await database
+      .select({
+        envelope: approvals.envelope,
+        origin: approvals.origin,
+        expiresAt: approvals.expiresAt,
+        requesterKeyId: approvals.requesterKeyId,
+      })
+      .from(approvals)
+      .where(eq(approvals.id, args.approvalId))
+      .limit(1)
+    const row = approvalRows[0]
+    const projectName = await projectNameFor(args.projectId, args.workspaceId)
+    let requestedByKey: string | null = null
+    if (row?.requesterKeyId) {
+      const keyRows = await database
+        .select({ name: projectApiKeys.name })
+        .from(projectApiKeys)
+        .where(eq(projectApiKeys.id, row.requesterKeyId))
+        .limit(1)
+      requestedByKey = keyRows[0]?.name ?? null
+    }
+    message = await renderDecisionNeededEmail({
+      appUrl: APP_URL,
+      approvalId: args.approvalId,
+      greetingName: assignee.name,
+      projectName,
+      envelope: row?.envelope ?? null,
+      origin: row?.origin ?? null,
+      requestedByKey,
+      expiresAt: args.expiresAt ?? row?.expiresAt,
+    })
+  } catch (error) {
+    await logProjectEvent({
+      projectId: args.projectId,
+      approvalId: args.approvalId,
+      level: 'error',
+      type: 'notified',
+      message: error instanceof Error ? error.message : 'Email build failed',
+    })
+    return
+  }
+  if (!message) return
 
   for (const channel of channels) {
     if (channel.type !== 'email') {
@@ -88,11 +153,7 @@ async function notifyAssigneeEmail(args: {
       continue
     }
     try {
-      const result = await sendMail({
-        to: assignee.email,
-        subject: decisionNeededTitle(args.actionName),
-        text: `A work item is waiting for you.\n\n${APP_URL}/inbox/${args.approvalId}\n`,
-      })
+      const result = await sendMail({ to: assignee.email, ...message })
       await logProjectEvent({
         projectId: args.projectId,
         approvalId: args.approvalId,

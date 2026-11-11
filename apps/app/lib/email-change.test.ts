@@ -35,13 +35,15 @@ import {
   VERIFY_EMAIL_CHANGE_INVALID_MESSAGE,
   VERIFY_EMAIL_CHANGE_PAGE,
   buildEmailChangePageUrl,
+  submitEmailChange,
+  submitEmailChangeVerification,
+} from './email-change'
+import {
   buildEmailChangeVerificationEmail,
   buildEmailChangedNotice,
   createSendEmailChangeVerification,
   createSendEmailChangedNotice,
-  submitEmailChange,
-  submitEmailChangeVerification,
-} from './email-change'
+} from './email-change-emails'
 import {
   EMAIL_CHANGE_ATTEMPT_LIMIT,
   createEmailChangeAttemptLimiter,
@@ -101,7 +103,11 @@ function email(local: string) {
 }
 
 async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  // Fire-and-forget mailers render the branded email on a microtask
+  // chain; drain it before asserting on the outbox.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
 }
 
 async function createUser(address: string, name = 'Alex') {
@@ -282,7 +288,7 @@ describe('changing the email while signed in', () => {
 
     const notice = sentMail.find((message) => message.to === oldAddress)
     assert.ok(notice, 'a notice is sent to the previous address')
-    const expectedNotice = buildEmailChangedNotice({ to: oldAddress })
+    const expectedNotice = await buildEmailChangedNotice({ to: oldAddress })
     assert.equal(notice.subject, expectedNotice.subject)
     assert.equal(notice.text, expectedNotice.text)
     assert.ok(!/https?:\/\//.test(notice.text), 'no link in the old-address notice')
@@ -707,16 +713,16 @@ describe('email change wiring (static)', () => {
     assert.notEqual(hashEmailChangeToken(a), a)
   })
 
-  it('the confirmation builder puts the token only in the link', () => {
+  it('the confirmation builder puts the token only in the link', async () => {
     const token = generateEmailChangeToken()
     tokensSeen.push(token)
-    const mail = buildEmailChangeVerificationEmail({
+    const mail = await buildEmailChangeVerificationEmail({
       to: email('builder'),
       link: buildEmailChangePageUrl(APP_URL, token),
     })
     assert.ok(mail.text.includes(token))
     assert.equal(mail.text.split(token).length - 1, 1)
-    const notice = buildEmailChangedNotice({ to: email('old') })
+    const notice = await buildEmailChangedNotice({ to: email('old') })
     assert.ok(!notice.text.includes(token))
     assert.ok(!/https?:\/\//.test(notice.text))
   })
@@ -733,8 +739,8 @@ describe('email change wiring (static)', () => {
     await createSendEmailChangedNotice(send)({ to: email('notice') })
     await settle()
     assert.equal(outbox.length, 2)
-    assert.deepEqual(outbox[0], buildEmailChangeVerificationEmail({ to: email('send'), link: buildEmailChangePageUrl(APP_URL, token) }))
-    assert.deepEqual(outbox[1], buildEmailChangedNotice({ to: email('notice') }))
+    assert.deepEqual(outbox[0], await buildEmailChangeVerificationEmail({ to: email('send'), link: buildEmailChangePageUrl(APP_URL, token) }))
+    assert.deepEqual(outbox[1], await buildEmailChangedNotice({ to: email('notice') }))
   })
 })
 

@@ -18,10 +18,12 @@ import {
   CHANGE_PASSWORD_THROTTLED_MESSAGE,
   CHANGE_PASSWORD_UNAUTHENTICATED_MESSAGE,
   CURRENT_PASSWORD_INCORRECT_MESSAGE,
-  buildPasswordChangedEmail,
-  createSendPasswordChangedNotification,
   submitPasswordChange,
 } from './password-change'
+import {
+  buildPasswordChangedEmail,
+  createSendPasswordChangedNotification,
+} from './password-change-emails'
 import {
   handlePasswordChange,
   type ChangePasswordRouteDeps,
@@ -87,7 +89,11 @@ function post(pathname: string, body: unknown) {
 }
 
 async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 10))
+  // Fire-and-forget mailers render the branded email on a microtask
+  // chain; drain it before asserting on the outbox.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
 }
 
 async function signInCookie(password = OLD_PASSWORD): Promise<string> {
@@ -275,7 +281,7 @@ describe('changing the password while signed in', () => {
     assert.ok(!mail.text.includes(OLD_PASSWORD) && !mail.text.includes(NEW_PASSWORD), 'no password in the email')
     assert.ok(!/token/i.test(mail.text), 'no token wording in the email')
     assert.ok(!/https?:\/\//.test(mail.text), 'no link in the email')
-    assert.deepEqual(buildPasswordChangedEmail({ to: EMAIL }), mail, 'the handler used the shared builder')
+    assert.deepEqual(await buildPasswordChangedEmail({ to: EMAIL }), mail, 'the handler used the shared builder')
   })
 })
 

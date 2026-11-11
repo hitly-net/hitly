@@ -1,4 +1,5 @@
-import { createSendResetPassword, MIN_PASSWORD_LENGTH } from './password-reset'
+import { createSendResetPassword } from './password-reset-emails'
+import { MIN_PASSWORD_LENGTH } from './password-reset'
 import { limitResetEmails } from './reset-request-limit'
 
 type MailFn = Parameters<typeof createSendResetPassword>[1]
