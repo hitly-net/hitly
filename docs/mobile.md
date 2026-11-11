@@ -152,7 +152,7 @@ Reviewer routes authenticate with Better Auth: session cookie (web) or `Authoriz
 | `GET` | `/api/v1/health` | Public | Probe a hosted URL. `{ "ok": true, "product": "hitly", "edition": "oss" \| "cloud" }` |
 | `GET` | `/api/v1/inbox` | Session | List items. Query: `scope=all\|open\|closed`, `q`, `projectId` |
 | `GET` | `/api/v1/inbox/summary` | Session | `{ pending, failedResume, decidedToday, projectCount }` |
-| `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct` |
+| `GET` | `/api/v1/approvals/:id` | Session | Detail: envelope, origin, `originFields`, decisions, `canAct`, `answerSchema` |
 | `GET` | `/api/v1/approvals/:id/original-request` | Session | Canonical JSON of the stored create-once request (see below) |
 | `POST` | `/api/v1/approvals/:id/decide` | Session | Decide JSON (see *Decide & answer gating*) |
 | `POST` | `/api/v1/approvals/:id/opens` | Session | `{ "ref" }` — record that THIS reviewer opened a context item |
@@ -216,6 +216,7 @@ Query: `scope`, `q`, `projectId`, `limit` (1–200, default 100), `cursor` (opaq
   "assignedUserId": "usr_…",
   "createdAt": "2026-08-13T18:00:00.000Z",
   "expiresAt": "2026-08-13T19:00:00.000Z",
+  "answerSchema": null,
   "envelope": {
     "action": { "name": "send-refund", "args": { "orderId": "1842" } },
     "allowedActions": { "accept": true, "reject": true, "edit": false, "respond": false, "ignore": false },
@@ -237,7 +238,7 @@ Query: `scope`, `q`, `projectId`, `limit` (1–200, default 100), `cursor` (opaq
 - **When it is set.** `GET /api/v1/approvals/:id` (session / reviewer Bearer) includes `openedRefs` when the item is **actionable for this reviewer** (`canAct`). The host builds it from `opened` project events recorded by `POST /api/v1/approvals/:id/opens` (each event carries `itemRef`, `openedAt`, and the actor). The field is **omitted** when the reviewer cannot act (already decided, expired, cancelled, or no decide permission) — there is nothing to hydrate.
 - **How clients use it.** Reviewer clients (mobile and web) hydrate the must-open checklist from `openedRefs` on load, then union in taps from the current visit. Re-entering an approval does not force opening every item again, and a tap on an already-recorded ref should not POST another `opened` event from the checklist. The host still re-validates on decide against the recorded events, not against this field.
 
-A project API key on the same GET route still returns the slim origin-poll payload and never includes `openedRefs`.
+A project API key on the same GET route still returns the slim origin-poll payload and never includes `openedRefs`. That payload does include top-level `answerSchema` (the stored ask_user schema, or `null` when the request has none).
 
 ### Original request (view / copy)
 

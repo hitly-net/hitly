@@ -1737,6 +1737,11 @@ export async function getApprovalForOrigin(args: { apiKey: string; approvalId: s
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
       ...read,
+      // Top-level copy of the stored ask_user schema (hitl-spec 3.4). Null
+      // when the request has none (legacy asks). Not nested on `hitl` —
+      // hitl/response/v0 forbids extra properties. Origin clients sent this
+      // schema at ingest; it is not reviewer-redacted here.
+      answerSchema: envelope.answerSchema ?? null,
     }
   })
 }
