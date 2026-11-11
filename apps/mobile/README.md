@@ -31,10 +31,18 @@ Outputs live in `assets/` and are committed; `src/app-icons.test.ts` asserts
 and that the committed PNGs are byte-identical to a fresh render.
 
 - Android adaptive icon: `assets/icons/android-{foreground,background,monochrome}.png`
-  (1024px; mark inside the safe zone, monochrome layer for Android 13 themed icons).
+  (1024px; mark scaled inside the circular mask's 66% safe zone, monochrome
+  layer for Android 13 themed icons). `ADAPTIVE_MARK_FRACTION` in
+  `scripts/icons/brand-svg.ts` keeps the H stems and check tip clear of the mask.
+- Top-level icon: `assets/icons/app-icon.png` (1024px, no alpha) so Expo Go,
+  web and pre-Oreo Android launchers show the HITLy mark.
+- Web favicon: `assets/icons/favicon.png` (48px, no alpha) wired via `expo.web`.
 - Push notification icon: `assets/icons/notification-icon.png` (96px, white on
   transparent) wired through the `expo-notifications` plugin with tint `#2563eb`.
-- Splash: `assets/splash/splash-logo{,-dark}.png` on `#fafafa` / `#18181b`.
+- Splash: `assets/splash/splash-logo{,-dark}.png` on `#fafafa` / `#18181b`,
+  wired through the `expo-splash-screen` config plugin (not the legacy
+  top-level `expo.splash`, which drops the dark variant on iOS) so both
+  platforms honour the dark splash.
 - iOS: `assets/icons/ios-icon.png` (1024px, no alpha).
 
 Design: [`docs/mobile.md`](../../docs/mobile.md).

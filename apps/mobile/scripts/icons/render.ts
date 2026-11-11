@@ -32,6 +32,10 @@ const assets: Asset[] = [
   { file: 'icons/notification-icon.png', svg: monochromeMarkSvg(96, 0.62), size: 96 },
   // iOS 1024px icon (opaque, no alpha).
   { file: 'icons/ios-icon.png', svg: fullIconSvg(1024), size: 1024, opaque: true },
+  // Top-level expo.icon: Expo Go and pre-Oreo Android legacy launcher icon.
+  { file: 'icons/app-icon.png', svg: fullIconSvg(1024), size: 1024, opaque: true },
+  // Web favicon (Expo web renders <link rel="icon"> from this 48px tile).
+  { file: 'icons/favicon.png', svg: fullIconSvg(48), size: 48, opaque: true },
   // Splash logos (rendered at 1024, shown centred on the splash backgrounds).
   { file: 'splash/splash-logo.png', svg: splashLogoSvg(1024), size: 1024 },
   { file: 'splash/splash-logo-dark.png', svg: splashLogoDarkSvg(1024), size: 1024 },
