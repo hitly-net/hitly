@@ -739,8 +739,15 @@ describe('email change wiring (static)', () => {
     await createSendEmailChangedNotice(send)({ to: email('notice') })
     await settle()
     assert.equal(outbox.length, 2)
-    assert.deepEqual(outbox[0], await buildEmailChangeVerificationEmail({ to: email('send'), link: buildEmailChangePageUrl(APP_URL, token) }))
-    assert.deepEqual(outbox[1], await buildEmailChangedNotice({ to: email('notice') }))
+    // The two senders are independent fire-and-forget chains: match by
+    // recipient, not by arrival order.
+    const verifyMail = outbox.find((message) => message.to === email('send'))
+    const noticeMail = outbox.find((message) => message.to === email('notice'))
+    assert.deepEqual(
+      verifyMail,
+      await buildEmailChangeVerificationEmail({ to: email('send'), link: buildEmailChangePageUrl(APP_URL, token) }),
+    )
+    assert.deepEqual(noticeMail, await buildEmailChangedNotice({ to: email('notice') }))
   })
 })
 

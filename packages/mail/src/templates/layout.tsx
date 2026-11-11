@@ -1,3 +1,7 @@
+// Explicit React import: keeps these templates working under both the
+// classic JSX transform (tsx under the app tsconfig) and the automatic
+// runtime (Next build, react-jsx).
+import * as React from 'react'
 import type { ReactNode } from 'react'
 import { Body, Button, Column, Container, Head, Hr, Html, Img, Link, Preview, Row, Section, Text } from '@react-email/components'
 import {
