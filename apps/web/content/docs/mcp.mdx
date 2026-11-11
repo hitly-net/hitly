@@ -3,25 +3,39 @@ title: MCP server
 description: Let a bot ask a human through HITLy over Model Context Protocol.
 ---
 
-The HITLy MCP server lets a bot pause and ask a person (on the HITLy [inbox](/docs/inbox)) for an approval or an answer, then carry on once the human has decided. It speaks Streamable HTTP MCP - async-first: every create returns immediately with `state: "pending"`; there is no wait or long-poll.
+The HITLy MCP server lets a bot pause and ask a person (on the HITLy [inbox](/docs/inbox)) for an approval or an answer, then carry on once the human has decided. It speaks Streamable HTTP MCP - async-first: every create returns immediately with `state: "pending"`; there is no wait or long-poll. A bot can request, read and cancel; it can never decide - decisions come only from a signed-in human in the HITLy inbox.
 
-## Endpoint
+## Endpoint and transport
 
 ```text
 https://mcp.hitly.net/mcp
 ```
 
+The server speaks JSON-RPC 2.0 over **Streamable HTTP** at `/mcp`. If you self-host HITLy, run the `@hitly/mcp` app behind your own reverse proxy and substitute your host (all runtime settings are environment variables: `HITLY_MCP_HOST`/`HITLY_MCP_PORT` to listen on, `HITLY_API_URL` for the HITLy host API, `HITLY_MCP_PUBLIC_URL` for the public origin of this MCP server).
+
+The server is **stateless**: it issues no `Mcp-Session-Id` and keeps no session between calls. Every POST carries the full JSON-RPC body and the `Authorization` header - there is no per-session handshake to reattach, and a server restart loses nothing. Responses are `application/json`. Only `POST /mcp` is accepted: a GET asking for `text/event-stream` gets `405` (there is no server-initiated SSE stream), which is why MCP clients take a callback or poll `get_decision`. A plain browser visit (a GET with an HTML `Accept` and no credentials) is redirected here, to this page. The request body is capped at 1 MiB.
+
 ## Auth
 
-`Authorization: Bearer <your-project-api-key>` - a HITLy **project API key** (the same key the [HTTP plugin](/integrations/http) uses). You get one by opening your project in the HITLy web app and copying (or creating) an API key in the project's settings. A missing or malformed key gets `401` with a `WWW-Authenticate: Bearer` challenge. The key belongs to the project: requests created with a key are only readable and cancellable with that same key.
+Every request authenticates with a HITLy **project API key** in the header:
+
+```text
+Authorization: Bearer <your-project-api-key>
+```
+
+- **Where to create it**: open your project in the HITLy web app and copy (or create) an API key under **Config** in the project's settings - the same key the [HTTP plugin](/integrations/http) uses for ingest. Keys start with `hitly_`.
+- **Keep it secret.** Anyone with the key can create, read and cancel your project's MCP requests. Do not commit it to a repository or embed it in client-side code; rotate it from the project settings if it leaks.
+- **Scope.** The key is a *requester* credential: it can call `request_approval`, `ask_user`, `get_decision`, `list_pending` and `cancel`, and only for requests that same key created - requests created with a key are readable and cancellable only with that key. It cannot decide: there is deliberately no decide tool.
+- A missing or malformed key gets `401` with a `WWW-Authenticate: Bearer realm="hitly-mcp"` challenge. (Resume tokens, `hitly_resume_...`, are a different credential and are refused here.)
+- Each key has a request-rate budget (default 120 requests per minute); exceeding it answers `429` with a `Retry-After` header.
 
 ## Set up a client
 
 Replace `<mcp-host>` with the host your HITLy MCP server is served on and `<your-project-api-key>` with your project API key. The endpoint is a Streamable HTTP MCP server; every example authenticates with `Authorization: Bearer <your-project-api-key>`.
 
-### Grok Bot (HTTP plugin)
+### Grok Bot (custom MCP connector)
 
-A Grok Bot agent connects over Streamable HTTP and uses its own agent webhook URL as `callback_url`, so it is woken when the human decides:
+A Grok Bot agent connects over Streamable HTTP by adding a custom MCP connector that points at the URL and passes the key in the header:
 
 ```json
 {
@@ -34,7 +48,7 @@ A Grok Bot agent connects over Streamable HTTP and uses its own agent webhook UR
 }
 ```
 
-When the agent calls `request_approval` it passes `callback_url` (its own webhook, e.g. `https://example.com/hooks/hitly`) and a `cb_auth_token` secret (see [Callbacks](#callbacks)).
+When the agent calls `request_approval` it passes `callback_url` (its own agent webhook, e.g. `https://example.com/hooks/hitly`) and a `cb_auth_token` secret (see [Callbacks](#callbacks)), so it is woken when the human decides.
 
 ### Claude Desktop / Claude Code
 
@@ -82,24 +96,45 @@ The server speaks JSON-RPC over Streamable HTTP at `/mcp`. In order:
 2. **`tools/list`** - returns the tools and their input schemas.
 3. **`tools/call`** - one POST per call, e.g. `{"method":"tools/call","params":{"name":"request_approval","arguments":{…}}}`.
 
-The server is **stateless**: it issues no `Mcp-Session-Id` and keeps no session between calls. Every POST carries the full JSON-RPC body and the `Authorization` header - there is no per-session handshake to reattach, and a server restart loses nothing. Responses are `application/json`. There is no server-initiated SSE stream: a GET asking for `text/event-stream` gets `405`, which is why MCP clients take a callback or poll `get_decision`.
-
 ## Async-first pattern
 
 Creating never blocks:
 
 1. Call `request_approval` or `ask_user` - you get `requestId` and `state: "pending"` back immediately.
 2. **Carry on** with other work; do not busy-wait.
-3. React to the **callback** if you passed `callback_url`, or **poll** `get_decision` politely (every 30-60 s, backing off) until the `deadline` (default 24 hours).
+3. React to the **callback** if you passed `callback_url`, or **poll** `get_decision` politely (every 30-60 s, backing off) until the `deadline`.
 4. Act only on what `get_decision` confirms. `pending`, `expired` and `cancelled` are never approval.
+
+When you omit `deadline`, the host default rules: the project's SLA/timeout if set, otherwise 24 hours from now. An explicit `deadline` must be in the future and at most 30 days out. Expiry is never approval.
 
 Retrying a create with the same `idempotencyKey` returns the same request (`replayed: true`) instead of asking the human twice.
 
 ## Tools
 
+The server exposes exactly five tools: `request_approval`, `ask_user`, `get_decision`, `list_pending`, `cancel`. All tools return their result as JSON in `structuredContent` (mirrored in a text content block); errors come back as `{ "error": { "code", "message" } }` with `isError: true`.
+
+`request_approval` and `ask_user` share these common optional arguments:
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `context` | string (≤ 64 000 chars) | Markdown detail shown to the reviewer. |
+| `deadline` | string (ISO 8601 date-time) | When the ask expires. Omit to use the host default (project SLA/timeout, else 24 h). Max 30 days out. |
+| `callback_url` | string (**https** URL) | URL HITLy POSTs the outcome to. If omitted, **no callback is sent at all** - poll `get_decision` (see [Callbacks](#callbacks)). |
+| `cb_auth_token` | string (16-512 chars) | Secret HITLy sends back on every callback so only your endpoint accepts it. Never echoed back to you. |
+
 ### request_approval
 
 Ask a human to Approve, Reject or Ignore an action.
+
+| Argument | Required | Type | Description |
+| --- | --- | --- | --- |
+| `idempotencyKey` | yes | string (8-200 chars, printable ASCII, no spaces) | Stable key for this ask (e.g. hash of bot id, task id, action name and args). Retries return the same request. |
+| `question` | yes | string | One sentence on one line, at most 160 characters, ending with `?`. |
+| `action` | yes | object `{ name, args }` | `name`: string (1-200 chars). `args`: object (defaults to `{}`) - the arguments of the action to be approved. |
+| `risk` | no | `"low"` \| `"medium"` \| `"high"` | Recorded on the request for the reviewer. |
+| `reasonRequired` | no | array of `"approve"` \| `"reject"` \| `"ignore"` | The reviewer must give a reason when acting with these outcomes. |
+| `links` | no | array (≤ 20) of `{ url, label?, mustOpen? }` | **https** links for the reviewer (`label` ≤ 200 chars); `mustOpen` gates Approve/Reject until opened. HITLy never fetches them. |
+| common optional arguments | no | see above | `context`, `deadline`, `callback_url`, `cb_auth_token`. |
 
 ```json
 { "name": "request_approval", "arguments": {
@@ -116,14 +151,26 @@ Ask a human to Approve, Reject or Ignore an action.
 Response (immediate):
 
 ```json
-{ "requestId": "apr_…", "state": "pending", "replayed": false,
+{ "requestId": "<request-id>", "state": "pending", "replayed": false,
   "argsHash": "b64url-sha256-of-args", "deadline": "2026-11-11T09:00:00.000Z",
-  "callback": true, "reviewUrl": "https://<hitly-host>/inbox/apr_…" }
+  "callback": true, "reviewUrl": "https://<hitly-host>/inbox/<request-id>" }
 ```
+
+`argsHash` is `b64url(SHA-256(JCS(action.args)))` ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) canonicalisation) - the hash of the arguments as originally sent. `deadline` is the expiry the host stored; `callback` is `true` only when you passed `callback_url`.
 
 ### ask_user
 
-Ask a question and get a typed answer later. The `prompt` is the headline the reviewer sees (one sentence, at most 160 characters, ending with `?`); optional markdown `detail` (at most 8000 characters) renders under it. `answerSchema.type` is `free_text`, `single_choice` (needs `options`) or `multi_choice` (needs `options`).
+Ask a question and get a typed answer later.
+
+| Argument | Required | Type | Description |
+| --- | --- | --- | --- |
+| `idempotencyKey` | yes | string (8-200 chars, printable ASCII, no spaces) | As for `request_approval`. |
+| `prompt` | yes | string | The headline the reviewer sees: one sentence on one line, at most 160 characters, ending with `?`. |
+| `detail` | no | string (≤ 8 000 chars) | Markdown rendered under the headline (must not be blank if sent). |
+| `answerSchema` | yes | object `{ type, options?, bounds? }` | The typed answer, described below. |
+| common optional arguments | no | see above | `context`, `deadline`, `callback_url`, `cb_auth_token`. |
+
+`answerSchema.type` is the spec name `text`, `single`, `multi` or `number` (the legacy aliases `free_text`, `single_choice`, `multi_choice` are accepted on input and stored as the spec name). `single` and `multi` **require** `options` (1-20 items, values distinct); the other types take none. Options are plain strings (value = label) or `{ value, label?, description? }`. `bounds` constrains the answer: `min`/`max`/`step`/`unit` for `number`, `minLength`/`maxLength`/`pattern` for `text`, `minItems`/`maxItems` for `multi`.
 
 **Ask one question per `ask_user` request.** In hitl/v0 the reviewer answers exactly one ask, so a form with several fields gets you one answer, not per-field answers - issue one `ask_user` per field instead. `simple_form` is refused with an error: `ask_user` accepts only `text`, `single`, `multi` and `number` answer schemas, so send a separate `ask_user` for each field.
 
@@ -136,27 +183,37 @@ Ask a question and get a typed answer later. The `prompt` is the headline the re
 } }
 ```
 
-Response: the same pending shape (`requestId`, `state`, `replayed`, `deadline`, `callback`, `reviewUrl`).
+Response: the same pending shape minus `argsHash` (`ask_user` sends no action arguments): `{ "requestId": "<request-id>", "state": "pending", "replayed": false, "deadline": "…", "callback": false, "reviewUrl": "https://<hitly-host>/inbox/<request-id>" }`.
 
 ### get_decision
 
 Non-blocking read of a request, as a `hitl/response/v0` object.
 
+| Argument | Required | Type | Description |
+| --- | --- | --- | --- |
+| `requestId` | yes | string (1-64 chars, `[A-Za-z0-9_-]`) | The `requestId` returned at create. |
+
 ```json
-{ "name": "get_decision", "arguments": { "requestId": "apr_…" } }
+{ "name": "get_decision", "arguments": { "requestId": "<request-id>" } }
 ```
 
 Answered example (an `ask_user` reply):
 
 ```json
-{ "spec": "hitl/response/v0", "requestId": "apr_…", "status": "answered",
-  "answer": { "kind": "single_choice", "value": "blue" },
+{ "spec": "hitl/response/v0", "requestId": "<request-id>", "status": "answered",
+  "answer": { "kind": "single", "value": "blue" },
   "reason": "fine to ship", "decidedBy": { "kind": "human", "id": "usr_…", "display": "A. Reviewer" },
   "decidedAt": "2026-11-10T10:02:00.000Z", "argsHash": "b64url-sha256-of-args",
   "activity": { "presentedAt": "2026-11-10T09:58:00.000Z", "items": [] } }
 ```
 
-`status` is one of `pending`, `answered`, `declined`, `cancelled`, `expired`. The typed `answer` is an **object `{ kind, value }`**: `kind` is the answer type (e.g. `single_choice`, `free_text`) and `value` is the reviewer's reply for that type (a string, a number, or an array of strings for `multi_choice`). HITLy stores and returns it unmodified - use it verbatim. The top-level `value` carries the decision value for approve/reject/respond (`"approve"`, `"reject"`, or the reply text). A decided response carries **either** `answer` (an `ask_user` reply) **or** the decision fields (`value` etc.) - never both.
+Fields:
+
+- `status` is one of `pending`, `answered`, `declined`, `cancelled`, `expired`.
+- The typed `answer` is an **object `{ kind, value }`**. `kind` is the stored answer type - one of `text`, `single`, `multi`, `number` (the aliases you may have sent in `answerSchema.type` are normalised on input, so `single_choice` comes back as `single`). `value` is the reviewer's reply for that type: a string for `text` and `single`, an array of strings for `multi`, a finite number for `number`. HITLy stores and returns it unmodified - use it verbatim.
+- The top-level `value` carries the decision value for approve/reject/respond (`"approve"`, `"reject"`, or the reply text). A decided response carries **either** `answer` (an `ask_user` reply) **or** the decision fields (`value` etc.) - never both.
+- `reason`, `decidedBy` (`{ kind, id, display? }`), `decidedAt`, `argsHash` and `activity` are present when the host has them.
+- `callbackDelivery` reports callback delivery: `"none"` for requests created without `callback_url` (no callback was attempted), `"failed"` when the callback could not be delivered. A successful delivery adds nothing.
 
 ### editedArgs
 
@@ -164,54 +221,74 @@ If the reviewer amended the action's arguments, `get_decision` includes `editedA
 
 ### list_pending
 
-List requests created with your key that still await a human. A request a human already decided whose resume then failed (`failed_resume`) is not listed - its outcome and the failed delivery (`callbackDelivery: "failed"`) come back from `get_decision`.
+List requests created with your key that still await a human.
+
+| Argument | Required | Type | Description |
+| --- | --- | --- | --- |
+| `projectId` | no | string (≤ 64 chars) | Restrict to one project. |
+| `cursor` | no | string (≤ 512 chars) | The opaque `nextCursor` from a previous page. |
 
 ```json
 { "name": "list_pending", "arguments": { "projectId": "prj_…" } }
 ```
 
-Response: `{ "items": [ { "id": "…", "kind": "question", "question": "…", "createdAt": "…", "deadline": "…" } ], "nextCursor": null }`. Pass `nextCursor` back as `cursor` to page through results.
+Response: `{ "items": [ { "id": "…", "kind": "question", "question": "…", "createdAt": "…", "deadline": "…" } ], "nextCursor": null }` - items carry `id`, `kind`, and whichever of `question`/`prompt`, `createdAt`, `deadline`/`expiresAt`, `status` the host stores. Pass `nextCursor` back as `cursor` to page through results. A request a human already decided whose resume then failed (`failed_resume`) is not listed - its outcome and the failed delivery (`callbackDelivery: "failed"`) come back from `get_decision`. On a host without a key-scoped pending list yet, the tool answers the error `not_supported_by_host`.
 
-There is also `cancel` (withdraw an open request your key created).
+### cancel
+
+Withdraw an open request your key created.
+
+| Argument | Required | Type | Description |
+| --- | --- | --- | --- |
+| `requestId` | yes | string (1-64 chars, `[A-Za-z0-9_-]`) | The `requestId` returned at create. |
+| `reason` | no | string (≤ 500 chars) | Why the request is withdrawn (recorded for the reviewer). |
+
+```json
+{ "name": "cancel", "arguments": { "requestId": "<request-id>", "reason": "order refunded by hand" } }
+```
+
+Response: `{ "requestId": "<request-id>", "state": "cancelled" }`. Cancelled is never approval. Cancelling a request another key created fails; some hosts do not yet enable requester cancel with an API key and answer `unauthorized`.
 
 ## Callbacks
 
 `request_approval` and `ask_user` accept two optional fields:
 
-- `callback_url` - an **https** URL that HITLy POSTs the outcome to.
-- `cb_auth_token` - a secret of **16-512 characters**. HITLy sends it back on every callback as `Authorization: Bearer <your-callback-token>`, so only your endpoint accepts the delivery. It is never echoed back to you. (If the tool reports your host does not support `cb_auth_token` yet, omit it and use `get_decision`.)
+- `callback_url` - an **https** URL that HITLy POSTs to when the request is **decided** (or answered). If you do **not** pass it, HITLy sends **no callback at all** and you poll `get_decision` instead.
+- `cb_auth_token` - a secret of **16-512 characters**. HITLy sends it back on every callback as `authorization: Bearer <your-callback-token>`, so you can verify the delivery is yours and only your endpoint accepts it. It is never echoed back to you. (If the tool reports your host does not support `cb_auth_token` yet, omit it and use `get_decision`.)
+
+**The callback is only a hint.** A callback tells you an outcome *may* exist. Always confirm with `get_decision` before acting - it is the source of truth, and callback delivery can fail (the read then reports `callbackDelivery: "failed"`).
 
 ### What the POST looks like
 
-Headers: `content-type: application/json`, plus `authorization: Bearer <your-callback-token>` when you passed one. When webhook signing is enabled for your project, four more headers arrive: `x-hitly-timestamp` (unix seconds), `x-hitly-signature` (hex HMAC-SHA256 over `"<timestamp>.<raw body>"`), `x-hitly-event-id` (dedupe on this - retries reuse it), and `x-hitly-key-id` (which signing key signed). Without a signing secret, only `x-hitly-event-id` is sent.
+Headers: `content-type: application/json`, plus `authorization: Bearer <your-callback-token>` when you passed one. When webhook signing is enabled for your project, four more headers arrive: `x-hitly-timestamp` (unix seconds), `x-hitly-signature` (hex HMAC-SHA256 over `"<timestamp>.<raw body>"`), `x-hitly-event-id` (dedupe on this - retries reuse it), and `x-hitly-key-id` (which signing key signed). Without a signing secret, only `x-hitly-event-id` is sent. Receivers should reject timestamps more than 5 minutes off.
 
-The JSON body:
+The JSON body for a decided approval:
 
 ```json
 {
-  "event_id": "…",
+  "event_id": "evt_…",
   "type": "decided",
-  "request_id": "apr_…",
+  "request_id": "<request-id>",
+  "id": "<request-id>",
   "occurred_at": "2026-11-10T12:00:00.000Z",
   "state": "decided",
   "decision": "accept",
   "reason": "ok to send",
   "argsHash": "…",
+  "metadata": {},
   "decisionDetail": { "outcome": "accept", "reason": "ok to send", "decidedBy": "…" }
 }
 ```
 
-For an `ask_user` answer, `type` and `state` are `"answered"` and `answer` is the reviewer's typed reply as an **object `{ kind, value }`** (e.g. `{"kind": "single_choice", "value": "blue"}`), exactly as the host stored it. When there is no typed answer the `answer` key is omitted entirely - never sent as `answer: null`. Reviewer amendments arrive as `editedArgs` (act on those); a plain text reply arrives as `response`.
+- `type` and `state` are `"decided"`, or `"answered"` for an `ask_user` reply.
+- `decision` is the host decision name: `accept`, `reject`, `ignore`, `respond`, or `edit` (a reviewer amendment).
+- For an answered `ask_user`, `answer` is the reviewer's typed reply as an **object `{ kind, value }`** with the stored spec type (e.g. `{"kind": "single", "value": "blue"}`), exactly as the host stored it. When there is no typed answer the `answer` key is omitted entirely - never sent as `answer: null`.
+- Reviewer amendments arrive as `editedArgs` (act on those); a plain text reply arrives as `response`.
+- `id`, `request_id`, `idempotency_key`, `metadata`, `reason`, `argsHash` and `decisionDetail` are present when the host has the values.
 
-**Redirects are not followed**: a `3xx` from your URL fails the delivery.
+Delivery semantics: any `2xx` counts as acceptance. `5xx`, `429`, `408` and `425` are retried (a short in-process schedule, then host-side retries over about 24 hours, always reusing the same `x-hitly-event-id`); other non-2xx answers fail the delivery immediately. **Redirects are not followed**: a `3xx` from your URL fails the delivery. Callback targets must be public https endpoints - private and loopback destinations are refused. A request whose callback ultimately fails shows `callbackDelivery: "failed"` on `get_decision`; the decision itself stands.
 
-### Treat the callback as a hint
-
-A callback tells you an outcome *may* exist. Always confirm with `get_decision` before acting - it is the source of truth, and callback delivery can fail (the read then reports `callbackDelivery: "failed"`).
-
-**If you don't pass `callback_url` you won't receive a callback**: poll `get_decision` instead (every 30-60 s while pending, backing off).
-
-Example: a Grok Bot agent passes its own agent webhook URL as `callback_url` (e.g. `https://example.com/hooks/hitly`) and a secret only it knows as `cb_auth_token`.
+Example: a Grok Bot agent passes its own agent webhook URL as `callback_url` (e.g. `https://example.com/hooks/hitly`) and a secret only it knows as `cb_auth_token`, then calls `get_decision` on waking to confirm the outcome.
 
 ## There is no decide tool
 
