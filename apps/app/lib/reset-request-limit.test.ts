@@ -62,6 +62,19 @@ describe('reset email limiter', () => {
 describe('reset email limit through Better Auth', () => {
   let outbox: { to: string; text: string }[] = []
   let logLines: string[] = []
+// The reset sender renders the branded email on a detached chain; track it
+// so tests drain pending sends deterministically instead of sleeping.
+const inflight = new Set<Promise<unknown>>()
+function trackMail(chain: Promise<unknown>) {
+  inflight.add(chain)
+  void chain.finally(() => inflight.delete(chain))
+}
+async function drainMail() {
+  while (inflight.size > 0) {
+    await Promise.allSettled([...inflight])
+  }
+}
+
 
   function makeAuth() {
     return betterAuth({
@@ -71,14 +84,19 @@ describe('reset email limit through Better Auth', () => {
       trustedOrigins: [APP_URL],
       rateLimit: { enabled: false },
       logger: { level: 'debug', log: (level, message) => logLines.push(`${level} ${message}`) },
-      emailAndPassword: emailAndPasswordOptions(APP_URL, async (message) => {
-        outbox.push(message)
-        return { delivered: true }
-      }),
+      emailAndPassword: emailAndPasswordOptions(
+        APP_URL,
+        async (message) => {
+          outbox.push(message)
+          return { delivered: true }
+        },
+        { track: trackMail },
+      ),
     })
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await drainMail()
     outbox = []
     logLines = []
   })
@@ -104,7 +122,7 @@ describe('reset email limit through Better Auth', () => {
     try {
       for (let i = 0; i < RESET_EMAIL_LIMIT + 2; i += 1) replies.push(await requestReset(auth, EMAIL))
       replies.push(await requestReset(auth, 'nobody@example.com'))
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      await drainMail()
     } finally {
       console.warn = warn
     }

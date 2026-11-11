@@ -136,7 +136,6 @@ describe('push tokens', { concurrency: false }, () => {
     }) as typeof fetch
 
     const created = await ingestHttpAsk(fixture, 'https://origin.example', {
-      actionName: 'refund',
       args: { amount: 99, secret: 'do-not-push' },
     })
     await flushAfterTenantCommitForTests()
@@ -154,7 +153,11 @@ describe('push tokens', { concurrency: false }, () => {
     const serialized = JSON.stringify(messages[0])
     assert.equal(serialized.includes('do-not-push'), false, 'push payload must not include request args')
     assert.equal(serialized.includes('"amount"'), false, 'push payload must not include request arguments')
-    assert.equal(messages[0].title, 'HITLy: refund needs a decision')
+    // PM wording change (branded emails PR): no prompt/summary on this
+    // request, so the title is the branded project fallback — never the raw
+    // tool name ("refund" must NOT appear).
+    assert.equal(messages[0].title, 'HITLy: M0h Project needs your decision')
+    assert.equal(String(messages[0].title).includes('refund'), false)
     assert.equal(messages[0].channelId, 'hitly')
     const title = String(messages[0].title ?? '')
     const body = String(messages[0].body ?? '')
@@ -229,7 +232,6 @@ describe('push tokens', { concurrency: false }, () => {
       projectId: fixture.projectId,
       approvalId: 'apr_ticket_cleanup',
       assignedUserId: fixture.reviewerId,
-      actionName: 'refund',
     })
     assert.equal((await listPushTokens(fixture.reviewerId)).some((row) => row.token === token), false)
   })
@@ -258,7 +260,6 @@ describe('push tokens', { concurrency: false }, () => {
       projectId: fixture.projectId,
       approvalId: 'apr_receipt_cleanup',
       assignedUserId: fixture.reviewerId,
-      actionName: 'refund',
     })
     assert.equal((await listPushTokens(fixture.reviewerId)).some((row) => row.token === token), false)
   })
@@ -305,7 +306,6 @@ describe('push tokens', { concurrency: false }, () => {
       projectId: fixture.projectId,
       approvalId: 'apr_visibility',
       assignedUserId: fixture.reviewerId,
-      actionName: 'refund',
     })
     assert.equal(sentTo.includes(reviewerToken), true)
     assert.equal(sentTo.includes(outsiderToken), false)
@@ -336,7 +336,6 @@ describe('push tokens', { concurrency: false }, () => {
         projectId: fixture.projectId,
         approvalId: `apr_keep_${row.name}`,
         assignedUserId: fixture.reviewerId,
-        actionName: 'refund',
       })
       assert.equal(
         (await listPushTokens(fixture.reviewerId)).some((item) => item.token === token),
@@ -364,7 +363,6 @@ describe('push tokens', { concurrency: false }, () => {
     }) as typeof fetch
 
     await ingestHttpAsk(fixture, 'https://origin.example', {
-      actionName: 'refund',
       args: { amount: 99, apiKey: canaries[0], cb_auth_token: canaries[1] },
     })
     await flushAfterTenantCommitForTests()
@@ -474,8 +472,9 @@ describe('push source canaries', () => {
     assert.match(notifySrc, /afterTenantCommit/, 'push must be scheduled outside the tenant transaction')
     assert.match(ingestFn, /notifyAssignee\(/, 'new pending items must notify')
     assert.doesNotMatch(ingestFn, /await sendExpoPush/, 'ingest must not await Expo HTTP')
-    assert.match(pushSrc, /decisionNeededTitle/, 'push title must use decisionNeededTitle from main')
-    assert.match(pushSrc, /title: decisionNeededTitle\(args\.actionName\)/)
+    assert.match(pushSrc, /extractDecisionEmailContent/, 'push copy must reuse the branded-email wording helper')
+    assert.match(pushSrc, /title: content\.pushTitle/, 'push title must come from the shared decision copy helper')
+    assert.doesNotMatch(pushSrc, /actionName/, 'push copy must not read raw tool names')
     assert.doesNotMatch(pushSrc, /`Hitly:/, 'push copy must not use Hitly')
     assert.match(pushSrc, /DeviceNotRegistered/, 'tickets/receipts must handle DeviceNotRegistered')
     assert.match(pushSrc, /EXPO_RECEIPTS_URL|getReceipts/, 'receipts must be checked')

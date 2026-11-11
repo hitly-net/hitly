@@ -1,10 +1,10 @@
 /**
  * Signed-in email change (client-safe half): the endpoint constants, the
- * fixed messages, the confirmation and notice email builders, and the client
- * submit helpers used by the security page's form and the confirm page. The
- * route handlers that touch auth, the database and the mailer live in
- * lib/email-change-route.ts, so client components import only this file
- * (same split as the password-change flow).
+ * fixed messages, and the client submit helpers used by the security page's
+ * form and the confirm page. The branded confirmation and notice emails live
+ * in lib/email-change-emails.ts, and the route handlers that touch auth, the
+ * database and the mailer live in lib/email-change-route.ts, so client
+ * components import only this file (same split as the password-change flow).
  *
  * The live account email is not updated until the new address is confirmed.
  * The confirmation token exists only in the email; this module never logs it.
@@ -14,7 +14,6 @@ import { CURRENT_PASSWORD_INCORRECT_MESSAGE } from './password-change'
 import {
   INVALID_EMAIL_MESSAGE,
   RESET_REQUEST_NETWORK_MESSAGE,
-  type MailFn,
 } from './password-reset'
 
 export const CHANGE_EMAIL_ENDPOINT = '/api/session/change-email'
@@ -39,64 +38,6 @@ export function buildEmailChangePageUrl(appUrl: string, token: string): string {
   const url = new URL(VERIFY_EMAIL_CHANGE_PAGE, appUrl)
   url.searchParams.set('token', token)
   return url.toString()
-}
-
-export function buildEmailChangeVerificationEmail({ to, link }: { to: string; link: string }) {
-  return {
-    to,
-    subject: 'HITLy: Confirm your new email address',
-    text: [
-      'Someone asked to use this address for a HITLy account.',
-      '',
-      `Open this link to confirm the change (it expires in ${EMAIL_CHANGE_TTL_HOURS} hours):`,
-      '',
-      link,
-      '',
-      'If you did not ask for this, you can ignore this email.',
-    ].join('\n'),
-  }
-}
-
-/**
- * Notice sent to the previous address after a confirmed change. Like the
- * password-changed email it carries no secret: no token and no link.
- */
-export function buildEmailChangedNotice({ to }: { to: string }) {
-  return {
-    to,
-    subject: 'HITLy: Your email address was changed',
-    text: [
-      'The email address for your HITLy account was changed.',
-      '',
-      'If this was not you, reset your password immediately from the HITLy sign-in page.',
-    ].join('\n'),
-  }
-}
-
-export function createSendEmailChangeVerification(appUrl: string, send: MailFn) {
-  return async ({ to, token }: { to: string; token: string }) => {
-    const message = buildEmailChangeVerificationEmail({
-      to,
-      link: buildEmailChangePageUrl(appUrl, token),
-    })
-    void send(message).catch((error: unknown) => {
-      console.error(
-        '[hitly email-change] Failed to send confirmation email:',
-        error instanceof Error ? error.message : error,
-      )
-    })
-  }
-}
-
-export function createSendEmailChangedNotice(send: MailFn) {
-  return async ({ to }: { to: string }) => {
-    void send(buildEmailChangedNotice({ to })).catch((error: unknown) => {
-      console.error(
-        '[hitly email-change] Failed to send email-changed notice:',
-        error instanceof Error ? error.message : error,
-      )
-    })
-  }
 }
 
 export type EmailChangeOutcome = { ok: true } | { ok: false; message: string }

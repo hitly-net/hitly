@@ -29,6 +29,20 @@ const APP_URL = 'http://localhost:3001'
 type Sent = { to: string; subject: string; text: string }
 let outbox: Sent[] = []
 
+// The reset sender renders the branded email on a detached chain (delivery
+// must never delay the HTTP response). Track those chains so tests can
+// await them deterministically instead of sleeping.
+const inflight = new Set<Promise<unknown>>()
+function trackMail(chain: Promise<unknown>) {
+  inflight.add(chain)
+  void chain.finally(() => inflight.delete(chain))
+}
+async function drainMail() {
+  while (inflight.size > 0) {
+    await Promise.allSettled([...inflight])
+  }
+}
+
 function makeAuth() {
   const db: Record<string, unknown[]> = { user: [], session: [], account: [], verification: [] }
   return betterAuth({
@@ -38,10 +52,14 @@ function makeAuth() {
     trustedOrigins: [APP_URL],
     rateLimit: { enabled: false },
     logger: { disabled: true },
-    emailAndPassword: emailAndPasswordOptions(APP_URL, async (message) => {
-      outbox.push(message)
-      return { delivered: true }
-    }),
+    emailAndPassword: emailAndPasswordOptions(
+      APP_URL,
+      async (message) => {
+        outbox.push(message)
+        return { delivered: true }
+      },
+      { track: trackMail },
+    ),
   })
 }
 
@@ -63,10 +81,6 @@ function post(pathname: string, body: unknown) {
   })
 }
 
-async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 10))
-}
-
 function linkFrom(mail: Sent) {
   const match = mail.text.match(/https?:\/\/\S+/)
   assert.ok(match, 'reset email must contain a link')
@@ -78,6 +92,7 @@ before(() => {
 })
 
 beforeEach(async () => {
+  await drainMail()
   auth = makeAuth()
   outbox = []
   await auth.api.signUpEmail({ body: { email: 'alex@example.com', password: 'old-password-1', name: 'Alex' } })
@@ -116,7 +131,7 @@ describe('reset route paths', () => {
 describe('requesting a reset', () => {
   it('sends one email with a link to the reset page', async () => {
     const outcome = await requestPasswordReset('alex@example.com', appFetch)
-    await settle()
+    await drainMail()
     assert.deepEqual(outcome, { kind: 'sent', message: RESET_REQUESTED_MESSAGE })
     assert.equal(outbox.length, 1)
     assert.equal(outbox[0]?.to, 'alex@example.com')
@@ -131,9 +146,12 @@ describe('requesting a reset', () => {
     const unknown = await post(REQUEST_PASSWORD_RESET_ENDPOINT, { email: 'nobody@example.com' })
     assert.equal(unknown.status, known.status)
     assert.deepEqual(await unknown.json(), await known.json())
+    // Drain the known-address sender first: its async render must not land
+    // in the reset outbox and fake a "sent something" result.
+    await drainMail()
     outbox = []
     const outcome = await requestPasswordReset('nobody@example.com', appFetch)
-    await settle()
+    await drainMail()
     assert.deepEqual(outcome, { kind: 'sent', message: RESET_REQUESTED_MESSAGE })
     assert.equal(outbox.length, 0)
   })
@@ -165,7 +183,7 @@ describe('requesting a reset', () => {
 describe('setting a new password', () => {
   async function tokenFromEmail() {
     await requestPasswordReset('alex@example.com', appFetch)
-    await settle()
+    await drainMail()
     return linkFrom(outbox[0]!).searchParams.get('token')!
   }
 

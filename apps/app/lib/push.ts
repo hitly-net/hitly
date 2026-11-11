@@ -1,3 +1,5 @@
+import { extractDecisionEmailContent } from '@hitly/mail'
+
 export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 export const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts'
 export const EXPO_PUSH_TIMEOUT_MS = 10_000
@@ -21,10 +23,10 @@ type ExpoTicket = {
   details?: { error?: string }
 }
 
-function expiresLabel(expiresAt: Date | string | null | undefined) {
+function expiresLabel(expiresAt: Date | string | null | undefined, now: Date = new Date()) {
   if (!expiresAt) return null
   const at = typeof expiresAt === 'string' ? new Date(expiresAt) : expiresAt
-  const minutes = Math.round((at.getTime() - Date.now()) / 60_000)
+  const minutes = Math.round((at.getTime() - now.getTime()) / 60_000)
   if (!Number.isFinite(minutes)) return null
   if (minutes <= 0) return 'expired'
   if (minutes < 60) return `expires in ${minutes}m`
@@ -32,20 +34,31 @@ function expiresLabel(expiresAt: Date | string | null | undefined) {
   return `expires in ${hours}h`
 }
 
-/** Email subject and push title for a pending approval. */
-export function decisionNeededTitle(actionName: string) {
-  return `HITLy: ${actionName} needs a decision`
+export type DecisionCopyArgs = {
+  projectName?: string | null
+  /** Decoded approval envelope (only the allowlisted prompt is read). */
+  envelope?: Record<string, unknown> | null
+  /** Decoded origin bag (only human-facing display names are read). */
+  origin?: Record<string, unknown> | null
+  requestedByKey?: string | null
+  expiresAt?: Date | string | null
+  now?: Date
 }
 
-export function pushCopy(args: {
-  actionName: string
-  projectName?: string | null
-  expiresAt?: Date | string | null
-}) {
-  const sla = expiresLabel(args.expiresAt)
-  const bodyParts = [args.projectName?.trim(), sla].filter(Boolean)
+/**
+ * Push copy for a pending decision. Titles reuse the branded email's wording
+ * helper (extractDecisionEmailContent from @hitly/mail) so push and email
+ * match: ask_user pushes the question itself; approvals push the same
+ * "HITLy: <project> needs your decision" summary. The raw tool name is
+ * never part of either. The body is "<project> · expires in Xh" using the
+ * real expiry. Callers must pass DECODED envelope/origin (decodeTenantJson).
+ */
+export function pushCopy(args: DecisionCopyArgs) {
+  const content = extractDecisionEmailContent(args)
+  const sla = expiresLabel(args.expiresAt, args.now)
+  const bodyParts = [content.projectName, sla].filter(Boolean)
   return {
-    title: decisionNeededTitle(args.actionName),
+    title: content.pushTitle,
     body: bodyParts.length > 0 ? bodyParts.join(' · ') : 'A work item is waiting for you.',
   }
 }

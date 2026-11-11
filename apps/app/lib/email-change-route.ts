@@ -24,9 +24,11 @@ import { db } from './db'
 import { EMAIL_CHANGE_LIMITED_LOG, emailChangeAttemptLimiter } from './email-change-limit'
 import {
   EMAIL_CHANGE_TTL_MS,
+} from './email-change'
+import {
   createSendEmailChangeVerification,
   createSendEmailChangedNotice,
-} from './email-change'
+} from './email-change-emails'
 import { newId } from './ids'
 import { normaliseEmail } from './invite-signup'
 import { sendMail } from './mail'

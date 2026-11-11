@@ -451,7 +451,6 @@ export async function delegateWorkItem(approvalId: string, formData: FormData) {
       projectId: approval.projectId,
       approvalId: approval.id,
       assignedUserId: userId,
-      actionName: approval.actionName,
       channelTypes: ['email'],
     })
 

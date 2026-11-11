@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import { invites, memberships, users, workspaces } from '@hitly/db/schema'
-import { sendMail } from '@hitly/mail'
+import { renderInviteEmail, sendMail } from '@hitly/mail'
 import { db } from './db'
 import { newId } from './ids'
 import { APIError } from 'better-auth/api'
@@ -56,21 +56,15 @@ export function buildInviteUrl(appUrl: string, token: string): string {
   return new URL(`${INVITE_PAGE}/${encodeURIComponent(token)}`, appUrl).toString()
 }
 
-export function buildInviteEmail(args: { to: string; workspaceName: string; link: string }) {
-  return {
-    to: args.to,
-    subject: `You're invited to ${args.workspaceName} on HITLy`,
-    text: [
-      `You've been invited to join ${args.workspaceName} on HITLy.`,
-      '',
-      'Open this link to accept. You can create an account for this email address, or sign in if you already have one:',
-      '',
-      args.link,
-      '',
-      `This invite is for ${args.to} only, can be used once, and expires in ${INVITE_TTL_DAYS} days.`,
-      'If you were not expecting it, you can ignore this email.',
-    ].join('\n'),
-  }
+export async function buildInviteEmail(args: { to: string; workspaceName: string; link: string }) {
+  const rendered = await renderInviteEmail({
+    appUrl: new URL(args.link).origin,
+    workspaceName: args.workspaceName,
+    link: args.link,
+    inviteeEmail: args.to,
+    ttlDays: INVITE_TTL_DAYS,
+  })
+  return { to: args.to, ...rendered }
 }
 
 /**
@@ -107,7 +101,7 @@ export async function createAndSendWorkspaceInvite(args: {
     expiresAt,
   })
   const send = args.send ?? sendMail
-  await send(buildInviteEmail({ to: email, workspaceName: args.workspaceName, link: buildInviteUrl(args.appUrl, token) }))
+  await send(await buildInviteEmail({ to: email, workspaceName: args.workspaceName, link: buildInviteUrl(args.appUrl, token) }))
   return { id, expiresAt }
 }
 
@@ -135,7 +129,7 @@ export async function resendWorkspaceInvite(args: {
   const row = rows[0]
   if (!row) return { ok: false }
   const send = args.send ?? sendMail
-  await send(buildInviteEmail({ to: row.email, workspaceName: args.workspaceName, link: buildInviteUrl(args.appUrl, token) }))
+  await send(await buildInviteEmail({ to: row.email, workspaceName: args.workspaceName, link: buildInviteUrl(args.appUrl, token) }))
   return { ok: true, expiresAt }
 }
 
