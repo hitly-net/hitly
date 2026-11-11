@@ -1,5 +1,13 @@
 import { desc, eq, and } from 'drizzle-orm'
-import { isOpenApprovalStatus, isWorkspaceAdmin, type ApprovalEnvelope, type OriginRef, type PluginId, type WorkspaceRole } from '@hitly/core'
+import {
+  isOpenApprovalStatus,
+  isWorkspaceAdmin,
+  typedAnswerFromPayload,
+  type ApprovalEnvelope,
+  type OriginRef,
+  type PluginId,
+  type WorkspaceRole,
+} from '@hitly/core'
 import { approvals, decisionRecords, projects } from '@hitly/db/schema'
 import { approvalHasExpired, effectiveApprovalStatus } from './approval-expiry'
 import { settleExpiredApproval } from './approvals'
@@ -91,6 +99,10 @@ export async function getApprovalDetail(args: {
         })
       : undefined
 
+    // Typed ask_user answer from the latest (already redacted) decision. Omitted
+    // when absent — never `answer: null` — matching the requester GET.
+    const answer = typedAnswerFromPayload(redacted.decisions[0]?.payload)
+
     return {
       ok: true as const,
       id: approval.id,
@@ -110,6 +122,7 @@ export async function getApprovalDetail(args: {
       // (legacy asks with no schema). Taken from the redacted envelope so
       // reviewer redaction rules are unchanged.
       answerSchema: redacted.envelope.answerSchema ?? null,
+      ...(answer !== undefined ? { answer } : {}),
       origin: redacted.origin,
       originFields: redacted.originFields,
       canAct,

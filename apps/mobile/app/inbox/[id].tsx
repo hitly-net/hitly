@@ -153,7 +153,11 @@ export default function WorkItemDetailScreen() {
         onOpenItem={openContextItem}
       />
       <ArgsBlock args={detail.envelope.action.args} />
-      <DecisionHistory decisions={detail.decisions} />
+      <DecisionHistory
+        decisions={detail.decisions}
+        answer={detail.answer}
+        answerSchema={detail.answerSchema ?? detail.envelope.answerSchema}
+      />
       {detail.evidenceReceipt ? (
         <Pressable
           style={styles.receiptLink}

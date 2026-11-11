@@ -11,6 +11,7 @@ import { JsonDisclosure } from '@/components/json-disclosure'
 import { MarkPresentedIfCanAct, RefreshOnFocus } from '@/components/work-item-client'
 import { EditedArgsPanel } from '@/components/edited-args-panel'
 import { OriginalRequestPanel } from '@/components/original-request-panel'
+import { ArgsPayload, TypedAnswerView, WorkItemHeadline, typedAnswerFromPayload } from '@/components/typed-answer'
 import { withAppTenant } from '@/lib/context'
 import { formatStatusLabel } from '@/lib/status-label'
 import { redactedRequestJson } from '@/lib/redact-request-payload'
@@ -72,7 +73,7 @@ function WorkItemDetailView({ page, errorMessage }: { page: WorkItemPageDto; err
         </Badge>
       </div>
       <div className="mt-4 flex max-w-2xl items-start justify-between gap-3">
-        <h1 className="text-2xl font-semibold">{page.actionName}</h1>
+        <WorkItemHeadline prompt={page.envelope.prompt} actionName={page.actionName} />
         {page.canCancel ? <ForceCancelButton approvalId={page.id} /> : null}
       </div>
       {errorMessage ? (
@@ -172,11 +173,7 @@ function WorkItemDetailView({ page, errorMessage }: { page: WorkItemPageDto; err
         externalUrls={flight.externalUrls}
         attachments={flight.attachments}
       />
-      <h2 className="mt-4 max-w-2xl text-sm font-semibold">Action arguments</h2>
-      <p className="mt-1 max-w-2xl text-xs text-zinc-500">Original request args from the stored create-once record.</p>
-      <pre className="mt-2 max-w-2xl overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-        {redactedRequestJson(page.originalArgs)}
-      </pre>
+      <ArgsPayload value={page.originalArgs} />
       <JsonDisclosure value={page.jsonDisclosure} />
       <OriginalRequestPanel approvalId={page.id} />
       <EditedArgsPanel editedArgs={page.editedArgs} />
@@ -187,6 +184,10 @@ function WorkItemDetailView({ page, errorMessage }: { page: WorkItemPageDto; err
             {latestDecision.decision}
             {latestDecision.resumeError ? ' · resume failed' : ''}
           </p>
+          <TypedAnswerView
+            answer={typedAnswerFromPayload(latestDecision.payload)}
+            answerSchema={page.answerSchema}
+          />
           {latestDecision.resumeError ? (
             <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">{latestDecision.resumeError}</p>
           ) : null}

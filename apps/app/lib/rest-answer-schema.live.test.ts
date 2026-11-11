@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { eq } from 'drizzle-orm'
 import { approvals } from '@hitly/db/schema'
 import { GET as getApprovalById } from '../app/api/v1/approvals/[id]/route'
+import { decideApproval } from './approvals'
 import { getApprovalDetail } from './approval-detail'
 import {
   closeM0hFixture,
@@ -102,6 +103,16 @@ test('GET /api/v1/approvals/:id source pins top-level answerSchema on both read 
     /answerSchema:\s*redacted\.envelope\.answerSchema\s*\?\?\s*null/,
     'session GET must return top-level answerSchema from the redacted envelope (null when absent)',
   )
+  assert.match(
+    detailReturn,
+    /typedAnswerFromPayload\(redacted\.decisions\[0\]\?\.payload\)/,
+    'session GET must expose the typed answer from the latest decision payload',
+  )
+  assert.match(
+    detailReturn,
+    /\.\.\.\(answer !== undefined \? \{ answer \} : \{\}\)/,
+    'session GET must omit answer when absent (never answer: null)',
+  )
 })
 
 test('API-key GET returns stored answerSchema at the top level (real host, PG)', async () => {
@@ -170,6 +181,40 @@ test('session GET returns top-level answerSchema and keeps the nested envelope c
   assert.ok(empty.ok)
   assertTopLevelAnswerSchema(empty as unknown as Record<string, unknown>, null, 'session GET with no stored schema')
   assert.equal(empty.envelope.answerSchema, undefined, 'nested envelope key stays absent when there is no schema')
+  assert.ok(!('answer' in empty), 'pending session GET must omit answer, never answer: null')
+})
+
+test('session GET returns top-level answer after a typed respond (real host, PG)', async () => {
+  const created = await ingestHttpAsk(fixture, receiver.url, {
+    actionName: 'ask_user',
+    args: {},
+    kind: 'question',
+    prompt: 'Which auth methods?',
+    answerSchema: { type: 'multi_choice', options: ['secret', 'forms', 'push', 'sso'] },
+    allowedActions: { accept: false, reject: false, respond: true, ignore: true },
+  })
+  const typed = { kind: 'multi', value: ['secret', 'forms', 'push', 'sso'] }
+  const decided = await decideApproval({
+    approvalId: created.id,
+    actorUserId: fixture.reviewerId,
+    workspaceId: fixture.workspaceId,
+    payload: { decision: 'respond', answer: typed },
+  })
+  assert.equal((decided as { error?: string }).error, undefined, `decide must succeed, got ${JSON.stringify(decided)}`)
+
+  const detail = await getApprovalDetail({
+    approvalId: created.id,
+    userId: fixture.reviewerId,
+    workspaceId: fixture.workspaceId,
+    workspaceRole: 'member',
+  })
+  assert.ok(detail.ok)
+  assert.deepEqual(
+    (detail as { answer?: unknown }).answer,
+    typed,
+    'session GET must return the typed answer at the top level for the mobile detail screen',
+  )
+  assert.ok(detail.answerSchema && typeof detail.answerSchema === 'object')
 })
 
 test('GET /api/v1/approvals/:id does not leak answerSchema across projects (real host, PG)', async () => {
