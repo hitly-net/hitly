@@ -101,6 +101,11 @@ export async function getApprovalDetail(args: {
       // hitl-spec 4.3: null when the request was never shown to a reviewer.
       presentedAt: approval.presentedAt ? approval.presentedAt.toISOString() : null,
       envelope: redacted.envelope,
+      // Top-level copy of the stored ask_user schema (hitl-spec 3.4). Nested
+      // `envelope.answerSchema` stays for existing clients. Null when absent
+      // (legacy asks with no schema). Taken from the redacted envelope so
+      // reviewer redaction rules are unchanged.
+      answerSchema: redacted.envelope.answerSchema ?? null,
       origin: redacted.origin,
       originFields: redacted.originFields,
       canAct,
