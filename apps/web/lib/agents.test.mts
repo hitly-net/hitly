@@ -19,7 +19,7 @@ test('GET /agents.md returns the agent guide with MCP details', async () => {
   assert.match(body, /^# HITLy — guide for AI agents/m)
   assert.match(body, /https:\/\/mcp\.hitly\.net\/mcp/)
   assert.match(body, /Authorization: Bearer <project API key>/)
-  for (const tool of ['request_approval', 'ask_user', 'get_decision', 'list_pending']) {
+  for (const tool of ['request_approval', 'ask_user', 'get_decision', 'list_pending', 'cancel']) {
     assert.match(body, new RegExp(`\`?${tool}\`?`), `missing tool: ${tool}`)
   }
   assert.match(body, /no decide tool/i)
@@ -37,4 +37,12 @@ test('GET /agents.txt is the same content as /agents.md', async () => {
 test('agents guide exposes no internal hosts or private IPs', async () => {
   const body = await bodyOf(agentsMd())
   for (const pattern of BANNED) assert.ok(!pattern.test(body), `forbidden match: ${pattern}`)
+})
+
+test('agents guide links to llms.txt, the sitemap and the docs', async () => {
+  const body = await bodyOf(agentsMd())
+  assert.match(body, /https:\/\/hitly\.net\/llms\.txt/, 'missing llms.txt link')
+  assert.match(body, /https:\/\/hitly\.net\/sitemap\.xml/, 'missing sitemap link')
+  assert.match(body, /https:\/\/hitly\.net\/docs\/mcp/, 'missing docs/mcp link')
+  assert.match(body, /https:\/\/hitly\.net\/docs/, 'missing docs link')
 })

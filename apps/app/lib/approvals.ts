@@ -1390,6 +1390,10 @@ export async function listRequesterPending(args: {
                 : undefined
           const prompt = typeof envelope?.prompt === 'string' ? envelope.prompt : undefined
           return {
+            // `requestId` mirrors `id` so every item carries the same
+            // top-level handle get_decision/cancel take; older clients key
+            // off `id`, MCP list_pending items require `requestId`.
+            requestId: row.id,
             id: row.id,
             kind: (isQuestion ? 'question' : 'approval') as 'question' | 'approval',
             status: effectiveApprovalStatus(row, now.getTime()),

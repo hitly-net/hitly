@@ -29,9 +29,31 @@ export function buildSitemap(): MetadataRoute.Sitemap {
   return urls.map((path) => ({ url: absoluteUrl(path), changeFrequency: 'monthly' }))
 }
 
+/**
+ * Paths kept out of crawlers: API endpoints, the not-yet-GA cloud
+ * placeholder, and the self-hosted app's authenticated surfaces
+ * (login, inbox, project/settings pages).
+ */
+export const DISALLOWED_ROUTES = [
+  '/api/',
+  '/cloud',
+  '/inbox',
+  '/projects',
+  '/settings',
+  '/connections',
+  '/audit',
+  '/invite',
+  '/login',
+  '/signup',
+  '/forgot-password',
+  '/reset-password',
+  '/verify-email',
+  '/verify-email-change',
+] as const
+
 export function buildRobots(): MetadataRoute.Robots {
   return {
-    rules: { userAgent: '*', allow: '/' },
+    rules: { userAgent: '*', allow: '/', disallow: [...DISALLOWED_ROUTES] },
     sitemap: `${SITE_URL}/sitemap.xml`,
   }
 }
@@ -58,24 +80,36 @@ export function marketingMeta(options: {
         ? {}
         : { title: `${options.title} — HITLy`, siteName: 'HITLy' }),
     },
+    // Per-page twitter:title (soft S3): without this the card on every
+    // marketing leaf shows the layout-wide 'HITLy'.
+    ...(options.title === undefined
+      ? {}
+      : { twitter: { card: 'summary' as const, title: `${options.title} — HITLy` } }),
   }
 }
 
-/** Canonical + OG metadata for a fumadocs page (docs or integrations). */
+/** Canonical + OG + twitter metadata for a fumadocs page (docs or integrations). */
 export function docPageMeta(page: {
   url: string
   data: { title: string; description?: string }
 }): Metadata {
   const url = absoluteUrl(page.url.replace(/\/$/, ''))
+  // A page titled 'HITLy' (the /docs index) must not be rendered as
+  // 'HITLy — HITLy': the template would brand it twice (soft S4).
+  const bare = page.data.title === 'HITLy'
+  const pageTitle: Metadata['title'] = bare ? { absolute: 'HITLy' } : page.data.title
+  const ogTitle = bare ? 'HITLy' : `${page.data.title} — HITLy`
   return {
-    title: page.data.title,
+    title: pageTitle,
     description: page.data.description,
     alternates: { canonical: url },
     openGraph: {
       type: 'article',
       url,
-      title: `${page.data.title} — HITLy`,
+      title: ogTitle,
       siteName: 'HITLy',
     },
+    // Per-page twitter:title (soft S3).
+    twitter: { card: 'summary', title: ogTitle },
   }
 }

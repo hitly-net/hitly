@@ -9,15 +9,27 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-notifications"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icons/notification-icon.png",
+          "color": "#2563eb"
+        }
+      ]
     ],
     "ios": {
       "bundleIdentifier": "net.hitly.app",
       "supportsTablet": true,
+      "icon": "./assets/icons/ios-icon.png",
       "associatedDomains": ["applinks:cloud.hitly.net"]
     },
     "android": {
       "package": "net.hitly.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icons/android-foreground.png",
+        "backgroundColor": "#18181b",
+        "monochromeImage": "./assets/icons/android-monochrome.png"
+      },
       "intentFilters": [
         {
           "action": "VIEW",
@@ -32,6 +44,15 @@
           "category": ["BROWSABLE", "DEFAULT"]
         }
       ]
+    },
+    "splash": {
+      "image": "./assets/splash/splash-logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#fafafa",
+      "dark": {
+        "image": "./assets/splash/splash-logo-dark.png",
+        "backgroundColor": "#18181b"
+      }
     },
     "experiments": {
       "typedRoutes": true

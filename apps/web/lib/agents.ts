@@ -24,7 +24,7 @@ export function buildAgentsMarkdown(): string {
     '- `request_approval` — submit an approval request for a human decision.',
     '- `ask_user` — ask the reviewer a question and return their answer.',
     '- `get_decision` — poll the outcome of a previously submitted request.',
-    '- `list_pending` — list pending approvals visible to the project.',
+    '- `list_pending` — list the still-open requests created with the same project API key (requester scope; not the whole project).',
     '- `cancel` — withdraw an open request the same key created.',
     '',
     'There is intentionally **no decide tool**: agents cannot approve or reject their',
@@ -33,8 +33,10 @@ export function buildAgentsMarkdown(): string {
     '## Links',
     '',
     `- MCP docs: [${SITE_URL}/docs/mcp](${SITE_URL}/docs/mcp)`,
+    `- Docs: [${SITE_URL}/docs](${SITE_URL}/docs)`,
     `- Docs index for agents: [${SITE_URL}/llms.txt](${SITE_URL}/llms.txt)`,
     `- Full docs for agents: [${SITE_URL}/llms-full.txt](${SITE_URL}/llms-full.txt)`,
+    `- Sitemap of all public pages: [${SITE_URL}/sitemap.xml](${SITE_URL}/sitemap.xml)`,
     '',
   ].join('\n')
 }
