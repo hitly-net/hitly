@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { pushTokens } from '@hitly/db/schema'
 import { newId } from './ids'
 import { requireDb } from './require-db'
@@ -6,8 +6,34 @@ import { requireDb } from './require-db'
 export const PUSH_PLATFORMS = ['ios', 'android'] as const
 export type PushPlatform = (typeof PUSH_PLATFORMS)[number]
 
+/** Per-user cap; oldest (createdAt, then id) is evicted when a 21st token is registered. */
+export const MAX_PUSH_TOKENS_PER_USER = 20
+
 export function isPushPlatform(value: unknown): value is PushPlatform {
   return typeof value === 'string' && (PUSH_PLATFORMS as readonly string[]).includes(value)
+}
+
+/** Expo token shapes the mobile client sends. Anything else is 400. */
+export function isExpoPushToken(value: string): boolean {
+  if (!value || value.length > 255) return false
+  return /^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$/.test(value)
+}
+
+async function evictOldestPushTokens(userId: string) {
+  const database = requireDb()
+  const rows = await database
+    .select({ id: pushTokens.id })
+    .from(pushTokens)
+    .where(eq(pushTokens.userId, userId))
+    .orderBy(asc(pushTokens.createdAt), asc(pushTokens.id))
+  if (rows.length <= MAX_PUSH_TOKENS_PER_USER) return
+  const extra = rows.slice(0, rows.length - MAX_PUSH_TOKENS_PER_USER)
+  await database.delete(pushTokens).where(
+    inArray(
+      pushTokens.id,
+      extra.map((row) => row.id),
+    ),
+  )
 }
 
 export async function registerPushToken(args: { userId: string; token: string; platform: PushPlatform }) {
@@ -20,6 +46,7 @@ export async function registerPushToken(args: { userId: string; token: string; p
       .update(pushTokens)
       .set({ userId: args.userId, platform: args.platform, lastSeenAt: now })
       .where(eq(pushTokens.id, row.id))
+    await evictOldestPushTokens(args.userId)
     return { id: row.id, created: false as const }
   }
   const id = newId('ptk').slice(0, 36)
@@ -30,6 +57,7 @@ export async function registerPushToken(args: { userId: string; token: string; p
     platform: args.platform,
     lastSeenAt: now,
   })
+  await evictOldestPushTokens(args.userId)
   return { id, created: true as const }
 }
 

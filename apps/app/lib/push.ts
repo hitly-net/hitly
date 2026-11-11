@@ -1,5 +1,6 @@
 export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 export const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts'
+export const EXPO_PUSH_TIMEOUT_MS = 10_000
 
 export type PushTicket = {
   token: string
@@ -72,6 +73,7 @@ export async function fetchExpoPushReceipts(ticketIds: string[]): Promise<Record
     method: 'POST',
     headers: expoHeaders(),
     body: JSON.stringify({ ids: unique }),
+    signal: AbortSignal.timeout(EXPO_PUSH_TIMEOUT_MS),
   })
   if (!response.ok) {
     const text = await response.text()
@@ -105,6 +107,7 @@ export async function sendExpoPush(args: {
         data: args.data,
       })),
     ),
+    signal: AbortSignal.timeout(EXPO_PUSH_TIMEOUT_MS),
   })
 
   if (!response.ok) {
