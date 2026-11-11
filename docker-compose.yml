@@ -1,11 +1,6 @@
-# Self-hosted HITLy collects no telemetry or usage data by default.
-# HITLY_TELEMETRY unset → Next CLI telemetry off (scripts/with-hitly-telemetry.sh
-# sets NEXT_TELEMETRY_DISABLED=1). Use the same wrapper in Dockerfile build and
-# runtime stages. HITLY_TELEMETRY=1 or true enables Next telemetry and, on
-# apps/web, Plausible (domain/src still from env; never hardcoded).
-x-hitly-telemetry:
-  HITLY_TELEMETRY: ${HITLY_TELEMETRY:-}
-
+# Compose only runs Postgres. HITLy Next/Turbo processes are started by yarn /
+# systemd via scripts/with-hitly-telemetry.sh (HITLY_TELEMETRY unset →
+# NEXT_TELEMETRY_DISABLED=1 and TURBO_TELEMETRY_DISABLED=1).
 services:
   db:
     image: postgres:16

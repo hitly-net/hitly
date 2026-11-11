@@ -44,7 +44,7 @@ On the host, with SSH key auth already working:
 NEXT_PUBLIC_APP_URL=http://<your-host>:3001
 ```
 
-Self-hosted HITLy collects no telemetry or usage data by default (`HITLY_TELEMETRY` unset). Do not set `HITLY_TELEMETRY=1` unless you want Next.js CLI telemetry and, on the marketing site, Plausible. hitly.net example (not a default): `HITLY_TELEMETRY=1`, `NEXT_PUBLIC_PLAUSIBLE_DOMAIN=hitly.net`, `NEXT_PUBLIC_PLAUSIBLE_SRC=https://click.hitly.net/js/script.js`.
+We don't collect telemetry or usage data anywhere. Self-hosted HITLy collects none by default (`HITLY_TELEMETRY` unset): Next.js CLI, Turbo CLI, and the marketing-site Plausible snippet stay off. Do not set `HITLY_TELEMETRY=1` unless you want those. Plausible settings are baked in at **build** time — changing `HITLY_TELEMETRY` / `NEXT_PUBLIC_PLAUSIBLE_*` requires a rebuild. hitly.net example (not a default): `HITLY_TELEMETRY=1`, `NEXT_PUBLIC_PLAUSIBLE_DOMAIN=hitly.net`, `NEXT_PUBLIC_PLAUSIBLE_SRC=https://click.hitly.net/js/script.js`.
 
 `apps/app/.env.production`:
 

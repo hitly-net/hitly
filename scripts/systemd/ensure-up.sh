@@ -3,6 +3,9 @@
 # Intended for <your-host> until `loginctl enable-linger <user>` can run as root.
 set -euo pipefail
 
+# Default off; scripts/with-hitly-telemetry.sh re-applies from HITLY_TELEMETRY.
+export NEXT_TELEMETRY_DISABLED=1
+export TURBO_TELEMETRY_DISABLED=1
 export PATH="${HOME}/.local/bin:${HOME}/.local/envs/dev/bin:${PATH}"
 # shellcheck disable=SC1091
 [ -s "${HOME}/.nvm/nvm.sh" ] && . "${HOME}/.nvm/nvm.sh"

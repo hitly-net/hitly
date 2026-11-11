@@ -7,24 +7,27 @@ export type TelemetryEnv = {
   NEXT_PUBLIC_PLAUSIBLE_DOMAIN?: string
   NEXT_PUBLIC_PLAUSIBLE_SRC?: string
   NEXT_TELEMETRY_DISABLED?: string
+  TURBO_TELEMETRY_DISABLED?: string
   [key: string]: string | undefined
 }
 
 /**
- * One flag for Next.js CLI telemetry and the marketing-site Plausible snippet.
- * Unset / anything other than `1` or `true` is off (self-host default).
+ * One flag for Next.js CLI telemetry, Turbo CLI telemetry, and the marketing-site
+ * Plausible snippet. Unset / anything other than trimmed `1` or `true` is off.
  */
 export function isHitlyTelemetryEnabled(env: TelemetryEnv = process.env): boolean {
   const value = env[HITLY_TELEMETRY_ENV]?.trim()
   return value === '1' || value === 'true'
 }
 
-/** Default off: set NEXT_TELEMETRY_DISABLED=1 unless HITLY_TELEMETRY is 1 or true. */
+/** Default off: disable Next and Turbo CLIs unless HITLY_TELEMETRY is 1 or true. */
 export function applyNextTelemetryDisabled(env: TelemetryEnv = process.env): void {
   if (isHitlyTelemetryEnabled(env)) {
     delete env.NEXT_TELEMETRY_DISABLED
+    delete env.TURBO_TELEMETRY_DISABLED
   } else {
     env.NEXT_TELEMETRY_DISABLED = '1'
+    env.TURBO_TELEMETRY_DISABLED = '1'
   }
 }
 
