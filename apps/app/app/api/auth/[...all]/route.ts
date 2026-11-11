@@ -37,6 +37,14 @@ export async function handleAuthRequest(
   // The stock plugin hardcodes userVerification: preferred and
   // requireUserVerification: false. Reject UV-less assertions before the
   // plugin can mint a session, and rewrite authenticate options to required.
+  //
+  // LOAD-BEARING: the stock better-auth passkey plugin hardcodes
+  // requireUserVerification false for authentication, so removing this
+  // pre-check would let UV-less assertions through. Covered by the
+  // positive UV tests in lib/passkey.test.ts and lib/passkey.live.test.ts
+  // (an assertion with authenticatorData flags bit 0x04 at offset 32 must
+  // reach the stock handler; assertionHasUserVerification always returning
+  // false would fail those tests).
   if (isPasskeyPluginAuthenticatePath(request.url, '/passkey/verify-authentication') && request.method === 'POST') {
     const body = await request.clone().json().catch(() => null)
     if (!assertionHasUserVerification(body)) {
