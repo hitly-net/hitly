@@ -54,9 +54,12 @@ export function NativePushProvider({ children }: { children: ReactNode }) {
     }
     if (status !== 'granted') return
     if (Platform.OS === 'android') {
+      // The notification icon/tint come from the expo-notifications plugin
+      // config in app.json (manifest default-notification metadata).
       await Notifications.setNotificationChannelAsync('hitly', {
         name: 'HITLy',
         importance: Notifications.AndroidImportance.DEFAULT,
+        lightColor: '#2563eb',
       })
     }
     const projectId = expoProjectId()
