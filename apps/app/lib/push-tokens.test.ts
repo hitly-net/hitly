@@ -18,7 +18,7 @@ import {
   type M0hFixture,
 } from './m0h-fixture'
 import { notifyPendingItemPush } from './notify'
-import { EXPO_PUSH_URL, EXPO_RECEIPTS_URL, isDeviceNotRegistered, pushCopy, sendExpoPush } from './push'
+import { EXPO_PUSH_URL, EXPO_RECEIPTS_URL, isDeviceNotRegistered, sendExpoPush } from './push'
 import {
   deletePushTokensByValue,
   registerPushToken,
@@ -281,14 +281,6 @@ describe('push tokens', { concurrency: false }, () => {
   })
 })
 
-describe('pushCopy brand', () => {
-  it('title is HITLy: <summary> needs a decision', () => {
-    const copy = pushCopy({ actionName: 'refund' })
-    assert.equal(copy.title, 'HITLy: refund needs a decision')
-    assert.equal(copy.title.startsWith('Hitly:'), false)
-  })
-})
-
 describe('sendExpoPush DeviceNotRegistered (no DB)', () => {
   afterEach(() => {
     globalThis.fetch = origFetch
@@ -347,7 +339,8 @@ describe('push source canaries', () => {
     assert.match(notifySrc, /afterTenantCommit/, 'push must be scheduled outside the tenant transaction')
     assert.match(ingestFn, /notifyAssignee\(/, 'new pending items must notify')
     assert.doesNotMatch(ingestFn, /await sendExpoPush/, 'ingest must not await Expo HTTP')
-    assert.match(pushSrc, /`HITLy: \$\{args\.actionName\} needs a decision`/, 'push title must use HITLy brand')
+    assert.match(pushSrc, /decisionNeededTitle/, 'push title must use decisionNeededTitle from main')
+    assert.match(pushSrc, /title: decisionNeededTitle\(args\.actionName\)/)
     assert.doesNotMatch(pushSrc, /`Hitly:/, 'push copy must not use Hitly')
     assert.match(pushSrc, /DeviceNotRegistered/, 'tickets/receipts must handle DeviceNotRegistered')
     assert.match(pushSrc, /EXPO_RECEIPTS_URL|getReceipts/, 'receipts must be checked')

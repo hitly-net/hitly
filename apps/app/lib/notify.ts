@@ -9,7 +9,7 @@ import { approvals, memberships, projectChannels, projectMemberships, projects, 
 import { logProjectEvent } from './events'
 import { sendMail } from './mail'
 import { deletePushTokensByValue, listPushTokens } from './push-tokens'
-import { pushCopy, sendExpoPush } from './push'
+import { decisionNeededTitle, pushCopy, sendExpoPush } from './push'
 import { listVisibleProjectIds } from './rbac'
 import { requireDb } from './require-db'
 import { afterTenantCommit, withTenant } from './tenant'
@@ -90,7 +90,7 @@ async function notifyAssigneeEmail(args: {
     try {
       const result = await sendMail({
         to: assignee.email,
-        subject: `Hitly: ${args.actionName} needs a decision`,
+        subject: decisionNeededTitle(args.actionName),
         text: `A work item is waiting for you.\n\n${APP_URL}/inbox/${args.approvalId}\n`,
       })
       await logProjectEvent({

@@ -457,7 +457,7 @@ export interface HitlyApprovalStepConfig {
 }
 
 /**
- * Payload posted to Hitly when a Mastra workflow step or agent tool suspends.
+ * Payload posted to HITLy when a Mastra workflow step or agent tool suspends.
  * Wire this from `createStep({ execute })` or `createTool({ execute })`.
  */
 export async function notifyHitlyApproval(
@@ -466,10 +466,10 @@ export async function notifyHitlyApproval(
 ): Promise<void> {
   const kind: MastraResumeKind = config.kind ?? (config.agentId ? 'agent' : 'workflow')
   if (kind === 'agent' && !config.agentId) {
-    throw new Error('Hitly Mastra notify requires agentId for agent approvals')
+    throw new Error('HITLy Mastra notify requires agentId for agent approvals')
   }
   if (kind === 'workflow' && !config.workflowId) {
-    throw new Error('Hitly Mastra notify requires workflowId for workflow approvals')
+    throw new Error('HITLy Mastra notify requires workflowId for workflow approvals')
   }
 
   const response = await fetch(`${config.apiUrl.replace(/\/$/, '')}/api/v1/approvals`, {
@@ -513,7 +513,7 @@ export async function notifyHitlyApproval(
   })
 
   if (!response.ok) {
-    throw new Error(`Hitly ingest failed (${response.status}): ${await response.text()}`)
+    throw new Error(`HITLy ingest failed (${response.status}): ${await response.text()}`)
   }
 }
 
