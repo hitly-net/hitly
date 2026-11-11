@@ -238,6 +238,37 @@ describe('passkey plugin sign-in', () => {
     assert.equal(sessionsAfter.length, sessionsBefore.length)
   })
 
+  it('a passkey assertion with UV is admitted to the stock handler', async () => {
+    // Positive counterpart of the UV-less pre-check: flags bit 0x04 at
+    // offset 32 must pass the catch-all and reach the plugin. A mutant
+    // that makes assertionHasUserVerification always return false would
+    // 400 here and never call the handler (silently breaking every sign-in).
+    const uvSet = { response: fakeAssertion(`live-uv-ok-${run}`, true) }
+    assert.equal(assertionHasUserVerification(uvSet), true)
+    let ran = false
+    const verify = await handleAuthRequest(
+      new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, {
+        method: 'POST',
+        headers: {
+          origin: APP_URL,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(uvSet),
+      }),
+      async () => {
+        ran = true
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    )
+    assert.equal(ran, true, 'UV assertion must reach the stock handler')
+    assert.equal(verify.status, 200)
+    const body = (await verify.json().catch(() => ({}))) as { code?: string }
+    assert.notEqual(body.code, 'USER_VERIFICATION_REQUIRED')
+  })
+
   it('authenticate options require user verification even when Host disagrees with BETTER_AUTH_URL', async () => {
     const options = await handleAuthRequest(
       new Request(`${APP_URL}/api/auth/passkey/generate-authenticate-options`, {

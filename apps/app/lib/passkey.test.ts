@@ -27,6 +27,7 @@ import {
   users,
   workspaces,
 } from '@hitly/db/schema'
+import { handleAuthRequest } from '../app/api/auth/[...all]/route'
 import { auth } from './auth'
 import { db, pool } from './db'
 import { CURRENT_PASSWORD_INCORRECT_MESSAGE } from './password-change'
@@ -518,6 +519,60 @@ describe('passkey settings list rendering', () => {
     const page = fs.readFileSync(path.join(__dirname, '../app/settings/security/page.tsx'), 'utf-8')
     assert.ok(page.includes('listPasskeysForUser'))
     assert.ok(!page.includes('publicKey'))
+  })
+})
+
+describe('passkey user-verification helper and auth catch-all pre-check', () => {
+  const USER_VERIFIED_FLAG = 0x04
+
+  function authenticatorData(userVerified: boolean): string {
+    const bytes = new Uint8Array(37)
+    bytes[32] = 0x01 | (userVerified ? USER_VERIFIED_FLAG : 0)
+    return Buffer.from(bytes).toString('base64url')
+  }
+
+  function assertionBody(userVerified: boolean) {
+    return {
+      response: {
+        response: {
+          authenticatorData: authenticatorData(userVerified),
+        },
+      },
+    }
+  }
+
+  it('assertionHasUserVerification is true when UV flag 0x04 is set at offset 32', () => {
+    assert.equal(assertionHasUserVerification(assertionBody(true)), true)
+  })
+
+  it('assertionHasUserVerification is false when UV flag is unset', () => {
+    assert.equal(assertionHasUserVerification(assertionBody(false)), false)
+  })
+
+  it('auth catch-all admits a UV assertion to the stock handler', async () => {
+    // Kills assertionHasUserVerification always returning false: that mutant
+    // would 400 USER_VERIFICATION_REQUIRED here and never call the handler.
+    const body = assertionBody(true)
+    assert.equal(assertionHasUserVerification(body), true)
+    let ran = false
+    const response = await handleAuthRequest(
+      new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+      async () => {
+        ran = true
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    )
+    assert.equal(ran, true, 'UV assertion must reach the stock handler')
+    assert.equal(response.status, 200)
+    const payload = (await response.json()) as { code?: string }
+    assert.notEqual(payload.code, 'USER_VERIFICATION_REQUIRED')
   })
 })
 
