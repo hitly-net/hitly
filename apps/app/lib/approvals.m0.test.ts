@@ -164,9 +164,13 @@ test('migration 0010: approvals keyset list index is (workspace_id, created_at D
     `select indexdef from pg_indexes where tablename = 'approvals' and indexname = 'approvals_workspace_created_at_id_idx'`,
   )
   assert.equal(idx.rows.length, 1)
-  assert.match(String(idx.rows[0].indexdef), /workspace_id/)
-  assert.match(String(idx.rows[0].indexdef), /created_at DESC/)
-  assert.match(String(idx.rows[0].indexdef), /id DESC/)
+  const indexdef = String(idx.rows[0].indexdef)
+  assert.match(indexdef, /workspace_id/)
+  // ORDER BY created_at DESC is NULLS FIRST (Postgres default). .desc() without
+  // nullsFirst() stores NULLS LAST, which indexdef spells out and this catches.
+  assert.match(indexdef, /created_at DESC(?! NULLS LAST)/)
+  assert.match(indexdef, /id DESC(?! NULLS LAST)/)
+  assert.doesNotMatch(indexdef, /NULLS LAST/)
 })
 
 test('ingest records the requester key and returns JCS argsHash and the create-once policy', async () => {

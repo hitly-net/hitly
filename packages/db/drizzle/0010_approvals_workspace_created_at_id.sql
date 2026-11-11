@@ -1,1 +1,1 @@
-CREATE INDEX IF NOT EXISTS "approvals_workspace_created_at_id_idx" ON "approvals" USING btree ("workspace_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS "approvals_workspace_created_at_id_idx" ON "approvals" USING btree ("workspace_id","created_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);

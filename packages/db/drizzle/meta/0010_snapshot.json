@@ -1,5 +1,5 @@
 {
-  "id": "717e5993-5790-45ba-9b60-f77033a47b2d",
+  "id": "ec8131df-5e94-4c69-88de-96595ed3a132",
   "prevId": "04dab690-2222-423d-a54a-9b68ccde5704",
   "version": "7",
   "dialect": "postgresql",
@@ -399,13 +399,13 @@
               "expression": "created_at",
               "isExpression": false,
               "asc": false,
-              "nulls": "last"
+              "nulls": "first"
             },
             {
               "expression": "id",
               "isExpression": false,
               "asc": false,
-              "nulls": "last"
+              "nulls": "first"
             }
           ],
           "isUnique": false,

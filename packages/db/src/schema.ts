@@ -436,9 +436,15 @@ export const approvals = pgTable(
     index('approvals_project_status_idx').on(table.projectId, table.status),
     index('approvals_created_at_idx').on(table.createdAt),
     // Keyset list pages (inbox + requester pending): always filter workspace_id,
-    // then ORDER BY created_at DESC, id DESC. Leading workspace_id beats a
-    // (created_at, id) index; project_id is IN-list on inbox, so it is not leading.
-    index('approvals_workspace_created_at_id_idx').on(table.workspaceId, table.createdAt.desc(), table.id.desc()),
+    // then ORDER BY created_at DESC, id DESC. Postgres DESC is NULLS FIRST;
+    // .desc() alone is NULLS LAST and the planner will not use this index.
+    // Leading workspace_id beats a (created_at, id) index; project_id is an
+    // IN-list on inbox, so it is not leading.
+    index('approvals_workspace_created_at_id_idx').on(
+      table.workspaceId,
+      table.createdAt.desc().nullsFirst(),
+      table.id.desc().nullsFirst(),
+    ),
     index('approvals_project_idempotency_idx').on(table.projectId, table.idempotencyKey),
     index('approvals_requester_key_status_idx').on(table.requesterKeyId, table.status),
   ],

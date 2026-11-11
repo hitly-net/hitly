@@ -85,13 +85,22 @@ describe('list cursor', () => {
     const migration = fs.readFileSync(path.join(drizzleDir, `${entry.tag}.sql`), 'utf8')
     assert.match(
       migration,
-      /CREATE INDEX IF NOT EXISTS "approvals_workspace_created_at_id_idx" ON "approvals" USING btree \("workspace_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST\)/,
+      /CREATE INDEX IF NOT EXISTS "approvals_workspace_created_at_id_idx" ON "approvals" USING btree \("workspace_id","created_at" DESC NULLS FIRST,"id" DESC NULLS FIRST\)/,
     )
+    assert.doesNotMatch(migration, /NULLS LAST/)
     const schema = fs.readFileSync(path.join(dir, '../../../packages/db/src/schema.ts'), 'utf8')
+    assert.match(schema, /table\.createdAt\.desc\(\)\.nullsFirst\(\)/)
+    assert.match(schema, /table\.id\.desc\(\)\.nullsFirst\(\)/)
+  })
+
+  it('olderThanListCursor is a row comparison (OR-of-lt cannot be an Index Cond)', () => {
+    const dir = path.dirname(fileURLToPath(import.meta.url))
+    const src = fs.readFileSync(path.join(dir, 'list-cursor.ts'), 'utf8')
     assert.match(
-      schema,
-      /index\('approvals_workspace_created_at_id_idx'\)\.on\(table\.workspaceId, table\.createdAt\.desc\(\), table\.id\.desc\(\)\)/,
+      src,
+      /sql`\(\$\{createdAtCol\}, \$\{idCol\}\) < \(\$\{cursor\.createdAt\}, \$\{cursor\.id\}\)`/,
     )
+    assert.doesNotMatch(src, /or\(lt\(/)
   })
 
   it('takeListPage encodes nextCursor only when more rows exist', () => {
