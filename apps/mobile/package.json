@@ -12,7 +12,8 @@
     "android": "expo start --android",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test 'src/**/*.test.ts'"
+    "test": "tsx --test 'src/**/*.test.ts'",
+    "icons:generate": "tsx scripts/icons/render.ts"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -36,6 +37,7 @@
     "react-native-web": "^0.21.0"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
     "@types/react": "~19.1.10",
     "tsx": "^4.23.12",
     "typescript": "^5.9.2"
