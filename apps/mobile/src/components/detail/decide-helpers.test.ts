@@ -14,6 +14,7 @@ test('handleDecideError: reload succeeds with still-pending item → stay', asyn
     assignedUserId: null,
     createdAt: '2026-08-19T12:00:00Z',
     expiresAt: null,
+    answerSchema: null,
     envelope: {
       action: { name: 'send-refund', args: {} },
       allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },
@@ -40,6 +41,7 @@ test('handleDecideError: reload succeeds but now decided → stay', async () => 
     assignedUserId: null,
     createdAt: '2026-08-19T12:00:00Z',
     expiresAt: null,
+    answerSchema: null,
     envelope: {
       action: { name: 'send-refund', args: {} },
       allowedActions: { accept: true, reject: true, edit: false, respond: false, ignore: false, cancel: false },

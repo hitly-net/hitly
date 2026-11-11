@@ -1,4 +1,4 @@
-import type { ApprovalEnvelope, ApprovalStatus, Decision, OriginRef, PluginId } from '@hitly/core'
+import type { AnswerSchema, ApprovalEnvelope, ApprovalStatus, Decision, OriginRef, PluginId } from '@hitly/core'
 
 export type InstanceConfig = {
   baseUrl: string
@@ -66,6 +66,11 @@ export type ApprovalDetail = {
   expiresAt: string | null
   /** hitl-spec 4.3: ISO when first shown to a reviewer who can decide; null if never. */
   presentedAt?: string | null
+  /**
+   * Stored ask_user schema (hitl-spec 3.4), also nested on `envelope.answerSchema`.
+   * Null when the request has none (legacy asks). Always present on GET /api/v1/approvals/:id.
+   */
+  answerSchema: AnswerSchema | null
   envelope: ApprovalEnvelope
   origin: OriginRef
   originFields: OriginField[]
