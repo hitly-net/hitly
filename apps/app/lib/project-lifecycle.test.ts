@@ -21,7 +21,13 @@ import {
 } from '@hitly/db/schema'
 import { POST as cancelRoute } from '../app/api/v1/approvals/[id]/cancel/route'
 import { POST as ingestRoute } from '../app/api/v1/approvals/route'
-import { cancelApproval, cancelApprovalAsRequester, decideApproval, ingestApproval } from './approvals'
+import {
+  cancelApproval,
+  cancelApprovalAsRequester,
+  decideApproval,
+  ingestApproval,
+  retryResume,
+} from './approvals'
 import { db, pool } from './db'
 import { expireOverdueApprovals } from './housekeeping/jobs'
 import { newId } from './ids'
@@ -206,6 +212,27 @@ describe('project lifecycle contract', () => {
     assert.doesNotMatch(mcpHost, /pauseProject|archiveProject|unarchiveProject|setProjectStatus/)
     const pluginHttp = readFileSync(new URL('../../../packages/plugin-http/src/index.ts', import.meta.url), 'utf8')
     assert.doesNotMatch(pluginHttp, /pauseProject|archiveProject|setProjectStatus/)
+  })
+
+  it('HTTP decide, opens, and retry-resume routes pass lifecycle error codes through', () => {
+    const decideSrc = readFileSync(
+      new URL('../app/api/v1/approvals/[id]/decide/route.ts', import.meta.url),
+      'utf8',
+    )
+    assert.match(decideSrc, /'code' in decided && decided\.code/)
+    assert.match(decideSrc, /\{ error: decided\.error, \.\.\.code/)
+    const opensSrc = readFileSync(
+      new URL('../app/api/v1/approvals/[id]/opens/route.ts', import.meta.url),
+      'utf8',
+    )
+    assert.match(opensSrc, /mutationBlockedForProjectStatus/)
+    assert.match(opensSrc, /\{\s*error:\s*archivedOpen\.error,\s*code:\s*archivedOpen\.code\s*\}/)
+    const retrySrc = readFileSync(
+      new URL('../app/api/v1/approvals/[id]/retry-resume/route.ts', import.meta.url),
+      'utf8',
+    )
+    assert.match(retrySrc, /'code' in result && result\.code/)
+    assert.match(retrySrc, /\{\s*error,\s*code:\s*result\.code\s*\}/)
   })
 })
 
@@ -561,6 +588,241 @@ describe('cancel on paused and archived projects', () => {
     assert.equal(cancelled.status, 'cancelled')
     const [sessionRow] = await database.select().from(approvals).where(eq(approvals.id, sessionCreated.approval.id))
     assert.equal(sessionRow.status, 'cancelled')
+  })
+})
+
+describe('paused ingest replay', () => {
+  it('replays the same Idempotency-Key and body, and refuses a new key with 409 project_paused', async () => {
+    const { projectId, apiKey } = await insertProject('Pause Replay')
+    const idem = `idem-${newId('t')}`
+    const body = httpBody()
+    const first = await ingestRoute(
+      new Request('http://localhost/api/v1/approvals', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'Idempotency-Key': idem,
+        },
+        body: JSON.stringify(body),
+      }),
+    )
+    assert.equal(first.status, 200)
+    const firstJson = (await first.json()) as { id: string; replayed: boolean }
+    assert.equal(firstJson.replayed, false)
+
+    const paused = await withTenant(workspaceId, () =>
+      setProjectStatus({ projectId, status: 'paused', workspaceRole: 'admin', workspace }),
+    )
+    assert.equal(paused.ok, true)
+
+    const replay = await ingestRoute(
+      new Request('http://localhost/api/v1/approvals', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'Idempotency-Key': idem,
+        },
+        body: JSON.stringify(body),
+      }),
+    )
+    assert.equal(replay.status, 200)
+    const replayJson = (await replay.json()) as { id: string; replayed: boolean }
+    assert.equal(replayJson.replayed, true)
+    assert.equal(replayJson.id, firstJson.id)
+    const replayedRows = await database.select().from(approvals).where(eq(approvals.projectId, projectId))
+    assert.equal(replayedRows.length, 1)
+
+    const refused = await ingestRoute(
+      new Request('http://localhost/api/v1/approvals', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'Idempotency-Key': `idem-${newId('t')}`,
+        },
+        body: JSON.stringify(httpBody()),
+      }),
+    )
+    assert.equal(refused.status, 409)
+    assert.deepEqual(await refused.json(), { error: 'project paused', code: 'project_paused' })
+    const after = await database.select().from(approvals).where(eq(approvals.projectId, projectId))
+    assert.equal(after.length, 1)
+  })
+})
+
+describe('HTTP decide on paused and archived projects', () => {
+  it('is allowed on paused and is 409 project_archived on archived; the route forwards code', async () => {
+    const { projectId: pausedProjectId, apiKey: pausedKey } = await insertProject('Pause Decide Http')
+    const pausedCreated = await withTenant(workspaceId, () => ingest(pausedKey))
+    if (!pausedCreated.ok) throw new Error(pausedCreated.error)
+    const paused = await withTenant(workspaceId, () =>
+      setProjectStatus({ projectId: pausedProjectId, status: 'paused', workspaceRole: 'admin', workspace }),
+    )
+    assert.equal(paused.ok, true)
+
+    const decided = await decideApproval({
+      approvalId: pausedCreated.approval.id,
+      actorUserId: adminId,
+      payload: { decision: 'accept' },
+      workspaceId,
+    })
+    assert.equal('error' in decided && Boolean(decided.error), false, JSON.stringify(decided))
+    if ('error' in decided && decided.error) throw new Error(decided.error)
+    const [pausedRow] = await database.select().from(approvals).where(eq(approvals.id, pausedCreated.approval.id))
+    assert.ok(pausedRow.status === 'decided' || pausedRow.status === 'failed_resume', pausedRow.status)
+
+    const { projectId: archivedProjectId, apiKey: archivedKey } = await insertProject('Archive Decide Http')
+    const archivedCreated = await withTenant(workspaceId, () => ingest(archivedKey))
+    if (!archivedCreated.ok) throw new Error(archivedCreated.error)
+    const archived = await withTenant(workspaceId, () =>
+      setProjectStatus({ projectId: archivedProjectId, status: 'archived', workspaceRole: 'admin', workspace }),
+    )
+    assert.equal(archived.ok, true)
+
+    const refused = await decideApproval({
+      approvalId: archivedCreated.approval.id,
+      actorUserId: adminId,
+      payload: { decision: 'accept' },
+      workspaceId,
+    })
+    assert.equal('error' in refused, true)
+    if (!('error' in refused)) throw new Error('archived decide must fail')
+    assert.equal(refused.error, 'project archived')
+    assert.equal(refused.status, 409)
+    assert.equal('code' in refused && refused.code, PROJECT_ARCHIVED_CODE)
+
+    const decideSrc = readFileSync(
+      new URL('../app/api/v1/approvals/[id]/decide/route.ts', import.meta.url),
+      'utf8',
+    )
+    assert.match(decideSrc, /'code' in decided && decided\.code/)
+    assert.match(
+      decideSrc,
+      /return NextResponse\.json\(\{ error: decided\.error, \.\.\.code, \.\.\.fields \}, \{ status: decided\.status \}\)/,
+    )
+  })
+})
+
+describe('archived opens route', () => {
+  it('returns 409 { error: project archived, code: project_archived }', () => {
+    assert.deepEqual(mutationBlockedForProjectStatus('archived'), {
+      ok: false,
+      error: 'project archived',
+      code: 'project_archived',
+      status: 409,
+    })
+    const opensSrc = readFileSync(
+      new URL('../app/api/v1/approvals/[id]/opens/route.ts', import.meta.url),
+      'utf8',
+    )
+    assert.match(opensSrc, /mutationBlockedForProjectStatus\(access\?\.project\.status/)
+    assert.match(
+      opensSrc,
+      /return NextResponse\.json\(\{ error: archivedOpen\.error, code: archivedOpen\.code \}, \{ status: archivedOpen\.status \}\)/,
+    )
+  })
+})
+
+describe('retryResume on paused and archived projects', () => {
+  it('is allowed on paused and is 409 project_archived on archived', async () => {
+    const receiver = await startCapturingReceiver()
+    try {
+      receiver.setMode('fail')
+      const { projectId, apiKey } = await insertProject('Retry Resume Lifecycle')
+      const created = await withTenant(workspaceId, () =>
+        ingestApproval({
+          apiKey,
+          body: {
+            ...httpBody(),
+            resumeUrl: `${receiver.url}/resume`,
+          },
+        }),
+      )
+      if (!created.ok) throw new Error(created.error)
+
+      const decided = await decideApproval({
+        approvalId: created.approval.id,
+        actorUserId: adminId,
+        payload: { decision: 'accept' },
+        workspaceId,
+      })
+      assert.equal('error' in decided && Boolean(decided.error), false, JSON.stringify(decided))
+      if ('error' in decided && decided.error) throw new Error(decided.error)
+      assert.equal(decided.status, 'failed_resume')
+
+      const paused = await withTenant(workspaceId, () =>
+        setProjectStatus({ projectId, status: 'paused', workspaceRole: 'admin', workspace }),
+      )
+      assert.equal(paused.ok, true)
+
+      const retryPaused = await retryResume({ approvalId: created.approval.id, workspaceId })
+      assert.equal('error' in retryPaused && Boolean(retryPaused.error), false, JSON.stringify(retryPaused))
+      if ('error' in retryPaused && retryPaused.error) throw new Error(retryPaused.error)
+      assert.ok(retryPaused.status === 'failed_resume' || retryPaused.status === 'decided', String(retryPaused.status))
+      assert.notEqual('code' in retryPaused && retryPaused.code, PROJECT_ARCHIVED_CODE)
+
+      const archived = await withTenant(workspaceId, () =>
+        setProjectStatus({ projectId, status: 'archived', workspaceRole: 'admin', workspace }),
+      )
+      assert.equal(archived.ok, true)
+
+      const retryArchived = await retryResume({ approvalId: created.approval.id, workspaceId })
+      assert.equal('error' in retryArchived, true)
+      if (!('error' in retryArchived)) throw new Error('archived retryResume must fail')
+      assert.equal(retryArchived.error, 'project archived')
+      assert.equal(retryArchived.status, 409)
+      assert.equal('code' in retryArchived && retryArchived.code, PROJECT_ARCHIVED_CODE)
+    } finally {
+      await receiver.close()
+    }
+  })
+})
+
+describe('expiry sweeper on paused projects', () => {
+  it('expires an overdue pending item and sends exactly one expired callback', async () => {
+    const receiver = await startCapturingReceiver()
+    try {
+      const { projectId, apiKey } = await insertProject('Pause Expire Sweep')
+      const created = await withTenant(workspaceId, () =>
+        ingestApproval({
+          apiKey,
+          body: {
+            ...httpBody(),
+            resumeUrl: `${receiver.url}/resume`,
+            lifecycleEvents: ['expired'],
+          },
+        }),
+      )
+      if (!created.ok) throw new Error(created.error)
+      const paused = await withTenant(workspaceId, () =>
+        setProjectStatus({ projectId, status: 'paused', workspaceRole: 'admin', workspace }),
+      )
+      assert.equal(paused.ok, true)
+
+      await database
+        .update(approvals)
+        .set({ expiresAt: new Date(Date.now() - 60_000) })
+        .where(eq(approvals.id, created.approval.id))
+      assert.equal((await database.select().from(approvals).where(eq(approvals.id, created.approval.id)))[0]?.status, 'pending')
+
+      const before = receiver.hits.length
+      const swept = await expireOverdueApprovals()
+      assert.ok(swept.expired >= 1, 'the sweep must expire the paused overdue row')
+
+      const [row] = await database.select().from(approvals).where(eq(approvals.id, created.approval.id))
+      assert.equal(row.status, 'expired')
+      const expiryHits = receiver.hits
+        .slice(before)
+        .filter(
+          (hit) =>
+            String(hit.body.request_id ?? hit.body.id) === created.approval.id && hit.body.type === 'expired',
+        )
+      assert.equal(expiryHits.length, 1, `exactly one expired callback, got ${expiryHits.length}`)
+    } finally {
+      await receiver.close()
+    }
   })
 })
 
