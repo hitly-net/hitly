@@ -4,7 +4,7 @@
  * Order matches #107: `created_at DESC, id DESC`. The id tie-break is required
  * so equal timestamps never skip or repeat across pages.
  */
-import { and, eq, lt, or, type SQL } from 'drizzle-orm'
+import { sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 
 export type ListCursor = { createdAt: Date; id: string }
 
@@ -57,13 +57,17 @@ export function clampListLimit(limit: number | undefined, defaultLimit: number, 
   return Math.min(Math.max(Math.trunc(limit ?? defaultLimit), 1), maxLimit)
 }
 
-/** Rows strictly older than `cursor` in `created_at DESC, id DESC` order. */
+/**
+ * Rows strictly older than `cursor` in `created_at DESC, id DESC` order.
+ * Tuple `<` is the same as `created_at < t OR (created_at = t AND id < i)` for
+ * these NOT NULL columns, and Postgres can use it as an Index Cond.
+ */
 export function olderThanListCursor(
-  createdAtCol: Parameters<typeof lt>[0],
-  idCol: Parameters<typeof lt>[0],
+  createdAtCol: SQLWrapper,
+  idCol: SQLWrapper,
   cursor: ListCursor,
 ): SQL | undefined {
-  return or(lt(createdAtCol, cursor.createdAt), and(eq(createdAtCol, cursor.createdAt), lt(idCol, cursor.id)))
+  return sql`(${createdAtCol}, ${idCol}) < (${cursor.createdAt}, ${cursor.id})`
 }
 
 export function takeListPage<T extends { createdAt: Date; id: string }>(
