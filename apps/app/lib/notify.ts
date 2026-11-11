@@ -22,6 +22,7 @@ import { pushCopy, sendExpoPush } from './push'
 import { listVisibleProjectIds } from './rbac'
 import { requireDb } from './require-db'
 import { afterTenantCommit, withTenant } from './tenant'
+import { decodeTenantJson } from './tenant-crypto'
 
 const APP_URL = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001'
 
@@ -30,9 +31,10 @@ export async function notifyAssignee(args: {
   projectId: string
   approvalId: string
   assignedUserId: string | null
-  actionName: string
   channelTypes: ChannelType[]
   expiresAt?: Date | string | null
+  /** Injectable for tests; production always uses the real Expo endpoint. */
+  sendPush?: typeof sendExpoPush
 }) {
   if (!args.assignedUserId) {
     await logProjectEvent({
@@ -59,10 +61,67 @@ export async function notifyAssignee(args: {
       projectId: args.projectId,
       approvalId: args.approvalId,
       assignedUserId: args.assignedUserId,
-      actionName: args.actionName,
       expiresAt: args.expiresAt,
+      sendPush: args.sendPush,
     }),
   )
+}
+
+/** Reviewer-safe inputs shared by the decision email and the push copy. */
+type DecisionContentArgs = {
+  projectName: string | null
+  requestedByKey: string | null
+  envelope: Record<string, unknown>
+  origin: Record<string, unknown>
+  expiresAt: Date | string | null
+}
+
+/**
+ * Load the reviewer-facing inputs for the decision email/push. The stored
+ * envelope/origin may be encrypted at rest (editions with encryptDocument),
+ * so both are decoded with decodeTenantJson — the same helper every other
+ * host read surface uses (work-item-page, approvals reads). The decoded
+ * bags stay in this process; the renderers read only their allowlisted
+ * fields, so no callback secret or encrypted payload can ride along.
+ */
+async function loadDecisionContentArgs(args: {
+  workspaceId: string
+  projectId: string
+  approvalId: string
+  expiresAtOverride?: Date | string | null
+}): Promise<DecisionContentArgs> {
+  const database = requireDb()
+  const rows = await database
+    .select({
+      envelope: approvals.envelope,
+      origin: approvals.origin,
+      expiresAt: approvals.expiresAt,
+      requesterKeyId: approvals.requesterKeyId,
+    })
+    .from(approvals)
+    .where(eq(approvals.id, args.approvalId))
+    .limit(1)
+  const row = rows[0]
+  const envelope = (await decodeTenantJson(args.workspaceId, row?.envelope)) as Record<string, unknown>
+  const origin = (await decodeTenantJson(args.workspaceId, row?.origin)) as Record<string, unknown>
+  const projectName = await projectNameFor(args.projectId, args.workspaceId)
+  let requestedByKey: string | null = null
+  if (row?.requesterKeyId) {
+    const keyRows = await database
+      .select({ name: projectApiKeys.name })
+      .from(projectApiKeys)
+      .where(eq(projectApiKeys.id, row.requesterKeyId))
+      .limit(1)
+    requestedByKey = keyRows[0]?.name ?? null
+  }
+  const envelopeExpiry = typeof envelope.expiresAt === 'string' ? envelope.expiresAt : null
+  return {
+    projectName,
+    requestedByKey,
+    envelope,
+    origin,
+    expiresAt: args.expiresAtOverride ?? row?.expiresAt ?? envelopeExpiry,
+  }
 }
 
 /**
@@ -97,36 +156,16 @@ async function notifyAssigneeEmail(args: {
 
   let message: Awaited<ReturnType<typeof renderDecisionNeededEmail>> | null = null
   try {
-    const approvalRows = await database
-      .select({
-        envelope: approvals.envelope,
-        origin: approvals.origin,
-        expiresAt: approvals.expiresAt,
-        requesterKeyId: approvals.requesterKeyId,
-      })
-      .from(approvals)
-      .where(eq(approvals.id, args.approvalId))
-      .limit(1)
-    const row = approvalRows[0]
-    const projectName = await projectNameFor(args.projectId, args.workspaceId)
-    let requestedByKey: string | null = null
-    if (row?.requesterKeyId) {
-      const keyRows = await database
-        .select({ name: projectApiKeys.name })
-        .from(projectApiKeys)
-        .where(eq(projectApiKeys.id, row.requesterKeyId))
-        .limit(1)
-      requestedByKey = keyRows[0]?.name ?? null
-    }
+    const content = await loadDecisionContentArgs(args)
     message = await renderDecisionNeededEmail({
       appUrl: APP_URL,
       approvalId: args.approvalId,
       greetingName: assignee.name,
-      projectName,
-      envelope: row?.envelope ?? null,
-      origin: row?.origin ?? null,
-      requestedByKey,
-      expiresAt: args.expiresAt ?? row?.expiresAt,
+      projectName: content.projectName,
+      envelope: content.envelope,
+      origin: content.origin,
+      requestedByKey: content.requestedByKey,
+      expiresAt: content.expiresAt,
     })
   } catch (error) {
     await logProjectEvent({
@@ -273,19 +312,35 @@ export async function notifyPendingItemPush(args: {
   projectId: string
   approvalId: string
   assignedUserId: string | null
-  actionName: string
   expiresAt?: Date | string | null
+  /** Injectable for tests; production always uses the real Expo endpoint. */
+  sendPush?: typeof sendExpoPush
 }) {
   return withTenant(args.workspaceId, async () => {
     const recipientIds = await listPendingPushRecipientIds(args)
     if (recipientIds.length === 0) return
+    const sendPush = args.sendPush ?? sendExpoPush
 
-    const projectName = await projectNameFor(args.projectId, args.workspaceId)
-    const copy = pushCopy({
-      actionName: args.actionName,
-      projectName,
-      expiresAt: args.expiresAt,
-    })
+    // Titles reuse the branded-email wording helper (question / decision
+    // summary, never the raw tool name) on DECODED envelope/origin. A copy
+    // failure must never block delivery, so fall back to the generic copy.
+    let copy: { title: string; body: string }
+    try {
+      const content = await loadDecisionContentArgs(args)
+      copy = pushCopy(content)
+    } catch (error) {
+      await logProjectEvent({
+        projectId: args.projectId,
+        approvalId: args.approvalId,
+        level: 'warn',
+        type: 'notified',
+        message: `Push copy failed, using generic: ${error instanceof Error ? error.message : String(error)}`,
+      })
+      copy = {
+        title: 'HITLy: a decision is waiting for you',
+        body: 'A work item is waiting for you.',
+      }
+    }
     const data = {
       type: 'approval',
       itemId: args.approvalId,
@@ -306,7 +361,7 @@ export async function notifyPendingItemPush(args: {
         workspaceRole: role,
       })
       try {
-        const result = await sendExpoPush({
+        const result = await sendPush({
           tokens: devices.map((device) => device.token),
           title: copy.title,
           body: copy.body,

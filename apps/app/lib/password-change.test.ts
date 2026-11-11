@@ -54,6 +54,19 @@ const NEW_PASSWORD = 'new-password-2'
 type Sent = { to: string; subject: string; text: string }
 let outbox: Sent[] = []
 
+// Branded emails render on detached fire-and-forget chains; track them so
+// assertions drain pending sends deterministically instead of sleeping.
+const inflight = new Set<Promise<unknown>>()
+function trackMail(chain: Promise<unknown>) {
+  inflight.add(chain)
+  void chain.finally(() => inflight.delete(chain))
+}
+async function drainMail() {
+  while (inflight.size > 0) {
+    await Promise.allSettled([...inflight])
+  }
+}
+
 function makeAuth() {
   const db: Record<string, unknown[]> = { user: [], session: [], account: [], verification: [] }
   return betterAuth({
@@ -89,11 +102,7 @@ function post(pathname: string, body: unknown) {
 }
 
 async function settle() {
-  // Fire-and-forget mailers render the branded email on a microtask
-  // chain; drain it before asserting on the outbox.
-  for (let attempt = 0; attempt < 20; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
+  await drainMail()
 }
 
 async function signInCookie(password = OLD_PASSWORD): Promise<string> {
@@ -164,6 +173,7 @@ before(() => {
 })
 
 beforeEach(async () => {
+  await drainMail()
   auth = makeAuth()
   outbox = []
   await auth.api.signUpEmail({ body: { email: EMAIL, password: OLD_PASSWORD, name: 'Alex' } })
@@ -260,11 +270,12 @@ describe('changing the password while signed in', () => {
 
   it('sends one password-changed email through the mocked mailer, with no secret in it', async () => {
     const cookie = await signInCookie()
+    await drainMail()
     outbox = []
     const { deps } = routeMocks({ notify: createSendPasswordChangedNotification(async (message) => {
       outbox.push(message)
       return { delivered: true }
-    }) })
+    }, { track: trackMail }) })
     const response = await handlePasswordChange(
       changeRequest(cookie, { currentPassword: OLD_PASSWORD, newPassword: NEW_PASSWORD }),
       deps,

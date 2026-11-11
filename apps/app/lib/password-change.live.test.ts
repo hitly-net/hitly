@@ -32,12 +32,13 @@ import assert from 'node:assert/strict'
 import { NextRequest } from 'next/server'
 import { and, eq, inArray, like } from 'drizzle-orm'
 import { accounts, memberships, sessions, users, workspaces } from '@hitly/db/schema'
-import { clearSentMail, sentMail } from '@hitly/mail'
+import { clearSentMail, sendMail, sentMail } from '@hitly/mail'
 import { auth } from './auth'
 import { db, pool } from './db'
 import { CHANGE_PASSWORD_ENDPOINT } from './password-change'
 import { CHANGE_PASSWORD_LIMITED_LOG } from './change-password-limit'
 import { handlePasswordChange } from './password-change-route'
+import { createSendPasswordChangedNotification } from './password-change-emails'
 import { newId } from './ids'
 
 if (!db || !auth) throw new Error('DATABASE_URL and BETTER_AUTH_SECRET required for tests')
@@ -84,9 +85,20 @@ function email(local: string) {
   return `${local}@${emailDomain}`
 }
 
-async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 20))
+// The password-changed notice renders the branded email on a detached
+// fire-and-forget chain; track it so assertions drain pending sends
+// deterministically instead of sleeping.
+const inflight = new Set<Promise<unknown>>()
+function trackMail(chain: Promise<unknown>) {
+  inflight.add(chain)
+  void chain.finally(() => inflight.delete(chain))
 }
+async function settle() {
+  while (inflight.size > 0) {
+    await Promise.allSettled([...inflight])
+  }
+}
+const trackedNotify = createSendPasswordChangedNotification(sendMail, { track: trackMail })
 
 async function createUser(address: string, password = PASSWORD) {
   await authApi.signUpEmail({ body: { email: address, name: 'Alex', password } })
@@ -279,6 +291,7 @@ describe('signed-in password change on real Postgres', () => {
     const newPassword = `logshape-Pw-${run}-Nc5tY8wRa`
     const newHash = createHash('sha256').update(newPassword).digest('hex')
 
+    await settle()
     clearSentMail()
     const before = logged.length
     // Production log path (no log override): whatever the change emits must
@@ -286,7 +299,7 @@ describe('signed-in password change on real Postgres', () => {
     // puts a 64-char hex digest in the output and goes red here.
     const response = await handlePasswordChange(
       changeRequest(cookie, { currentPassword: PASSWORD, newPassword }, `203.0.113.${run.slice(-1)}`),
-      { allow: () => true },
+      { allow: () => true, notify: trackedNotify },
     )
     assert.equal(response.status, 200, 'the log-shape change succeeds')
     await settle()
@@ -333,13 +346,15 @@ describe('signed-in password change on real Postgres', () => {
     await createUser(address)
     const cookie = await signInCookie(address)
 
+    await settle()
     clearSentMail()
     const before = logged.length
-    // No log override and the real notification mailer: every line the change
-    // can produce (handler logs, Better Auth logger, mail path) is captured.
+    // No log override and the real notification mailer (tracked so the test
+    // can drain it): every line the change can produce (handler logs, Better
+    // Auth logger, mail path) is captured.
     const response = await handlePasswordChange(
       changeRequest(cookie, { currentPassword: PASSWORD, newPassword: CANARY }, `203.0.113.${run.slice(-1)}`),
-      { allow: () => true },
+      { allow: () => true, notify: trackedNotify },
     )
     assert.equal(response.status, 200, 'the canary change itself succeeds')
     await settle()

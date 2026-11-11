@@ -31,6 +31,19 @@ const APP_URL = 'http://localhost:3001'
 
 type Sent = { to: string; subject: string; text: string }
 let outbox: Sent[] = []
+// The reset sender renders the branded email on a detached chain; track it
+// so tests drain pending sends deterministically instead of sleeping.
+const inflight = new Set<Promise<unknown>>()
+function trackMail(chain: Promise<unknown>) {
+  inflight.add(chain)
+  void chain.finally(() => inflight.delete(chain))
+}
+async function drainMail() {
+  while (inflight.size > 0) {
+    await Promise.allSettled([...inflight])
+  }
+}
+
 let logLines: string[] = []
 let db: Record<string, Record<string, unknown>[]>
 
@@ -48,10 +61,14 @@ function makeAuth() {
         logLines.push([level, message, ...args.map((a) => (a instanceof Error ? a.message : JSON.stringify(a)))].join(' '))
       },
     },
-    emailAndPassword: emailAndPasswordOptions(APP_URL, async (message) => {
-      outbox.push(message)
-      return { delivered: true }
-    }),
+    emailAndPassword: emailAndPasswordOptions(
+      APP_URL,
+      async (message) => {
+        outbox.push(message)
+        return { delivered: true }
+      },
+      { track: trackMail },
+    ),
   })
 }
 
@@ -85,7 +102,7 @@ const appFetch: typeof fetch = async (input, init) => {
 
 async function tokenFromEmail() {
   await requestPasswordReset('alex@example.com', appFetch)
-  await new Promise((resolve) => setTimeout(resolve, 10))
+  await drainMail()
   const match = outbox.at(-1)?.text.match(/https?:\/\/\S+/)
   assert.ok(match, 'reset email must contain a link')
   const token = new URL(match[0]).searchParams.get('token')
@@ -114,6 +131,7 @@ function assertNotLogged(token: string) {
 }
 
 beforeEach(async () => {
+  await drainMail()
   auth = makeAuth()
   outbox = []
   logLines = []

@@ -661,7 +661,6 @@ export async function ingestApproval(args: {
     projectId: project.id,
     approvalId,
     assignedUserId: routed.assignedUserId,
-    actionName: ingested.action.name,
     channelTypes: routed.channelTypes,
     expiresAt: routed.expiresAt,
   })

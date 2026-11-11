@@ -11,14 +11,30 @@
 /** Origin keys that hold human-facing names (mirrors apps/app/lib/origin.ts labels). */
 const ASKER_ORIGIN_KEYS = ['agentName', 'workflowName', 'profileName'] as const
 
+/** envelope.metadata keys that hold a display-only action summary. */
+const ACTION_SUMMARY_KEYS = ['summary', 'title', 'headline', 'description'] as const
+
 export type DecisionEmailContent = {
   /** Headline question (ask_user prompt), sanitized; null for plain approvals. */
   question: string | null
+  /**
+   * Human-readable action summary for approval-style requests: the first
+   * display-only key of envelope.metadata (`summary`/`title`/`headline`/
+   * `description`). Credential-shaped keys are never read.
+   */
+  actionSummary: string | null
   projectName: string | null
   askedBy: string | null
   /** Readable UTC deadline, e.g. "Friday 14 November 2026 at 09:00 UTC (in about 3 hours)". */
   deadlineLabel: string | null
   subject: string
+  /**
+   * Push notification title. ask_user: the question itself; request_approval:
+   * "HITLy: <action summary>"; fallback: the branded subject. Same
+   * trim/truncate rules as the email subject (single helper, so push and
+   * email wording always match).
+   */
+  pushTitle: string
 }
 
 /** Collapse whitespace/control chars, cap the length. Never returns markup or newlines. */
@@ -86,6 +102,20 @@ export function extractDecisionEmailContent(args: {
   const askedBy =
     firstString(args.origin, ASKER_ORIGIN_KEYS) ?? safeText(args.requestedByKey, 120)
   const deadline = deadlineLabel(args.expiresAt, args.now)
+  const metadata =
+    args.envelope?.metadata && typeof args.envelope.metadata === 'object' && !Array.isArray(args.envelope.metadata)
+      ? (args.envelope.metadata as Record<string, unknown>)
+      : null
+  let actionSummary: string | null = null
+  if (metadata) {
+    for (const key of ACTION_SUMMARY_KEYS) {
+      const text = safeText(metadata[key], 160)
+      if (text) {
+        actionSummary = text
+        break
+      }
+    }
+  }
   const subject = question
     ? question.length <= 90
       ? `HITLy: ${question}`
@@ -95,5 +125,6 @@ export function extractDecisionEmailContent(args: {
     : projectName
       ? `HITLy: ${projectName} needs your decision`
       : 'HITLy: a decision is waiting for you'
-  return { question, projectName, askedBy, deadlineLabel: deadline, subject }
+  const pushTitle = question ?? (actionSummary ? `HITLy: ${actionSummary}` : subject)
+  return { question, actionSummary, projectName, askedBy, deadlineLabel: deadline, subject, pushTitle }
 }

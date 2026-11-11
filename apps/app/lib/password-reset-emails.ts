@@ -30,10 +30,15 @@ export async function buildResetEmail({ to, link }: { to: string; link: string }
  * sent here. Sending is not awaited, so the response time and body are the
  * same whether or not the account exists.
  */
-export function createSendResetPassword(appUrl: string, send: MailFn) {
+export type MailSendTracker = (chain: Promise<unknown>) => void
+
+export function createSendResetPassword(appUrl: string, send: MailFn, opts: { track?: MailSendTracker } = {}) {
   return async ({ user, token }: { user: { email: string }; url: string; token: string }) => {
     const link = buildResetPageUrl(appUrl, token)
-    void buildResetEmail({ to: user.email, link })
+    // Fire-and-forget so the HTTP response never depends on delivery; the
+    // optional track hook lets tests await pending sends deterministically
+    // instead of sleeping.
+    const chain = buildResetEmail({ to: user.email, link })
       .then((message) => send(message))
       .catch((error: unknown) => {
         console.error(
@@ -41,5 +46,6 @@ export function createSendResetPassword(appUrl: string, send: MailFn) {
           error instanceof Error ? error.message : error,
         )
       })
+    opts.track?.(chain)
   }
 }

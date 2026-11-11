@@ -64,6 +64,12 @@ function expectButtonAndLink(mail: RenderedEmail, href: string, label: string) {
   assert.ok(mail.html.includes('Open in HITLy'), `${label}: primary button`)
   assert.ok(mail.html.includes(`href="${href}"`), `${label}: button href`)
   assert.ok(mail.text.includes(href), `${label}: plain link in text alternative`)
+  // Soft-pin the HTML plain-text fallback: some clients strip button styling,
+  // so the raw URL must also appear as text in the HTML body (button + plain
+  // link = the href appears at least twice, plus the "paste this link" hint).
+  const hrefOccurrences = mail.html.split(`href="${href}"`).length - 1
+  assert.ok(hrefOccurrences >= 2, `${label}: HTML must carry a plain link besides the button`)
+  assert.ok(mail.html.includes('paste this link'), `${label}: plain-link hint missing from HTML`)
 }
 
 describe('decision-needed email', () => {

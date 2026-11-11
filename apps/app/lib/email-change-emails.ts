@@ -15,6 +15,7 @@ import {
   EMAIL_CHANGE_TTL_HOURS,
 } from './email-change'
 import type { MailFn } from './password-reset'
+import type { MailSendTracker } from './password-reset-emails'
 
 export async function buildEmailChangeVerificationEmail({ to, link }: { to: string; link: string }) {
   const rendered = await renderEmailChangeVerificationEmail({
@@ -32,10 +33,11 @@ export async function buildEmailChangedNotice({ to }: { to: string }) {
   return { to, ...rendered }
 }
 
-export function createSendEmailChangeVerification(appUrl: string, send: MailFn) {
+export function createSendEmailChangeVerification(appUrl: string, send: MailFn, opts: { track?: MailSendTracker } = {}) {
   return async ({ to, token }: { to: string; token: string }) => {
     const link = buildEmailChangePageUrl(appUrl, token)
-    void buildEmailChangeVerificationEmail({ to, link })
+    // Fire-and-forget; track lets tests drain pending sends deterministically.
+    const chain = buildEmailChangeVerificationEmail({ to, link })
       .then((message) => send(message))
       .catch((error: unknown) => {
         console.error(
@@ -43,12 +45,13 @@ export function createSendEmailChangeVerification(appUrl: string, send: MailFn) 
           error instanceof Error ? error.message : error,
         )
       })
+    opts.track?.(chain)
   }
 }
 
-export function createSendEmailChangedNotice(send: MailFn) {
+export function createSendEmailChangedNotice(send: MailFn, opts: { track?: MailSendTracker } = {}) {
   return async ({ to }: { to: string }) => {
-    void buildEmailChangedNotice({ to })
+    const chain = buildEmailChangedNotice({ to })
       .then((message) => send(message))
       .catch((error: unknown) => {
         console.error(
@@ -56,5 +59,6 @@ export function createSendEmailChangedNotice(send: MailFn) {
           error instanceof Error ? error.message : error,
         )
       })
+    opts.track?.(chain)
   }
 }
