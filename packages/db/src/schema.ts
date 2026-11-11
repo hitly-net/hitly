@@ -455,6 +455,26 @@ export const userDevices = pgTable(
   (table) => [index('user_devices_user_id_idx').on(table.userId)],
 )
 
+/**
+ * Expo push tokens for the reviewer app. A token belongs to one user;
+ * re-registering an existing token moves it to the current user.
+ * User-scoped (not a workspace tenant table).
+ */
+export const pushTokens = pgTable(
+  'push_tokens',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    token: varchar('token', { length: 255 }).notNull().unique(),
+    platform: devicePlatformEnum('platform').notNull(),
+    createdAt: createdAt(),
+    lastSeenAt: timestamp('last_seen_at', { precision: 3, withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('push_tokens_user_id_idx').on(table.userId)],
+)
+
 export const housekeepingJobs = pgTable('housekeeping_jobs', {
   id: varchar('id', { length: 64 }).primaryKey(),
   schedule: housekeepingScheduleEnum('schedule').notNull(),

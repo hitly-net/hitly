@@ -629,11 +629,13 @@ export async function ingestApproval(args: {
   }
 
   await notifyAssignee({
+    workspaceId: project.workspaceId,
     projectId: project.id,
     approvalId,
     assignedUserId: routed.assignedUserId,
     actionName: ingested.action.name,
     channelTypes: routed.channelTypes,
+    expiresAt: routed.expiresAt,
   })
 
     try {

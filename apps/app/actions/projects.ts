@@ -417,6 +417,7 @@ export async function delegateWorkItem(approvalId: string, formData: FormData) {
       payload: { fromUserId: approval.assignedUserId, toUserId: userId, byUserId: user.id },
     })
     await notifyAssignee({
+      workspaceId: workspace.id,
       projectId: approval.projectId,
       approvalId: approval.id,
       assignedUserId: userId,

@@ -71,6 +71,13 @@
       "when": 1794324552293,
       "tag": "0009_default_sla_24h",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794389136870,
+      "tag": "0010_push_tokens",
+      "breakpoints": true
     }
   ]
 }

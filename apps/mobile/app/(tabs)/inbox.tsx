@@ -14,7 +14,7 @@ import type { WorkItemRow } from '../../src/types'
 
 export default function InboxListScreen() {
   const { client, workspaceId } = useSession()
-  const { screenEpoch } = useAttention()
+  const { screenEpoch, refresh } = useAttention()
   const router = useRouter()
   const { scope, setScope, q, setQ, ready } = useListFilters(workspaceId ? inboxFilterKey(workspaceId) : null)
   const [items, setItems] = useState<WorkItemRow[]>([])
@@ -26,7 +26,8 @@ export default function InboxListScreen() {
     const data = await fetchInboxPage(client.inbox, { scope, q: q.trim() || undefined })
     setItems(data.items)
     setNextCursor(data.nextCursor)
-  }, [client, q, ready, scope])
+    void refresh()
+  }, [client, q, ready, refresh, scope])
 
   const loadMore = useCallback(async () => {
     if (!client || !ready || !nextCursor || loadingMore) return
