@@ -105,7 +105,7 @@ Creating never blocks:
 3. React to the **callback** if you passed `callback_url`, or **poll** `get_decision` politely (every 30-60 s, backing off) until the `deadline`.
 4. Act only on what `get_decision` confirms. `pending`, `expired` and `cancelled` are never approval.
 
-When you omit `deadline`, the host default rules: the project's SLA/timeout if set, otherwise 24 hours from now. An explicit `deadline` must be in the future and at most 30 days out. Expiry is never approval.
+When you omit `deadline`, the expiry the host stores follows a fixed precedence: the **matched rule's SLA** first, then the **project's default timeout**, then the published **24 h default**. An explicit `deadline` beats all of them and is never clamped down to the project's timeout; it must be in the future and at most 30 days out. Expiry is never approval.
 
 Retrying a create with the same `idempotencyKey` returns the same request (`replayed: true`) instead of asking the human twice.
 
@@ -118,7 +118,7 @@ The server exposes exactly five tools: `request_approval`, `ask_user`, `get_deci
 | Argument | Type | Description |
 | --- | --- | --- |
 | `context` | string (≤ 64 000 chars) | Markdown detail shown to the reviewer. |
-| `deadline` | string (ISO 8601 date-time) | When the ask expires. Omit to use the host default (project SLA/timeout, else 24 h). Max 30 days out. |
+| `deadline` | string (ISO 8601 date-time) | When the ask expires. An explicit `deadline` always wins; omitted, the host falls back to the matched rule's SLA, then the project's default timeout, then 24 h. Max 30 days out. |
 | `callback_url` | string (**https** URL) | URL HITLy POSTs the outcome to. If omitted, **no callback is sent at all** - poll `get_decision` (see [Callbacks](#callbacks)). |
 | `cb_auth_token` | string (16-512 chars) | Secret HITLy sends back on every callback so only your endpoint accepts it. Never echoed back to you. |
 
@@ -179,7 +179,7 @@ Ask a question and get a typed answer later.
     "idempotencyKey": "refund-1842-colour",
     "prompt": "Which colour should we ship as the replacement?",
     "detail": "The customer returned a **blue** mug; we have blue, green and red left.",
-    "answerSchema": { "type": "single_choice", "options": ["blue", "green", "red"] }
+    "answerSchema": { "type": "single", "options": ["blue", "green", "red"] }
 } }
 ```
 
@@ -248,6 +248,18 @@ Withdraw an open request your key created.
 ```
 
 Response: `{ "requestId": "<request-id>", "state": "cancelled" }`. Cancelled is never approval. Cancelling a request another key created fails; some hosts do not yet enable requester cancel with an API key and answer `unauthorized`.
+
+### Project status errors
+
+A project can be `live`, `paused` or `archived` (set by an owner in the project settings). Creates and mutations against a non-live project are refused by the host with HTTP `409`; MCP tools report them in the standard error envelope `{ "error": { "code", "message" } }` with `isError: true`:
+
+| Tool | `paused` project | `archived` project |
+| --- | --- | --- |
+| `request_approval`, `ask_user` | fails - `project paused` | fails - `project archived` |
+| `get_decision`, `list_pending` | readable | readable |
+| `cancel` | works | fails - `project archived` |
+
+Over REST the host's exact bodies are `{ "error": "project paused", "code": "project_paused" }` and `{ "error": "project archived", "code": "project_archived" }` (HTTP 409). The MCP layer forwards the host's message verbatim - the tool `message` is exactly `project paused` or `project archived` - and reports the generic client-facing code for the status (`invalid_request` for 409). Pausing a project stops new asks; reviewers can still decide, and `cancel` still works on open requests. Archiving additionally refuses cancel and resume retries; stored requests stay readable.
 
 ## Callbacks
 
