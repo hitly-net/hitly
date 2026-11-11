@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 await import('./test/preload.mjs')
 
@@ -65,4 +66,30 @@ test('llms.txt links to the agent guide, MCP docs and the sitemap', async () => 
     'llms.txt must carry its own /docs/mcp entry',
   )
   assert.ok(body.includes('https://hitly.net/sitemap.xml'), 'llms.txt missing sitemap link')
+})
+
+test('every docs and integrations page exposes processed markdown', async () => {
+  // Contract pin for /llms-full.txt: it is assembled from
+  // page.data.getText('processed'), which THROWS unless
+  // postprocess.includeProcessedMarkdown is enabled in source.config.ts.
+  // fumadocs-mdx 14.x can also degrade silently (its node test loader
+  // rewrites the shared compiled config per worker; see PR "fix: llms.txt
+  // build on main"), so assert the processed text for every page directly
+  // instead of only through the route bodies.
+  const pages = [...source.getPages(), ...integrationsSource.getPages()]
+  assert.ok(pages.length > 0, 'expected at least one docs or integrations page')
+  for (const page of pages) {
+    const processed = await page.data.getText('processed')
+    assert.equal(typeof processed, 'string', `processed markdown missing for ${page.url}`)
+    assert.ok(processed.trim().length > 0, `processed markdown empty for ${page.url}`)
+  }
+})
+
+test('source.config.ts keeps processed markdown wired into both collections', () => {
+  // Static tripwire: the runtime pin above can only fail once a page is
+  // requested; this one pins the config itself (flag + wiring) against
+  // drive-by edits to source.config.ts.
+  const config = readFileSync(new URL('../source.config.ts', import.meta.url), 'utf-8')
+  assert.match(config, /includeProcessedMarkdown:\s*true/)
+  assert.match(config, /docs:\s*processedMarkdown/, 'processedMarkdown must be wired into every defineDocs collection')
 })
