@@ -4,15 +4,13 @@ import type { ReactNode } from 'react'
 import './globals.css'
 import { FaviconUpdater } from '@/components/favicon-updater'
 import { ThemeSync } from '@/components/theme-picker'
+import { metadata } from '@/lib/app-metadata'
 import { parseTheme, THEME_COOKIE } from '@/lib/theme'
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-sans' })
 const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-mono' })
 
-export const metadata = {
-  title: { default: 'HITLy', template: '%s — HITLy' },
-  description: 'HITLy — approval inbox for agent work',
-}
+export { metadata }
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value)

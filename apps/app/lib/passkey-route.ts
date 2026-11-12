@@ -34,15 +34,16 @@ import { auth } from './auth'
 import { db } from './db'
 import { newId } from './ids'
 import { sendMail } from './mail'
+import type { MailFn } from './password-reset'
 import {
   PASSKEY_CHALLENGE_COOKIE,
   PASSKEY_CHALLENGE_TTL_MS,
   PASSKEY_DEFAULT_NAME,
   PASSKEY_USER_VERIFICATION,
-  createSendPasskeyAddedNotice,
   normalisePasskeyName,
   type PasskeyListItem,
 } from './passkey'
+import { createSendPasskeyAddedNotice } from './passkey-emails'
 import { PASSKEY_REAUTH_ATTEMPT_WINDOW_MS, PASSKEY_REAUTH_LIMITED_LOG, passkeyReauthAttemptAcquire } from './passkey-limit'
 import { resolveDecision, withRetryAfter, type RateAcquire } from './rate-limit'
 import { resetCheckClientKey } from './reset-check-limit'
@@ -81,6 +82,8 @@ export interface PasskeyRouteDeps {
   generateRegistrationOptions?: typeof generateRegistrationOptions
   verifyRegistrationResponse?: typeof verifyRegistrationResponse
   notifyAdded?: (user: { email: string }) => Promise<void>
+  /** Mail transport for the default branded passkey-added notice. */
+  sendMail?: MailFn
   log?: (line: string) => void
 }
 
@@ -383,7 +386,7 @@ export async function handlePasskeyRegister(
   const { user, database } = prepared
   const now = deps.now ?? Date.now
   const verify = deps.verifyRegistrationResponse ?? verifyRegistrationResponse
-  const notify = deps.notifyAdded ?? createSendPasskeyAddedNotice(sendMail)
+  const notify = deps.notifyAdded ?? createSendPasskeyAddedNotice(deps.sendMail ?? sendMail)
   const rp = webAuthnRelyingParty()
 
   const body = (await request.json().catch(() => ({}))) as {

@@ -422,3 +422,35 @@ export async function renderPasswordChangedEmail(args: SecurityNoticeArgs): Prom
     html,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Passkey-added security notice
+// ---------------------------------------------------------------------------
+
+export async function renderPasskeyAddedEmail(args: SecurityNoticeArgs): Promise<RenderedEmail> {
+  const html = await render(
+    <SecurityNoticeView
+      appUrl={args.appUrl}
+      headlineText="A passkey was added to your HITLy account."
+      body={
+        <Text style={{ margin: 0 }}>
+          If this was not you, sign in and remove the passkey from Settings → Security, then change your password.
+          This email carries no link or code.
+        </Text>
+      }
+    />,
+  )
+  const text = [
+    'A passkey was added to your HITLy account.',
+    '',
+    'If this was not you, sign in and remove the passkey from Settings → Security, then change your password.',
+    'If you cannot sign in, reset your password from the HITLy sign-in page.',
+    '',
+  ].join('\n')
+  return {
+    subject: 'HITLy: A passkey was added to your account',
+    // Security notice: no links at all, in the text or the HTML.
+    text: text + textFooter('This is a security notice about your HITLy account.', { noLink: true }),
+    html,
+  }
+}
