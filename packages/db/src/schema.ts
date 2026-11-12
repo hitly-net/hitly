@@ -164,7 +164,7 @@ export const userMfaRecoveryCodes = pgTable(
 )
 
 /**
- * Half-authenticated password login waiting on TOTP or a recovery code.
+ * Half-authenticated sign-in waiting on TOTP or a recovery code.
  * The Better Auth session is held server-side (id only plus encrypted
  * Set-Cookie values) until the second step succeeds; the client never
  * receives a session cookie in this state.

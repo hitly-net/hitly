@@ -59,7 +59,13 @@ import {
   MFA_RECOVERY_CODES_REGENERATED_LOG,
   type MfaRouteDeps,
 } from './mfa-route'
-import { holdPasswordSignInIfMfa } from './mfa-sign-in'
+import {
+  holdPasswordSignInIfMfa,
+  isSignInHeld,
+  mountedEndpointKey,
+  SESSION_ROUTE_POLICY,
+  type SessionRouteKey,
+} from './mfa-sign-in'
 import { fromBase32, hashRecoveryCode, resolveMfaEncryptionKey, totpCode } from './mfa-crypto'
 import { MFA_VERIFY_FAILURE_LIMIT } from './mfa-limit'
 
@@ -894,5 +900,293 @@ describe('MFA client helpers and static wiring', () => {
     assert.equal(limiter('ip:a'), true)
     assert.equal(limiter('user:1'), false)
     assert.equal(limiter('ip:a'), false)
+  })
+})
+
+/**
+ * Routes that set a session cookie but are not new sign-ins. A Better Auth
+ * upgrade that adds another createSession / setSessionCookie route fails the
+ * coverage test until it is held or added here on purpose.
+ */
+const SESSION_WRITE_EXEMPT = new Set([
+  'GET /get-session',
+  'POST /get-session',
+  'POST /update-session',
+  'POST /update-user',
+  'POST /change-password',
+  'POST /change-email',
+])
+
+function sessionWritingRoutes(source: string): Array<{ path: string; methods: string[] }> {
+  const found: Array<{ path: string; methods: string[] }> = []
+  for (const chunk of source.split(/createAuthEndpoint(?:\.serverOnly)?\(/).slice(1)) {
+    const pathMatch = chunk.match(/^\s*["']([^"']+)["']/)
+    if (!pathMatch) continue
+    if (!chunk.includes('createSession') && !chunk.includes('setSessionCookie')) continue
+    const head = chunk.slice(0, 600)
+    const methodMatch = head.match(/method:\s*(\[[^\]]+\]|"[^"]+")/)
+    const methods = !methodMatch
+      ? []
+      : methodMatch[1].startsWith('[')
+        ? [...methodMatch[1].matchAll(/["']([A-Z]+)["']/g)].map((match) => match[1]!)
+        : [methodMatch[1].replace(/"/g, '')]
+    found.push({ path: pathMatch[1]!, methods })
+  }
+  return found
+}
+
+function challengeCookieOf(response: Response): string {
+  const raw = response.headers.getSetCookie().find((value) => value.startsWith(`${MFA_CHALLENGE_COOKIE}=`))
+  assert.ok(raw, 'expected a challenge cookie')
+  return raw.split(';')[0]!
+}
+
+function forwardsSessionCookie(response: Response): boolean {
+  return response.headers.getSetCookie().some((value) => {
+    const pair = value.split(';')[0]?.trim() ?? ''
+    return /^(?:__Secure-)?better-auth\.session_token=.+/.test(pair) && !/max-age=0/i.test(value)
+  })
+}
+
+async function responseWithSession(address: string, status: number, extra: Record<string, string> = {}) {
+  const signIn = (await authApi.signInEmail({
+    body: { email: address, password: PASSWORD },
+    asResponse: true,
+  })) as unknown as Response
+  assert.equal(signIn.status, 200)
+  const headers = new Headers(extra)
+  for (const cookie of signIn.headers.getSetCookie()) headers.append('set-cookie', cookie)
+  const body = status >= 300 && status < 400 ? null : await signIn.text()
+  return new Response(body, { status, headers })
+}
+
+describe('MFA hold covers every session-minting sign-in', () => {
+  it('classifies every mounted auth route, and a new session-writing route cannot skip the hold', () => {
+    assert.ok(auth)
+    const mounted: string[] = []
+    for (const [name, endpoint] of Object.entries(auth.api)) {
+      if (typeof endpoint !== 'function') continue
+      const fn = endpoint as { path?: string; options?: { method?: string | string[] } }
+      const method = fn.options?.method
+      const methods = Array.isArray(method) ? method : method ? [method] : []
+      assert.ok(methods.length > 0, `${name} has no method`)
+      for (const verb of methods) mounted.push(mountedEndpointKey(name, fn.path, verb))
+    }
+    mounted.sort()
+    const policyMounted = (Object.entries(SESSION_ROUTE_POLICY) as Array<[string, { mounted: boolean }]> )
+      .filter(([, policy]) => policy.mounted)
+      .map(([key]) => key)
+      .sort()
+    assert.deepEqual(mounted, policyMounted)
+
+    const route = fs.readFileSync(path.join(__dirname, '../app/api/auth/[...all]/route.ts'), 'utf8')
+    const getFn = route.slice(route.indexOf('export async function GET'), route.indexOf('export async function POST'))
+    const postFn = route.slice(route.indexOf('export async function POST'))
+    assert.match(getFn, /return holdPasswordSignInIfMfa\(request, response\)/)
+    assert.match(postFn, /return holdPasswordSignInIfMfa\(request, response\)/)
+
+    for (const [key, policy] of Object.entries(SESSION_ROUTE_POLICY) as Array<[SessionRouteKey, (typeof SESSION_ROUTE_POLICY)[SessionRouteKey]]>) {
+      if (key.includes('server-only')) {
+        assert.equal(policy.action, 'not-sign-in')
+        continue
+      }
+      const method = key.slice(0, key.indexOf(' '))
+      const routePath = key.slice(method.length + 1).replace(':id', 'google').replace(':providerId', 'example').replace(':token', 'token')
+      const request = new Request(`${APP_URL}/api/auth${routePath}`, { method })
+      if (policy.action === 'hold') assert.equal(isSignInHeld(request), true, key)
+      else assert.equal(isSignInHeld(request), false, key)
+    }
+
+    const root = path.join(__dirname, '../../..')
+    const files = [
+      ...fs.readdirSync(path.join(root, 'node_modules/better-auth/dist/api/routes')).map((name) =>
+        path.join(root, 'node_modules/better-auth/dist/api/routes', name),
+      ),
+      path.join(root, 'node_modules/@better-auth/passkey/dist/index.mjs'),
+    ]
+    for (const file of files) {
+      if (!file.endsWith('.mjs')) continue
+      for (const found of sessionWritingRoutes(fs.readFileSync(file, 'utf8'))) {
+        assert.ok(found.methods.length > 0, found.path)
+        for (const method of found.methods) {
+          const key = `${method} ${found.path}`
+          const policy = SESSION_ROUTE_POLICY[key as SessionRouteKey]
+          assert.ok(policy, `${key} writes a session but is not in SESSION_ROUTE_POLICY`)
+          if (policy.action === 'not-sign-in') {
+            assert.ok(SESSION_WRITE_EXEMPT.has(key), `${key} writes a session cookie and is not held`)
+          } else {
+            assert.ok(policy.action === 'hold' || policy.action === 'uv-satisfies-mfa', key)
+          }
+        }
+      }
+    }
+  })
+
+  it('leaves a failed password sign-in untouched', async () => {
+    const failed = new Response(JSON.stringify({ message: 'Invalid email or password' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    })
+    const held = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' }),
+      failed,
+      routeMocks(),
+    )
+    assert.equal(held, failed)
+  })
+
+  it('forwards sign-up, the OAuth callback, and social id-token sign-in unchanged when MFA is off', async () => {
+    const address = email('hold-off')
+    await createUser(address)
+    const signUp = await responseWithSession(address, 200, { 'content-type': 'application/json' })
+    const heldSignUp = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/sign-up/email`, { method: 'POST' }),
+      signUp,
+      routeMocks(),
+    )
+    assert.equal(heldSignUp, signUp)
+
+    const callback = await responseWithSession(address, 302, { location: `${APP_URL}/inbox` })
+    const heldCallback = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/callback/google`, { method: 'GET' }),
+      callback,
+      routeMocks(),
+    )
+    assert.equal(heldCallback, callback)
+
+    const social = await responseWithSession(address, 200, { 'content-type': 'application/json' })
+    const heldSocial = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/sign-in/social`, { method: 'POST' }),
+      social,
+      routeMocks(),
+    )
+    assert.equal(heldSocial, social)
+  })
+
+  it('does not hold session refresh or password change', async () => {
+    const { user } = await enableMfa(email('hold-refresh'))
+    const refresh = await responseWithSession(user.email, 200, { 'content-type': 'application/json' })
+    const heldRefresh = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/get-session`, { method: 'GET' }),
+      refresh,
+      routeMocks(),
+    )
+    assert.equal(heldRefresh, refresh)
+    assert.equal(forwardsSessionCookie(heldRefresh), true)
+
+    const changed = await responseWithSession(user.email, 200, { 'content-type': 'application/json' })
+    const heldChange = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/change-password`, { method: 'POST' }),
+      changed,
+      routeMocks(),
+    )
+    assert.equal(heldChange, changed)
+  })
+
+  it('holds an OAuth callback when TOTP is enrolled and finishes on /login/mfa', async () => {
+    const address = email('hold-callback')
+    await enableMfa(address)
+    const callback = await responseWithSession(address, 302, { location: `${APP_URL}/inbox` })
+    const held = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/callback/google`, { method: 'GET' }),
+      callback,
+      routeMocks(),
+    )
+    assert.notEqual(held, callback)
+    assert.equal(held.status, 302)
+    assert.equal(new URL(held.headers.get('location') ?? '').pathname, '/login/mfa')
+    assert.equal(forwardsSessionCookie(held), false)
+    assert.ok(challengeCookieOf(held))
+  })
+
+  it('holds social id-token, generic OAuth, and magic-link verify with the same challenge', async () => {
+    const address = email('hold-seams')
+    await enableMfa(address)
+    for (const [method, routePath, status] of [
+      ['POST', '/sign-in/social', 200],
+      ['GET', '/oauth2/callback/example', 302],
+      ['GET', '/magic-link/verify', 302],
+      ['POST', '/sign-in/email-otp', 200],
+    ] as const) {
+      const minted = await responseWithSession(
+        address,
+        status,
+        status === 302 ? { location: `${APP_URL}/inbox` } : { 'content-type': 'application/json' },
+      )
+      const held = await holdPasswordSignInIfMfa(
+        new Request(`${APP_URL}/api/auth${routePath}`, { method }),
+        minted,
+        routeMocks(),
+      )
+      assert.equal(forwardsSessionCookie(held), false, routePath)
+      assert.ok(challengeCookieOf(held), routePath)
+      if (status === 302) assert.equal(new URL(held.headers.get('location') ?? '').pathname, '/login/mfa')
+      else assert.deepEqual(await held.json(), { mfaRequired: true })
+    }
+  })
+
+  it('accepts a recovery code once after an OAuth callback, then rejects it on password sign-in', async () => {
+    const address = email('hold-recovery')
+    const { recoveryCodes } = await enableMfa(address)
+    const callback = await responseWithSession(address, 302, { location: `${APP_URL}/inbox` })
+    const held = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/callback/google`, { method: 'GET' }),
+      callback,
+      routeMocks(),
+    )
+    const code = recoveryCodes[0]!
+    const first = await handleMfaVerify(post(MFA_VERIFY_ENDPOINT, challengeCookieOf(held), { code }), routeMocks())
+    assert.equal(first.status, 200)
+    assert.equal(forwardsSessionCookie(first), true)
+    const user = await userByEmail(address)
+    assert.ok(user)
+    const events = await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))
+    assert.ok(events.some((event) => event.type === ACCOUNT_SECURITY_EVENT.recoveryCodeUsed))
+
+    const signIn = (await authApi.signInEmail({
+      body: { email: address, password: PASSWORD },
+      asResponse: true,
+    })) as unknown as Response
+    const gated = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' }),
+      signIn,
+      routeMocks(),
+    )
+    const second = await handleMfaVerify(post(MFA_VERIFY_ENDPOINT, challengeCookieOf(gated), { code }), routeMocks())
+    assert.equal(second.status, 400)
+  })
+
+  it('shares the verify lockout between an OAuth callback and password sign-in', async () => {
+    const address = email('hold-lockout')
+    const { secret } = await enableMfa(address)
+    const callback = await responseWithSession(address, 302, { location: `${APP_URL}/inbox` })
+    const held = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/callback/google`, { method: 'GET' }),
+      callback,
+      routeMocks(),
+    )
+    const challenge = challengeCookieOf(held)
+    for (let i = 0; i < MFA_VERIFY_FAILURE_LIMIT; i += 1) {
+      const failed = await handleMfaVerify(post(MFA_VERIFY_ENDPOINT, challenge, { code: '000000' }), routeMocks())
+      assert.equal(failed.status, 400)
+    }
+    const signIn = (await authApi.signInEmail({
+      body: { email: address, password: PASSWORD },
+      asResponse: true,
+    })) as unknown as Response
+    const gated = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' }),
+      signIn,
+      routeMocks(),
+    )
+    const locked = await handleMfaVerify(
+      post(MFA_VERIFY_ENDPOINT, challengeCookieOf(gated), { code: totpAt(secret, 1) }),
+      mocksAt(1),
+    )
+    assert.equal(locked.status, 429)
+    const user = await userByEmail(address)
+    assert.ok(user)
+    const events = await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))
+    assert.ok(events.some((event) => event.type === ACCOUNT_SECURITY_EVENT.verificationLockout))
   })
 })
