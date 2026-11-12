@@ -9,6 +9,8 @@ export type TenantDatabase = AppDb | TenantTx
 type TenantStore = {
   workspaceId: string
   tx: TenantTx
+  /** Detached work. Flushed only after the outer transaction commits. */
+  afterCommit: Array<() => Promise<void>>
 }
 
 const tenantAls = new AsyncLocalStorage<TenantStore>()
@@ -57,6 +59,7 @@ export async function withTenant<T>(workspaceId: string, fn: () => Promise<T>): 
   if (!db) {
     throw new Error('DATABASE_URL is not set')
   }
+  const afterCommit: Array<() => Promise<void>> = []
   const result = await db.transaction(async (tx): Promise<T | { [nextRedirect]: unknown }> => {
     if (edition.id === 'cloud' && !edition.applyTenantContext) {
       throw new Error('Cloud edition must set tenant RLS context')
@@ -65,7 +68,7 @@ export async function withTenant<T>(workspaceId: string, fn: () => Promise<T>): 
       await edition.applyTenantContext(tx, workspaceId)
     }
     try {
-      return await tenantAls.run({ workspaceId, tx }, fn)
+      return await tenantAls.run({ workspaceId, tx, afterCommit }, fn)
     } catch (error) {
       // redirect() throws; drizzle would ROLLBACK unless we swallow until COMMIT.
       if (isNextRedirectError(error)) {
@@ -74,6 +77,10 @@ export async function withTenant<T>(workspaceId: string, fn: () => Promise<T>): 
       throw error
     }
   })
+  // The transaction promise resolves only after COMMIT. Queue detached work
+  // here so a later read (the push badge count) cannot miss the new row.
+  // A thrown transaction discards the queue: the insert was rolled back.
+  for (const work of afterCommit) enqueueAfterCommit(work)
   if (result && typeof result === 'object' && nextRedirect in result) {
     throw result[nextRedirect]
   }
@@ -83,21 +90,29 @@ export async function withTenant<T>(workspaceId: string, fn: () => Promise<T>): 
 const pendingAfterTenantCommit: Promise<void>[] = []
 
 /**
- * Run work on the next event-loop turn with tenant ALS cleared so it cannot
- * join (or hold) the open tenant transaction. Used for fire-and-forget push.
+ * Schedule work that must see the committed tenant transaction and must not
+ * hold it. Inside `withTenant`, the callback is queued and started only after
+ * COMMIT. Outside a tenant, it runs on the next event-loop turn.
+ * Used for fire-and-forget push.
  */
 export function afterTenantCommit(work: () => Promise<void>): void {
+  const store = tenantAls.getStore()
+  if (store) {
+    store.afterCommit.push(work)
+    return
+  }
+  enqueueAfterCommit(work)
+}
+
+function enqueueAfterCommit(work: () => Promise<void>) {
   const task = new Promise<void>((resolve) => {
-    const run = () => {
+    setImmediate(() => {
       void Promise.resolve()
         .then(work)
         .catch((error) => {
           console.error('[hitly push]', error instanceof Error ? error.message : error)
         })
         .finally(resolve)
-    }
-    tenantAls.exit(() => {
-      setImmediate(run)
     })
   })
   pendingAfterTenantCommit.push(task)
