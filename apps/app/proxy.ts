@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { PUBLIC_PATHS } from './lib/constants'
+import { PUBLIC_PATHS, isBrandAssetPath } from './lib/constants'
 import { applyCors, corsPreflight } from './lib/cors'
 
 function pass(request: NextRequest) {
@@ -17,6 +17,10 @@ export function proxy(request: NextRequest) {
     return corsPreflight(request)
   }
   if (PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
+    return pass(request)
+  }
+  // Signed-out brand assets (broken logo in branded emails otherwise).
+  if (isBrandAssetPath(pathname)) {
     return pass(request)
   }
   if (

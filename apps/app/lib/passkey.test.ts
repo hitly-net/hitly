@@ -41,12 +41,12 @@ import {
   PASSKEY_CHALLENGE_COOKIE,
   PASSKEY_USER_VERIFICATION,
   assertionHasUserVerification,
-  buildPasskeyAddedEmail,
   isPasskeyPluginManagementPath,
   passkeyDeleteEndpoint,
   passkeyItemEndpoint,
   submitPasskeyRegisterOptions,
 } from './passkey'
+import { buildPasskeyAddedEmail } from './passkey-emails'
 import {
   consumePasskeyRegisterChallenge,
   handlePasskeyDelete,
@@ -390,6 +390,40 @@ describe('passkey registration', () => {
     assert.ok(lines.some((line) => line === `${PASSKEY_ADDED_LOG} user=${user.id}`))
   })
 
+  it('sends one branded passkey-added notice through the default mail path', async () => {
+    const address = email(`register-branded-mail-${run}`)
+    const cred = `cred-branded-${run}`
+    const outbox: { to: string; subject: string; text: string; html?: string }[] = []
+    // No notifyAdded override: the handler's OWN default must wire the
+    // branded notice onto the injectable sendMail dep (routeMocks' default
+    // no-op notifyAdded is deleted below so the production default runs).
+    // Reverting the default to a no-op or a plain-text send leaves the
+    // outbox empty or fails the branded-template assertions below.
+    const deps = routeMocks(
+      {
+        sendMail: async (message) => {
+          outbox.push(message)
+          return { delivered: true }
+        },
+      },
+      cred,
+    )
+    delete deps.notifyAdded
+    await registerPasskey(address, cred, deps)
+    // Fire-and-forget send: two ticks settle the render + send chain.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.equal(outbox.length, 1, 'exactly one notice')
+    const mail = outbox[0]!
+    assert.equal(mail.to, address)
+    assert.equal(mail.subject, 'HITLy: A passkey was added to your account')
+    assert.ok(mail.html?.includes('#2563eb'), 'branded HTML shell')
+    assert.ok(mail.html?.includes('HITLy'), 'brand name in HTML')
+    assert.ok(!mail.text.includes(PASSWORD), 'no password in the email')
+    assert.ok(!/https?:\/\//.test(mail.text), 'no link in the notice text')
+  })
+
   it('rejects a replayed registration challenge', async () => {
     const address = email('register-replay')
     const cred = `cred-replay-${run}`
@@ -400,6 +434,70 @@ describe('passkey registration', () => {
     )
     assert.equal(replay.status, 400)
     assert.deepEqual(await replay.json(), { error: 'challenge_not_found' })
+  })
+
+  it('sends no passkey-added notice when registration fails (verify, duplicate, replay)', async () => {
+    const address = email(`register-fail-${run}`)
+    const cred = `cred-fail-${run}`
+    await createUser(address)
+    const cookie = await signInCookie(address)
+    let notices = 0
+    const counting = (overrides: Partial<PasskeyRouteDeps> = {}): PasskeyRouteDeps => ({
+      ...routeMocks({}, cred),
+      notifyAdded: async () => {
+        notices += 1
+      },
+      ...overrides,
+    })
+    const startOptions = async (deps: PasskeyRouteDeps) => {
+      const options = await handlePasskeyRegisterOptions(
+        post(PASSKEY_REGISTER_OPTIONS_ENDPOINT, cookie, { currentPassword: PASSWORD, name: 'Laptop' }),
+        deps,
+      )
+      assert.equal(options.status, 200)
+      return challengeCookie(options)
+    }
+    const tryRegister = async (deps: PasskeyRouteDeps, challenge: string, credentialID = cred) =>
+      handlePasskeyRegister(
+        post(PASSKEY_REGISTER_ENDPOINT, mergeCookie(cookie, challenge), {
+          response: attestation(credentialID),
+          name: 'Laptop',
+        }),
+        deps,
+      )
+
+    // 1) WebAuthn verification failure.
+    const verifyDeps = counting({
+      verifyRegistrationResponse: async () =>
+        ({ verified: false }) as Awaited<
+          ReturnType<NonNullable<PasskeyRouteDeps['verifyRegistrationResponse']>>
+        >,
+    })
+    const verifyChallenge = await startOptions(verifyDeps)
+    const verifyFailed = await tryRegister(verifyDeps, verifyChallenge)
+    assert.equal(verifyFailed.status, 400)
+    assert.deepEqual(await verifyFailed.json(), { error: 'verification_failed' })
+    assert.equal(notices, 0, 'a verify failure sends no notice')
+
+    // 2) Duplicate credential (already registered) -> 409 before any send.
+    const okDeps = counting()
+    const okChallenge = await startOptions(okDeps)
+    const registered = await tryRegister(okDeps, okChallenge)
+    assert.equal(registered.status, 200)
+    assert.equal(notices, 1, 'the successful registration queued exactly one notice')
+
+    const dupDeps = counting()
+    const dupChallenge = await startOptions(dupDeps)
+    const conflict = await tryRegister(dupDeps, dupChallenge)
+    assert.equal(conflict.status, 409)
+    assert.deepEqual(await conflict.json(), { error: 'already_registered' })
+    assert.equal(notices, 1, 'a duplicate registration sends no new notice')
+
+    // 3) Replayed challenge (the duplicate attempt already consumed it).
+    const replay = await tryRegister(counting(), dupChallenge, `${cred}-replay`)
+    assert.equal(replay.status, 400)
+    assert.deepEqual(await replay.json(), { error: 'challenge_not_found' })
+    assert.equal(notices, 1, 'a replayed challenge sends no notice')
   })
 
   it('consumes a registration challenge atomically so a concurrent replay cannot succeed', async () => {
@@ -584,11 +682,17 @@ describe('passkey client helpers and static wiring', () => {
     assert.deepEqual(outcome, { ok: false, message: CURRENT_PASSWORD_INCORRECT_MESSAGE })
   })
 
-  it('the notice email carries no secret', () => {
-    const mail = buildPasskeyAddedEmail({ to: email('notice') })
+  it('the branded notice email carries no secret and renders through the shared template', async () => {
+    const mail = await buildPasskeyAddedEmail({ to: email('notice') })
     assert.match(mail.subject, /passkey/i)
-    assert.ok(!mail.text.includes(PASSWORD))
-    assert.ok(!mail.text.includes('http://'))
+    // Rendered by the branded shell (packages/mail layout): HTML document,
+    // brand colour and brand name — the same template as the other emails.
+    assert.ok(mail.html.startsWith('<!DOCTYPE'), 'branded HTML document')
+    assert.ok(mail.html.includes('#2563eb'), 'brand colour')
+    assert.ok(mail.html.includes('HITLy'), 'brand name in HTML')
+    assert.ok(!mail.text.includes(PASSWORD), 'no password in the email')
+    assert.ok(!/https?:\/\//.test(mail.text), 'no link in the notice text')
+    assert.ok(!/href=/.test(mail.html), 'no link in the notice HTML')
   })
 
   it('plugin management paths 404; authenticate paths stay open; UV passkey sign-in is not held', () => {
@@ -636,6 +740,18 @@ describe('passkey client helpers and static wiring', () => {
     const routeSrc = fs.readFileSync(path.join(__dirname, 'passkey-route.ts'), 'utf-8')
     assert.match(routeSrc, /requireUserVerification:\s*true/)
     assert.match(routeSrc, /userVerification:\s*PASSKEY_USER_VERIFICATION/)
+    // The added-notice must come from the branded server-only module, never
+    // re-inlined as a plain-text email in the client-safe or route module.
+    assert.match(routeSrc, /from '\.\/passkey-emails'/)
+    // And the handler's default must resolve the branded notice through the
+    // injectable sendMail dep (the branded-mail test runs this production
+    // default; a no-op or plain-text default fails that test).
+    assert.match(
+      routeSrc,
+      /deps\.notifyAdded \?\? createSendPasskeyAddedNotice\(deps\.sendMail \?\? sendMail\)/,
+    )
+    const clientSrc = fs.readFileSync(path.join(__dirname, 'passkey.ts'), 'utf-8')
+    assert.doesNotMatch(clientSrc, /buildPasskeyAddedEmail|renderPasskeyAddedEmail|@hitly\/mail/)
     assert.equal(isEmailPasswordSignIn(new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' })), true)
     const passkeySignIn = new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, { method: 'POST' })
     assert.equal(isEmailPasswordSignIn(passkeySignIn), false)
@@ -646,5 +762,23 @@ describe('passkey client helpers and static wiring', () => {
       const file = fs.readFileSync(path.join(__dirname, `../app/api/session/passkey/${name}/route.ts`), 'utf-8')
       assert.ok(file.includes('isSameOrigin'))
     }
+    // There is deliberately NO collection route (app/api/session/passkey/
+    // route.ts): a signed-in GET /api/session/passkey 404s because nothing
+    // calls it. The settings page server-renders the list via
+    // listPasskeysForUser (app/settings/security/page.tsx) and mobile has no
+    // passkey fetches. PASSKEY_LIST_ENDPOINT is only the prefix helper for
+    // the per-item endpoints. This assert fails the day a real caller (or a
+    // real route) appears, forcing the pair to be added together.
+    assert.equal(fs.existsSync(path.join(__dirname, '../app/api/session/passkey/route.ts')), false)
+    // Same for every other Next route extension: no collection route in any
+    // flavour (route.ts/.js/.tsx/.jsx).
+    for (const ext of ['js', 'tsx', 'jsx'] as const) {
+      assert.equal(
+        fs.existsSync(path.join(__dirname, `../app/api/session/passkey/route.${ext}`)),
+        false,
+        `no collection route.${ext}`,
+      )
+    }
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, 'passkey-route.ts'), 'utf-8'), /export async function handlePasskeyList\b/)
   })
 })

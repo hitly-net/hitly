@@ -11,6 +11,7 @@ import {
   renderInviteEmail,
   renderPasswordChangedEmail,
   renderPasswordResetEmail,
+  renderPasskeyAddedEmail,
   safeText,
   type RenderedEmail,
 } from '../index'
@@ -220,6 +221,19 @@ describe('password-changed notice', () => {
     expectWellFormed(mail, 'password-changed')
     assert.equal(mail.subject, 'HITLy: Your password was changed')
     assert.ok(mail.text.includes('All other sessions were signed out'))
+    assert.ok(!/https?:\/\//.test(mail.text), 'no link in the notice text')
+    assert.ok(!/href=/.test(mail.html), 'no link in the notice HTML')
+  })
+})
+
+describe('passkey-added notice', () => {
+  it('renders through the branded shell and is link-free', async () => {
+    const mail = await renderPasskeyAddedEmail({ appUrl: APP_URL })
+    expectWellFormed(mail, 'passkey-added')
+    assert.equal(mail.subject, 'HITLy: A passkey was added to your account')
+    expectBranding(mail.html, 'passkey-added')
+    assert.ok(mail.text.includes('A passkey was added to your HITLy account.'))
+    assert.ok(mail.text.includes('Settings → Security'))
     assert.ok(!/https?:\/\//.test(mail.text), 'no link in the notice text')
     assert.ok(!/href=/.test(mail.html), 'no link in the notice HTML')
   })
