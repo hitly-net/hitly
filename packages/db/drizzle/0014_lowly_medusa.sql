@@ -1,6 +1,7 @@
 CREATE TABLE "pending_email_verifications" (
 	"id" varchar(36) PRIMARY KEY NOT NULL,
 	"user_id" varchar(36) NOT NULL,
+	"email" varchar(255) NOT NULL,
 	"token_hash" varchar(64) NOT NULL,
 	"expires_at" timestamp (3) with time zone NOT NULL,
 	"created_at" timestamp (3) with time zone DEFAULT now() NOT NULL

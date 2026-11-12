@@ -121,8 +121,9 @@ export const pendingEmailChanges = pgTable(
 
 /**
  * Public sign-up email verification that has not been confirmed yet.
- * Only the SHA-256 of the one-time token is stored. Confirming sets
- * `users.email_verified` and deletes the row, so the token cannot be reused.
+ * Only the SHA-256 of the one-time token is stored. `email` is the address
+ * the token was sent to. Confirming sets `users.email_verified` and deletes
+ * the row, so the token cannot be reused.
  */
 export const pendingEmailVerifications = pgTable(
   'pending_email_verifications',
@@ -131,7 +132,10 @@ export const pendingEmailVerifications = pgTable(
     userId: id('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    // SHA-256 (hex) of the one-time token emailed to the account address.
+    // Address the token was mailed to. Confirm rejects the token when this
+    // no longer equals users.email.
+    email: varchar('email', { length: 255 }).notNull(),
+    // SHA-256 (hex) of the one-time token emailed to `email`.
     tokenHash: varchar('token_hash', { length: 64 }).notNull(),
     expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
     createdAt: createdAt(),

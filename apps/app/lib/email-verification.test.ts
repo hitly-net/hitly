@@ -39,6 +39,11 @@ import {
   VERIFY_EMAIL_PAGE,
 } from './email-verification'
 import { drainEmailVerificationMail, generateEmailVerificationToken, hashEmailVerificationToken } from './email-verification-issue'
+import {
+  RESEND_EMAIL_VERIFICATION_LIMIT,
+  RESEND_EMAIL_VERIFICATION_WINDOW_MS,
+  createResendEmailVerificationLimiter,
+} from './email-verification-limit'
 import { handleEmailVerificationConfirm, handleResendEmailVerification, type EmailVerificationRouteDeps } from './email-verification-route'
 import {
   createSendEmailChangedNotice,
@@ -144,6 +149,7 @@ async function createUser(local: string, name = 'Alex') {
   const pending = await pendingFor(user.id)
   assert.ok(pending)
   assert.equal(pending.tokenHash, hashEmailVerificationToken(token))
+  assert.equal(pending.email, address, 'the token is stored against the address it was sent to')
   assert.notEqual(pending.tokenHash, token)
   assert.ok(!JSON.stringify(pending).includes(token), 'the raw token is not stored')
   const ttl = pending.expiresAt.getTime() - Date.now()
@@ -246,17 +252,24 @@ describe('public sign-up verification', () => {
     assert.ok(tree)
 
     const { GET, HEAD, POST } = await import('../app/api/session/verify-email/route')
-    assert.equal((await GET()).status, 405)
-    assert.equal((await HEAD()).status, 405)
+    const live = new NextRequest(`${APP_URL}${VERIFY_EMAIL_ENDPOINT}?token=${encodeURIComponent(token)}`)
+    const get = GET as (request: NextRequest) => Response | Promise<Response>
+    const head = HEAD as (request: NextRequest) => Response | Promise<Response>
+    assert.equal((await get(live)).status, 405)
+    assert.equal((await head(live)).status, 405)
     assert.equal((await userByEmail(address))?.emailVerified, false)
-    assert.ok(await pendingFor(user.id))
+    const pending = await pendingFor(user.id)
+    assert.ok(pending)
+    assert.equal(pending.tokenHash, hashEmailVerificationToken(token))
 
     const confirmed = new NextRequest(`${APP_URL}${VERIFY_EMAIL_ENDPOINT}`, {
       method: 'POST',
       headers: { origin: APP_URL, 'content-type': 'application/json' },
       body: JSON.stringify({ token }),
     })
-    assert.equal((await POST(confirmed)).status, 200)
+    const posted = await POST(confirmed)
+    assert.equal(posted.status, 200)
+    assert.equal(posted.headers.get('set-cookie'), null, 'confirm does not set a session cookie')
     assert.equal((await userByEmail(address))?.emailVerified, true)
     assert.equal(await pendingFor(user.id), null)
     assert.equal((await verifiedEvents(user.id)).length, 1)
@@ -454,8 +467,106 @@ describe('public sign-up verification', () => {
     assert.equal(moved.emailVerified, true)
     assert.equal(moved.id, user.id)
     assert.equal((await verifiedEvents(user.id)).length, 0)
-    assert.equal((await pendingFor(user.id))?.tokenHash, hashEmailVerificationToken(token))
+    assert.equal(await pendingFor(user.id), null, 'email change drops open sign-up tokens')
+    const stale = await errorOf(token)
+    assert.deepEqual(stale, { status: 400, body: { error: 'invalid_token' } })
+    assert.equal((await userByEmail(next))?.emailVerified, true, 'rejecting the old sign-up token does not change the flag')
     assert.equal(await userByEmail(address), null)
+  })
+
+  it('rejects a token stored for a different address without setting the flag', async () => {
+    const { address, user, token } = await createUser('bound')
+    await database
+      .update(pendingEmailVerifications)
+      .set({ email: email('other-inbox') })
+      .where(eq(pendingEmailVerifications.userId, user.id))
+    const rejected = await errorOf(token)
+    assert.deepEqual(rejected, { status: 400, body: { error: 'invalid_token' } })
+    assert.equal((await userByEmail(address))?.emailVerified, false)
+    assert.equal((await verifiedEvents(user.id)).length, 0)
+    assert.equal((await pendingFor(user.id))?.tokenHash, hashEmailVerificationToken(token))
+  })
+
+  it('one of eight concurrent confirms succeeds and writes a single email_verified event', async () => {
+    const { address, user, token } = await createUser('race')
+    await pool!.query(`
+      CREATE OR REPLACE FUNCTION hitly_test_slow_verify_user()
+      RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN
+        IF NEW.email_verified = true AND OLD.email_verified = false AND NEW.email = '${address}' THEN
+          PERFORM pg_sleep(0.4);
+        END IF;
+        RETURN NEW;
+      END
+      $fn$
+    `)
+    await pool!.query(`
+      DROP TRIGGER IF EXISTS hitly_test_slow_verify_user ON users;
+      CREATE TRIGGER hitly_test_slow_verify_user
+      BEFORE UPDATE ON users
+      FOR EACH ROW EXECUTE FUNCTION hitly_test_slow_verify_user()
+    `)
+    try {
+      const { POST } = await import('../app/api/session/verify-email/route')
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          POST(
+            new NextRequest(`${APP_URL}${VERIFY_EMAIL_ENDPOINT}`, {
+              method: 'POST',
+              headers: { origin: APP_URL, 'content-type': 'application/json' },
+              body: JSON.stringify({ token }),
+            }),
+          ),
+        ),
+      )
+      const statuses = responses.map((response) => response.status).sort((a, b) => a - b)
+      assert.deepEqual(statuses, [200, 400, 400, 400, 400, 400, 400, 400])
+      assert.equal((await userByEmail(address))?.emailVerified, true)
+      assert.equal(await pendingFor(user.id), null)
+      assert.equal((await verifiedEvents(user.id)).length, 1)
+    } finally {
+      await pool!.query('DROP TRIGGER IF EXISTS hitly_test_slow_verify_user ON users')
+      await pool!.query('DROP FUNCTION IF EXISTS hitly_test_slow_verify_user()')
+    }
+  })
+
+  it('sign-up still succeeds when verification token storage fails', async () => {
+    const address = email('storage-fail')
+    await pool!.query(`
+      CREATE OR REPLACE FUNCTION hitly_test_block_signup_verify()
+      RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM users WHERE id = NEW.user_id AND email = '${address}') THEN
+          RAISE EXCEPTION 'signup verification storage failed';
+        END IF;
+        RETURN NEW;
+      END
+      $fn$
+    `)
+    await pool!.query(`
+      DROP TRIGGER IF EXISTS hitly_test_block_signup_verify ON pending_email_verifications;
+      CREATE TRIGGER hitly_test_block_signup_verify
+      BEFORE INSERT ON pending_email_verifications
+      FOR EACH ROW EXECUTE FUNCTION hitly_test_block_signup_verify()
+    `)
+    try {
+      await clearSentMail()
+      const response = (await authApi.signUpEmail({
+        body: { email: address, name: 'Alex', password: PASSWORD },
+        asResponse: true,
+      })) as unknown as Response
+      assert.equal(response.status, 200)
+      await drainMail()
+      const user = await userByEmail(address)
+      assert.ok(user)
+      assert.equal(user.emailVerified, false)
+      assert.equal(await pendingFor(user.id), null)
+      assert.equal(sentMail.length, 0)
+      assert.equal(await signInStatus(address), 200)
+    } finally {
+      await pool!.query('DROP TRIGGER IF EXISTS hitly_test_block_signup_verify ON pending_email_verifications')
+      await pool!.query('DROP FUNCTION IF EXISTS hitly_test_block_signup_verify()')
+    }
   })
 })
 
@@ -484,6 +595,20 @@ describe('verification route policy', () => {
       body: '{}',
     })
     assert.equal((await resend(resendCross)).status, 403)
+  })
+})
+
+describe('resend limit', () => {
+  it('allows 5 resends per client per 15 minutes and refuses the next', () => {
+    assert.equal(RESEND_EMAIL_VERIFICATION_LIMIT, 5)
+    assert.equal(RESEND_EMAIL_VERIFICATION_WINDOW_MS, 15 * 60 * 1000)
+    const clock = { t: 1_000 }
+    const allow = createResendEmailVerificationLimiter({ now: () => clock.t })
+    for (let n = 0; n < 5; n += 1) assert.equal(allow('client'), true, `attempt ${n + 1} is inside the limit`)
+    assert.equal(allow('client'), false, 'the 6th resend in the window is refused')
+    assert.equal(allow('other'), true, 'another client has its own window')
+    clock.t += RESEND_EMAIL_VERIFICATION_WINDOW_MS
+    assert.equal(allow('client'), true, 'the window opens again after 15 minutes')
   })
 })
 

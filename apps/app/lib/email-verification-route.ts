@@ -118,8 +118,14 @@ export async function handleEmailVerificationConfirm(
       if (!pending) throw new InvalidTokenError()
       if (pending.expiresAt.getTime() <= now()) throw new InvalidTokenError()
 
-      const current = await tx.select({ id: users.id }).from(users).where(eq(users.id, pending.userId)).limit(1)
+      const current = await tx
+        .select({ id: users.id, email: users.email })
+        .from(users)
+        .where(eq(users.id, pending.userId))
+        .limit(1)
       if (!current[0]) throw new InvalidTokenError()
+      // The token only proves control of the address it was sent to.
+      if (current[0].email !== pending.email) throw new InvalidTokenError()
 
       await tx
         .update(users)

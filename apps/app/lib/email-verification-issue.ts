@@ -79,6 +79,7 @@ export async function issueEmailVerification(
     await tx.insert(pendingEmailVerifications).values({
       id: newId('emv').slice(0, 36),
       userId: args.userId,
+      email: args.email,
       tokenHash: hashEmailVerificationToken(token),
       expiresAt,
     })

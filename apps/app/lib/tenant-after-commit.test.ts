@@ -65,6 +65,32 @@ describe('afterTenantCommit', { concurrency: false }, () => {
     assert.equal(visible, true)
   })
 
+  it('runs after-commit work when the tenant function redirects', async () => {
+    const id = newId('wsp')
+    let started = false
+    await assert.rejects(
+      withTenant(id, async () => {
+        afterTenantCommit(async () => {
+          started = true
+        })
+        const redirect = new Error('NEXT_REDIRECT')
+        Object.assign(redirect, { digest: 'NEXT_REDIRECT;replace;/inbox' })
+        throw redirect
+      }),
+      (error: unknown) =>
+        Boolean(
+          error &&
+            typeof error === 'object' &&
+            'digest' in error &&
+            typeof error.digest === 'string' &&
+            error.digest.startsWith('NEXT_REDIRECT'),
+        ),
+    )
+    assert.equal(started, false, 'the redirect returns before the detached work runs')
+    await flushAfterTenantCommitForTests()
+    assert.equal(started, true, 'a redirect still runs after-commit work')
+  })
+
   it('does not run detached work when the transaction rolls back', async () => {
     const id = newId('wsp')
     ids.push(id)

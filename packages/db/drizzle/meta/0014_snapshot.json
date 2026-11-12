@@ -1,5 +1,5 @@
 {
-  "id": "8de3418a-6551-488d-8120-4f6270a1f05c",
+  "id": "450ccec8-dddf-492f-9514-3ba6348bb2ff",
   "prevId": "d0052848-ac48-4c0d-9003-7ba992f15acd",
   "version": "7",
   "dialect": "postgresql",
@@ -1356,6 +1356,12 @@
         "user_id": {
           "name": "user_id",
           "type": "varchar(36)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(255)",
           "primaryKey": false,
           "notNull": true
         },
