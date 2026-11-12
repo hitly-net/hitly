@@ -6,6 +6,7 @@
     "version": "0.0.2",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "icon": "./assets/icons/app-icon.png",
     "plugins": [
       "expo-router",
       "expo-secure-store",
@@ -14,6 +15,18 @@
         {
           "icon": "./assets/icons/notification-icon.png",
           "color": "#2563eb"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash/splash-logo.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#fafafa",
+          "dark": {
+            "image": "./assets/splash/splash-logo-dark.png",
+            "backgroundColor": "#18181b"
+          }
         }
       ]
     ],
@@ -45,14 +58,8 @@
         }
       ]
     },
-    "splash": {
-      "image": "./assets/splash/splash-logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#fafafa",
-      "dark": {
-        "image": "./assets/splash/splash-logo-dark.png",
-        "backgroundColor": "#18181b"
-      }
+    "web": {
+      "favicon": "./assets/icons/favicon.png"
     },
     "experiments": {
       "typedRoutes": true

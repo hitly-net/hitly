@@ -70,12 +70,28 @@ export function fullIconSvg(size = 1024): string {
 }
 
 /**
- * Android adaptive-icon foreground layer: mark only (tileless), centred in
- * the safe zone. fraction=0.68 puts the mark just inside the nominal 66%
- * safe zone (a small optical overshoot so the icon does not look tiny).
+ * Fraction of the canvas the transform box spans for the adaptive-icon
+ * layers. Android masks the 108dp layers with a circle of up to 72dp
+ * (radius = 1/3 of the canvas), so the whole mark must fit inside that
+ * circle, not just inside the 66% box. The mark's farthest content point
+ * is the top-left corner of the H's left stem at (88, 56) in the 512
+ * viewBox, 263.4 units from the centre of the 402x456 transform box
+ * (centre 257, 258), so the circle fits when
+ *
+ *   263.4 * (fraction / 456) <= 1/3   =>   fraction <= 0.577
+ *
+ * 0.57 keeps a ~4px anti-aliasing margin inside the safe zone at 1024px.
+ * (The old 0.68 pushed the H stems and the check tip outside the circle
+ * and the launcher mask clipped them.)
+ */
+export const ADAPTIVE_MARK_FRACTION = 0.57
+
+/**
+ * Android adaptive-icon foreground layer: mark only (tileless), scaled to
+ * fit inside the circular launcher mask's 66% safe zone.
  */
 export function adaptiveForegroundSvg(size = 1024): string {
-  return svg(size, markGroup({ hFill: BRAND_FG, checkStroke: BRAND_BLUE, canvas: size, fraction: 0.68 }))
+  return svg(size, markGroup({ hFill: BRAND_FG, checkStroke: BRAND_BLUE, canvas: size, fraction: ADAPTIVE_MARK_FRACTION }))
 }
 
 /** Android adaptive-icon background layer: solid brand tile colour. */
@@ -88,7 +104,7 @@ export function adaptiveBackgroundSvg(size = 1024): string {
  * white mark on transparent. The check is outlined so it stays readable
  * where it overlaps the H.
  */
-export function monochromeMarkSvg(size = 1024, fraction = 0.68): string {
+export function monochromeMarkSvg(size = 1024, fraction = ADAPTIVE_MARK_FRACTION): string {
   const inner = [
     markGroup({ hFill: '#ffffff', checkStroke: 'transparent', canvas: size, fraction }),
     `<g transform="translate(${markTransform(size, fraction).dx} ${markTransform(size, fraction).dy}) scale(${markTransform(size, fraction).scale})">`,
