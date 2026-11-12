@@ -1,8 +1,4 @@
-export const FEATURES = ['billing', 'usage_metering', 'sso'] as const
-
-export type Feature = (typeof FEATURES)[number]
-
-export type EditionId = 'oss' | 'cloud'
+import type { EntitlementFeature } from './tier-entitlements.ts'
 
 export const WORKSPACE_PLANS = ['self-hosted', 'solo', 'pro', 'team', 'enterprise'] as const
 export type WorkspacePlan = (typeof WORKSPACE_PLANS)[number]
@@ -30,8 +26,13 @@ export function completedRetentionDaysForPlan(plan: string): number | null {
   return isCloudPlan(plan) ? COMPLETED_RETENTION_DAYS[plan] : null
 }
 
+/**
+ * Numeric quotas per edition. Boolean feature gating does not live here:
+ * every feature check goes through `can(workspace, feature)`
+ * (apps/app/lib/tier-entitlements.ts) reading the `tier_entitlements` DB
+ * table, so plans never need a code change to gain or lose a feature.
+ */
 export interface Entitlements {
-  features: Record<Feature, boolean>
   /** null means unlimited */
   maxApprovalsPerMonth: number | null
   /** null means unlimited */
@@ -44,7 +45,8 @@ export interface Entitlements {
 export interface EditionNavItem {
   href: string
   label: string
-  feature?: Feature
+  /** Gated by the tier entitlements map; hidden unless can(workspace, feature). */
+  feature?: EntitlementFeature
 }
 
 export type TenantDocument = Record<string, unknown>
@@ -86,25 +88,7 @@ export interface HitlyEdition {
   resolveDatabaseUrl?(workspace: { id: string; plan: string }): string | null
 }
 
-export class FeatureUnavailableError extends Error {
-  readonly feature: Feature
-
-  constructor(feature: Feature) {
-    super(`Feature "${feature}" is not available in this HITLy edition`)
-    this.name = 'FeatureUnavailableError'
-    this.feature = feature
-  }
-}
-
-export function hasFeature(entitlements: Entitlements, feature: Feature): boolean {
-  return entitlements.features[feature]
-}
-
-export function requireFeature(entitlements: Entitlements, feature: Feature): void {
-  if (!hasFeature(entitlements, feature)) {
-    throw new FeatureUnavailableError(feature)
-  }
-}
+export type EditionId = 'oss' | 'cloud'
 
 export const OSS_NAV_ITEMS: EditionNavItem[] = [
   { href: '/', label: 'Home' },
@@ -114,11 +98,6 @@ export const OSS_NAV_ITEMS: EditionNavItem[] = [
 ]
 
 export const OSS_ENTITLEMENTS: Entitlements = {
-  features: {
-    billing: false,
-    usage_metering: false,
-    sso: false,
-  },
   maxApprovalsPerMonth: null,
   maxMembers: null,
   auditRetentionDays: 3650,

@@ -315,29 +315,34 @@ export function isWorkspaceAdmin(role: WorkspaceRole): boolean {
 export {
   CLOUD_PLANS,
   COMPLETED_RETENTION_DAYS,
-  FEATURES,
-  FeatureUnavailableError,
   HOUSEKEEPING_SCHEDULES,
   OSS_ENTITLEMENTS,
   OSS_NAV_ITEMS,
   WORKSPACE_PLANS,
   completedRetentionDaysForPlan,
   entitlementsForPlan,
-  hasFeature,
-  requireFeature,
 } from './edition.ts'
 export type {
   CloudPlan,
   EditionId,
   EditionNavItem,
   Entitlements,
-  Feature,
   HitlyEdition,
   HousekeepingSchedule,
   ResolvedProjectApiKey,
   TenantDocument,
   WorkspacePlan,
 } from './edition.ts'
+export {
+  ENTITLEMENT_FEATURES,
+  TIER_ENTITLEMENT_SEED,
+  canFromMap,
+  isEntitlementFeature,
+  planRank,
+  seedAsMap,
+  ssoFeatureForProvider,
+} from './tier-entitlements.ts'
+export type { EntitlementFeature, EntitlementMap } from './tier-entitlements.ts'
 export { argsHash, eventHash, jcs, jcsHash, sha256B64url } from './jcs.ts'
 export {
   EVIDENCE_SPEC_VERSION,

@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { isProjectStatus, type ProjectStatus, type WorkspaceRole } from '@hitly/core'
 import { projects } from '@hitly/db/schema'
+import { can } from './tier-entitlements'
 import { logProjectEvent } from './events'
 import { canManageWorkspace } from './rbac'
 import { requireDb, requireTenantWorkspaceId } from './tenant'
@@ -24,22 +25,25 @@ export type ProjectLifecycleError = {
 
 type WorkspacePlanRef = { id: string; plan: string }
 
-let lifecycleOverride: ((workspace: { plan: string }) => boolean) | null = null
+type LifecycleCheck = (workspace: WorkspacePlanRef) => boolean | Promise<boolean>
+
+let lifecycleOverride: LifecycleCheck | null = null
 
 /**
  * Whether pause/archive are available for this workspace. Direct delete with
  * a typed project-name confirm is the fallback when this returns false.
  *
- * Always true for every current plan; Cloud can gate by tier later.
+ * Read from the tier entitlements map (feature `project_lifecycle`, seeded
+ * for every plan) — moving it behind a paid plan is one UPDATE against
+ * tier_entitlements, never a code change.
  */
-export function canUseProjectLifecycle(workspace: { plan: string }): boolean {
-  return lifecycleOverride ? lifecycleOverride(workspace) : true
+export async function canUseProjectLifecycle(workspace: WorkspacePlanRef): Promise<boolean> {
+  if (lifecycleOverride) return lifecycleOverride(workspace)
+  return can(workspace, 'project_lifecycle')
 }
 
-/** Test-only seam. Production never sets this; `null` restores the default. */
-export function setCanUseProjectLifecycleForTests(
-  fn: ((workspace: { plan: string }) => boolean) | null,
-): void {
+/** Test-only seam. Production never sets this; `null` restores the DB map. */
+export function setCanUseProjectLifecycleForTests(fn: LifecycleCheck | null): void {
   lifecycleOverride = fn
 }
 
@@ -105,7 +109,7 @@ export async function setProjectStatus(args: {
   }
   const loaded = await requireAdminProject(args.projectId, args.workspaceRole)
   if (!loaded.ok) return loaded
-  if (!canUseProjectLifecycle(args.workspace)) {
+  if (!(await canUseProjectLifecycle(args.workspace))) {
     return {
       ok: false,
       error: 'Project pause and archive are not available on this plan',
@@ -155,7 +159,7 @@ export async function deleteProject(args: {
   const loaded = await requireAdminProject(args.projectId, args.workspaceRole)
   if (!loaded.ok) return loaded
   const project = loaded.project
-  const lifecycle = canUseProjectLifecycle(args.workspace)
+  const lifecycle = await canUseProjectLifecycle(args.workspace)
   if (lifecycle) {
     if (project.status !== 'archived') {
       return {

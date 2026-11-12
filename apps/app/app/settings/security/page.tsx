@@ -7,6 +7,7 @@ import { UnverifiedEmailNotice } from '@/components/unverified-email-notice'
 import { requireSessionUser } from '@/lib/context'
 import { getMfaStatus } from '@/lib/mfa-route'
 import { listPasskeysForUser } from '@/lib/passkey-route'
+import { canForCurrentWorkspace } from '@/lib/tier-entitlements'
 
 export const metadata = { title: 'Security' }
 
@@ -14,6 +15,10 @@ export default async function SecurityPage() {
   const user = await requireSessionUser()
   const mfa = await getMfaStatus(user.id)
   const passkeys = await listPasskeysForUser(user.id)
+  // Authenticator-app MFA is gated by the tier entitlements map (feature
+  // `mfa`, seeded for every plan). The enrol route enforces it too; this
+  // only hides the affordance.
+  const mfaAllowed = await canForCurrentWorkspace('mfa')
   return (
     <AppShell>
       <h1 className="text-2xl font-semibold">Security</h1>
@@ -29,10 +34,14 @@ export default async function SecurityPage() {
       <div className="mt-4">
         <ChangePasswordForm />
       </div>
-      <h2 className="mt-10 text-lg font-semibold">Authenticator app</h2>
-      <div className="mt-4">
-        <MfaSetup status={mfa} />
-      </div>
+      {mfaAllowed ? (
+        <>
+          <h2 className="mt-10 text-lg font-semibold">Authenticator app</h2>
+          <div className="mt-4">
+            <MfaSetup status={mfa} />
+          </div>
+        </>
+      ) : null}
       <h2 className="mt-10 text-lg font-semibold">Passkeys</h2>
       <div className="mt-4">
         <PasskeySetup passkeys={passkeys} />
