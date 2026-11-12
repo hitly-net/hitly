@@ -120,6 +120,33 @@ export const pendingEmailChanges = pgTable(
 )
 
 /**
+ * Public sign-up email verification that has not been confirmed yet.
+ * Only the SHA-256 of the one-time token is stored. `email` is the address
+ * the token was sent to. Confirming sets `users.email_verified` and deletes
+ * the row, so the token cannot be reused.
+ */
+export const pendingEmailVerifications = pgTable(
+  'pending_email_verifications',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Address the token was mailed to. Confirm rejects the token when this
+    // no longer equals users.email.
+    email: varchar('email', { length: 255 }).notNull(),
+    // SHA-256 (hex) of the one-time token emailed to `email`.
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex('pending_email_verifications_user_id_idx').on(table.userId),
+    uniqueIndex('pending_email_verifications_token_hash_idx').on(table.tokenHash),
+  ],
+)
+
+/**
  * Authenticator-app MFA for an account. The TOTP secret is stored only as
  * authenticated ciphertext; `enabled` stays false until a valid code is
  * confirmed. Additive: accounts with no row have MFA off.

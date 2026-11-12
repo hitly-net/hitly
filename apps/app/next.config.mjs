@@ -27,6 +27,11 @@ const config = {
         headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
       },
       {
+        // Sign-up verification links carry their token in the query string.
+        source: '/verify-email',
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      },
+      {
         // Email-change confirmation links carry their token in the query string.
         source: '/verify-email-change',
         headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],

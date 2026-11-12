@@ -14,6 +14,7 @@ import {
   renderDecisionNeededEmail,
   renderEmailChangedNoticeEmail,
   renderEmailChangeVerificationEmail,
+  renderEmailVerificationEmail,
   renderInviteEmail,
   renderPasswordChangedEmail,
   renderPasswordResetEmail,
@@ -54,6 +55,12 @@ const samples: Record<string, () => Promise<RenderedEmail>> = {
     renderEmailChangeVerificationEmail({
       appUrl: APP_URL,
       link: `${APP_URL}/verify-email-change?token=demo-one-time-token`,
+      ttlHours: 24,
+    }),
+  'email-verification': () =>
+    renderEmailVerificationEmail({
+      appUrl: APP_URL,
+      link: `${APP_URL}/verify-email?token=demo-one-time-token`,
       ttlHours: 24,
     }),
   'email-changed-notice': () => renderEmailChangedNoticeEmail({ appUrl: APP_URL }),

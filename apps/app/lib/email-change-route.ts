@@ -18,7 +18,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { and, eq, ne, sql } from 'drizzle-orm'
 import { isAPIError } from 'better-auth/api'
-import { pendingEmailChanges, users } from '@hitly/db/schema'
+import { pendingEmailChanges, pendingEmailVerifications, users } from '@hitly/db/schema'
 import { auth } from './auth'
 import { db } from './db'
 import { EMAIL_CHANGE_LIMITED_LOG, emailChangeAttemptLimiter } from './email-change-limit'
@@ -286,6 +286,8 @@ export async function handleEmailChangeVerify(
         .set({ email: pending.pendingEmail, emailVerified: true, updatedAt: new Date() })
         .where(eq(users.id, pending.userId))
       await tx.delete(pendingEmailChanges).where(eq(pendingEmailChanges.id, pending.id))
+      // The sign-up token was mailed to the previous address.
+      await tx.delete(pendingEmailVerifications).where(eq(pendingEmailVerifications.userId, pending.userId))
       return current[0].email
     })
   } catch (error) {

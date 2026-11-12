@@ -1,5 +1,6 @@
 import { AppShell } from '@/components/app-shell'
 import { ThemePicker } from '@/components/theme-picker'
+import { UnverifiedEmailNotice } from '@/components/unverified-email-notice'
 import { getAppContext } from '@/lib/context'
 
 export const metadata = { title: 'Profile' }
@@ -20,6 +21,7 @@ export default async function ProfilePage() {
           <br />
           {user.email}
         </p>
+        <UnverifiedEmailNotice verified={user.emailVerified} />
       </div>
       <h2 className="mt-10 text-lg font-semibold">Theme</h2>
       <p className="mt-1 text-sm text-zinc-500">Saved in this browser. System follows your OS appearance.</p>
