@@ -43,7 +43,8 @@ import {
   normalisePasskeyName,
   type PasskeyListItem,
 } from './passkey'
-import { PASSKEY_REAUTH_LIMITED_LOG, passkeyReauthLimiter } from './passkey-limit'
+import { PASSKEY_REAUTH_ATTEMPT_WINDOW_MS, PASSKEY_REAUTH_LIMITED_LOG, passkeyReauthAttemptAcquire } from './passkey-limit'
+import { resolveDecision, withRetryAfter, type RateAcquire } from './rate-limit'
 import { resetCheckClientKey } from './reset-check-limit'
 import { webAuthnRelyingParty } from './webauthn-rp'
 
@@ -74,7 +75,7 @@ export interface PasskeyRouteDeps {
   getSessionUser?: (headers: Headers) => Promise<PasskeySessionUser | null>
   verifyPassword?: (headers: Headers, password: string) => Promise<boolean>
   clientKey?: (headers: Headers) => string
-  allowReauth?: (key: string) => boolean
+  allowReauth?: RateAcquire
   now?: () => number
   database?: Database
   generateRegistrationOptions?: typeof generateRegistrationOptions
@@ -255,11 +256,12 @@ async function requireReauthUser(
   const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword : ''
   if (!currentPassword) return json({ code: 'MISSING_FIELDS' }, 400)
 
-  const allow = deps.allowReauth ?? passkeyReauthLimiter
+  const allow = deps.allowReauth ?? passkeyReauthAttemptAcquire
   const clientKey = deps.clientKey ?? resetCheckClientKey
-  if (!allow(clientKey(request.headers))) {
+  const budget = await resolveDecision(allow, clientKey(request.headers), PASSKEY_REAUTH_ATTEMPT_WINDOW_MS)
+  if (!budget.allowed) {
     log(PASSKEY_REAUTH_LIMITED_LOG)
-    return json({ error: 'too_many_attempts' }, 429)
+    return withRetryAfter(json({ error: 'too_many_attempts' }, 429), budget.retryAfterMs)
   }
 
   const verifyPassword = deps.verifyPassword ?? defaultVerifyPassword

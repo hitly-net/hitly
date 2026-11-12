@@ -21,7 +21,8 @@ import { isAPIError } from 'better-auth/api'
 import { pendingEmailChanges, pendingEmailVerifications, users } from '@hitly/db/schema'
 import { auth } from './auth'
 import { db } from './db'
-import { EMAIL_CHANGE_LIMITED_LOG, emailChangeAttemptLimiter } from './email-change-limit'
+import { EMAIL_CHANGE_ATTEMPT_WINDOW_MS, EMAIL_CHANGE_LIMITED_LOG, emailChangeAttemptAcquire } from './email-change-limit'
+import { resolveDecision, withRetryAfter, type RateAcquire } from './rate-limit'
 import {
   EMAIL_CHANGE_TTL_MS,
 } from './email-change'
@@ -48,7 +49,7 @@ export interface EmailChangeRouteDeps {
   /** Reuses Better Auth's in-process verifyPassword helper. */
   verifyPassword?: (headers: Headers, password: string) => Promise<boolean>
   clientKey?: (headers: Headers) => string
-  allow?: (key: string) => boolean
+  allow?: RateAcquire
   now?: () => number
   database?: Database
   sendVerification?: (args: { to: string; token: string }) => Promise<void>
@@ -157,7 +158,7 @@ export async function handleEmailChange(
         throw error
       }
     })
-  const allow = deps.allow ?? emailChangeAttemptLimiter
+  const allow = deps.allow ?? emailChangeAttemptAcquire
   const clientKey = deps.clientKey ?? resetCheckClientKey
   const now = deps.now ?? Date.now
   const sendVerification =
@@ -182,9 +183,10 @@ export async function handleEmailChange(
     return json({ code: 'INVALID_EMAIL' }, 400)
   }
 
-  if (!allow(clientKey(request.headers))) {
+  const budget = await resolveDecision(allow, clientKey(request.headers), EMAIL_CHANGE_ATTEMPT_WINDOW_MS)
+  if (!budget.allowed) {
     log(EMAIL_CHANGE_LIMITED_LOG)
-    return json({ error: 'too_many_attempts' }, 429)
+    return withRetryAfter(json({ error: 'too_many_attempts' }, 429), budget.retryAfterMs)
   }
 
   let passwordOk: boolean

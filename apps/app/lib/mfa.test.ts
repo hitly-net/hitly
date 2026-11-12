@@ -586,6 +586,7 @@ describe('MFA login second step', () => {
       allowVerify: () => false,
     })
     assert.equal(limited.status, 429)
+    assert.equal(limited.headers.get('retry-after'), '900', 'a spent budget names the seconds left in its window')
 
     const signIn2 = (await authApi.signInEmail({
       body: { email: address, password: PASSWORD },
@@ -761,6 +762,7 @@ describe('MFA disable and recovery regenerate', () => {
       mocksAt(1, { allowVerify: () => false }),
     )
     assert.equal(limitedDisable.status, 429)
+    assert.equal(limitedDisable.headers.get('retry-after'), '900')
     assert.equal((await database.select().from(userMfa).where(eq(userMfa.userId, user.id)))[0]?.enabled, true)
 
     const limitedRegen = await handleMfaRecoveryCodes(
@@ -768,6 +770,7 @@ describe('MFA disable and recovery regenerate', () => {
       mocksAt(1, { allowVerify: () => false }),
     )
     assert.equal(limitedRegen.status, 429)
+    assert.equal(limitedRegen.headers.get('retry-after'), '900')
 
     for (let i = 0; i < MFA_VERIFY_FAILURE_LIMIT; i += 1) {
       const failed = await handleMfaRecoveryCodes(

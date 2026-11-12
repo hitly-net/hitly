@@ -5,10 +5,14 @@
  * client. When a client is over the limit the page shows the "couldn't check
  * this link right now" state instead of the form.
  *
- * The limit is per server process. It never stores or logs the token.
+ * The factory above is the per-process fallback; the route default counts
+ * into the shared database (see resetCheckAcquire below and lib/rate-limit.ts)
+ * so the limit holds across server processes. It never stores or logs the
+ * token.
  */
 
 import { addressLimitKey, clientAddress } from './client-address'
+import { createRateAcquire, type RateAcquire } from './rate-limit'
 
 export type RateLimiter = ((key: string) => boolean) & {
   /** Number of client keys currently held (for tests and diagnostics). */
@@ -81,7 +85,24 @@ export function createResetCheckLimiter({
   return (key) => (key === UNKNOWN_CLIENT_KEY ? shared(key) : perClient(key))
 }
 
-export const resetCheckLimiter = createResetCheckLimiter()
+/**
+ * The shared-database pair behind the reset page: per-client counts under
+ * route 'reset-check', and the flood ceiling for clients with no usable
+ * address under 'reset-check-shared'. Override with
+ * HITLY_RATE_LIMIT_RESET_CHECK_* / HITLY_RATE_LIMIT_RESET_CHECK_SHARED_*.
+ */
+const resetCheckPerClientAcquire = createRateAcquire('reset-check', {
+  limit: RESET_CHECK_LIMIT,
+  windowMs: RESET_CHECK_WINDOW_MS,
+})
+const resetCheckSharedAcquire = createRateAcquire('reset-check-shared', {
+  limit: RESET_CHECK_SHARED_LIMIT,
+  windowMs: RESET_CHECK_WINDOW_MS,
+})
+
+/** Route default for the reset page: shared-database counting, per-process fallback. */
+export const resetCheckAcquire: RateAcquire = (key) =>
+  key === UNKNOWN_CLIENT_KEY ? resetCheckSharedAcquire(key) : resetCheckPerClientAcquire(key)
 
 type HeaderReader = { get(name: string): string | null }
 

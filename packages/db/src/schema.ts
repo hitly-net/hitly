@@ -628,6 +628,25 @@ export const workspaceOtelEndpoints = pgTable(
   (table) => [index('workspace_otel_endpoints_workspace_idx').on(table.workspaceId)],
 )
 
+/**
+ * Shared rate-limit buckets (lib: packages/db/src/rate-limit.ts). One row per
+ * (route, subject): `bucket_key` is the SHA-256 hex of `route + NUL + subject`
+ * (raw addresses, emails and keys are never stored), `route` is the plain
+ * endpoint-family name for operators, and the row counts requests inside one
+ * fixed window. Expired rows are swept by the limiter.
+ */
+export const rateLimitBuckets = pgTable(
+  'rate_limit_buckets',
+  {
+    bucketKey: varchar('bucket_key', { length: 64 }).primaryKey(),
+    route: varchar('route', { length: 64 }).notNull(),
+    count: integer('count').notNull(),
+    windowStart: timestamp('window_start', { precision: 3, withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { precision: 3, withTimezone: true }).notNull(),
+  },
+  (table) => [index('rate_limit_buckets_expires_at_idx').on(table.expiresAt)],
+)
+
 /** Tables Cloud RLS pins to `app.workspace_id`. Control-plane identity tables are not listed. */
 export const TENANT_TABLES = [
   'projects',

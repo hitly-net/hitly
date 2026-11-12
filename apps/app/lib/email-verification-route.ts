@@ -28,8 +28,10 @@ import {
 } from './email-verification-issue'
 import {
   RESEND_EMAIL_VERIFICATION_LIMITED_LOG,
-  resendEmailVerificationLimiter,
+  RESEND_EMAIL_VERIFICATION_WINDOW_MS,
+  resendEmailVerificationAttemptAcquire,
 } from './email-verification-limit'
+import { resolveDecision, withRetryAfter, type RateAcquire } from './rate-limit'
 import { newId } from './ids'
 import { resetCheckClientKey } from './reset-check-limit'
 
@@ -41,7 +43,7 @@ export type EmailVerificationSessionUser = { id: string }
 export interface EmailVerificationRouteDeps extends IssueEmailVerificationDeps {
   getSessionUser?: (headers: Headers) => Promise<EmailVerificationSessionUser | null>
   clientKey?: (headers: Headers) => string
-  allow?: (key: string) => boolean
+  allow?: RateAcquire
   log?: (line: string) => void
 }
 
@@ -154,7 +156,7 @@ export async function handleResendEmailVerification(
 ): Promise<NextResponse> {
   const log = deps.log ?? ((line: string) => console.warn(line))
   const getSessionUser = deps.getSessionUser ?? defaultGetSessionUser
-  const allow = deps.allow ?? resendEmailVerificationLimiter
+  const allow = deps.allow ?? resendEmailVerificationAttemptAcquire
   const clientKey = deps.clientKey ?? resetCheckClientKey
 
   let session: EmailVerificationSessionUser | null
@@ -166,9 +168,10 @@ export async function handleResendEmailVerification(
   }
   if (!session) return json({ error: 'unauthorized' }, 401)
 
-  if (!allow(clientKey(request.headers))) {
+  const budget = await resolveDecision(allow, clientKey(request.headers), RESEND_EMAIL_VERIFICATION_WINDOW_MS)
+  if (!budget.allowed) {
     log(RESEND_EMAIL_VERIFICATION_LIMITED_LOG)
-    return json({ error: 'too_many_attempts' }, 429)
+    return withRetryAfter(json({ error: 'too_many_attempts' }, 429), budget.retryAfterMs)
   }
 
   let database: Database
