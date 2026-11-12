@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { handleMfaEnrol } from '@/lib/mfa-route'
+import { defaultGetSessionUser, handleMfaEnrol } from '@/lib/mfa-route'
 import { canForCurrentWorkspace } from '@/lib/tier-entitlements'
 import { isJsonContentType, isSameOrigin } from '../../sign-out/route'
 
@@ -10,16 +10,26 @@ export type MfaEnrolRouteDeps = {
    * decision. Production default: canForCurrentWorkspace.
    */
   featureCheck?: (feature: string) => Promise<boolean>
+  /**
+   * Test seam for the session check that runs BEFORE the gate. Production
+   * default: defaultGetSessionUser (same reader the MFA handlers use).
+   */
+  authenticate?: (headers: Headers) => Promise<{ id: string } | null>
 }
 
 /**
  * Start authenticator-app MFA enrolment (POST /api/session/mfa/enrol).
  * Requires a current-password check. MFA stays inactive until confirm.
  *
- * Tier gate: the `mfa` feature (tier_entitlements map, seeded for every
- * plan) is checked against the session's current workspace before any
- * enrolment state is created. Deny (or a failed lookup) answers 403 —
- * never a 500, never enrolment.
+ * Order matters (product ruling): authentication first, entitlement
+ * second. A signed-out request is 401 unauthorized — it must not learn the
+ * plan answer (403 feature_unavailable) and must not be logged as a
+ * feature denial. Only an authenticated caller reaches the tier gate;
+ * deny (or a failed lookup) answers 403 — never a 500, never enrolment.
+ *
+ * The gate covers NEW enrolment only: disable, recovery-code regeneration
+ * and the sign-in challenge are separate ungated routes, so an enrolled
+ * user keeps full management even when `mfa` is denied.
  */
 export async function POST(
   request: NextRequest,
@@ -33,6 +43,18 @@ export async function POST(
   }
   if (!isJsonContentType(request.headers.get('content-type'))) {
     return NextResponse.json({ error: 'unsupported_media_type' }, { status: 415 })
+  }
+  const authenticate = deps.authenticate ?? defaultGetSessionUser
+  let user: { id: string } | null
+  try {
+    user = await authenticate(request.headers)
+  } catch {
+    // Session lookup itself failed: nobody is authenticated. Deny with 401,
+    // never a 500, and never reach the entitlement (no feature-denial log).
+    user = null
+  }
+  if (!user) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const featureCheck = deps.featureCheck ?? ((feature: string) => canForCurrentWorkspace(feature))
   if (!(await featureCheck('mfa'))) {

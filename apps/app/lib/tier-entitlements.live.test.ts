@@ -8,10 +8,26 @@
  */
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
+import { randomBytes } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { ENTITLEMENT_FEATURES, TIER_ENTITLEMENT_SEED, planRank, type EntitlementFeature } from '@hitly/core'
-import { tierEntitlements } from '@hitly/db/schema'
+import { passkeys, sessions, tierEntitlements, userMfaChallenges } from '@hitly/db/schema'
+import { auth } from './auth'
+import { newId } from './ids'
+import { MFA_CHALLENGE_COOKIE, shouldShowAuthenticatorSection } from './mfa'
+import { encryptUtf8, fromBase32, resolveMfaEncryptionKey, totpCode } from './mfa-crypto'
+import {
+  handleMfaConfirm,
+  handleMfaDisable,
+  handleMfaEnrol,
+  handleMfaRecoveryCodes,
+  handleMfaVerify,
+  hashMfaChallengeToken,
+  type MfaRouteDeps,
+} from './mfa-route'
+import { handlePasskeyDelete } from './passkey-route'
 import {
   can,
   canForCurrentWorkspace,
@@ -20,6 +36,9 @@ import {
 } from './tier-entitlements'
 
 process.env.HITLY_TIER_ENTITLEMENTS_TTL_MS = '0'
+process.env.HITLY_MAIL_TRANSPORT ??= 'memory'
+process.env.HITLY_SIGNUP_ENABLED ??= '1'
+process.env.HITLY_MFA_ENCRYPTION_KEY ??= 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://hitly:***@localhost:5432/hitly'
 const ALL_PLANS: readonly string[] = ['self-hosted', 'solo', 'pro', 'team', 'enterprise']
@@ -255,5 +274,171 @@ describe('project lifecycle follows the map, not hardcoded true', () => {
       invalidateTierEntitlementsCache()
     }
     assert.equal(await canUseProjectLifecycle({ id: 'wsp-mut', plan: 'solo' }), true)
+  })
+})
+
+describe('cache TTL (S4): the map expires on its own', () => {
+  // Mutant coverage: a cache that never expires (or treats blank/invalid
+  // as cache-off) fails — the update would be visible immediately, or the
+  // post-expiry read would still be cached-allowed.
+  it('an UPDATE becomes visible after the TTL without any invalidation', async () => {
+    process.env.HITLY_TIER_ENTITLEMENTS_TTL_MS = '50'
+    invalidateTierEntitlementsCache()
+    await client.query(`UPDATE tier_entitlements SET min_plan = 'self-hosted' WHERE feature = 'mfa'`)
+    assert.equal(await can({ plan: 'solo' }, 'mfa'), true) // primes the 50ms cache
+    await client.query(`UPDATE tier_entitlements SET min_plan = 'enterprise' WHERE feature = 'mfa'`)
+    try {
+      assert.equal(await can({ plan: 'solo' }, 'mfa'), true, 'fresh cache must still serve the old map')
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      assert.equal(await can({ plan: 'solo' }, 'mfa'), false, 'expired cache must re-read the table')
+    } finally {
+      await client.query(`UPDATE tier_entitlements SET min_plan = 'self-hosted' WHERE feature = 'mfa'`)
+      process.env.HITLY_TIER_ENTITLEMENTS_TTL_MS = '0'
+      invalidateTierEntitlementsCache()
+    }
+  })
+})
+
+describe('existing MFA stays fully manageable while mfa is denied (S2)', () => {
+  // Real user, real better-auth session, real MFA factor, real passkey row.
+  // The map then DENIES `mfa` for the user's plan; every management path
+  // must still work, and the challenge must still complete. Mutant
+  // coverage: gating the disable/recovery-codes/verify routes or hiding the
+  // enrolled section (pre-fix page) fails this suite while the row denies.
+  const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
+  const PASSWORD = 'correct-horse-battery'
+  const NOW = 1_700_000_300_000
+  const STEP_MS = 30_000
+  const runId = newId('t').slice(-8)
+
+  function post(endpoint: string, cookie: string | undefined, body: unknown): Request {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      origin: APP_URL,
+    }
+    if (cookie) headers.cookie = cookie
+    return new Request(`${APP_URL}${endpoint}`, { method: 'POST', headers, body: JSON.stringify(body) }) as never
+  }
+
+  function handlerDeps(steps: number, overrides: Partial<MfaRouteDeps> = {}): MfaRouteDeps {
+    return {
+      log: () => {},
+      now: () => NOW + steps * STEP_MS,
+      allowReauth: () => true,
+      allowVerify: () => true,
+      ...overrides,
+    }
+  }
+
+  it('disable, regenerate, challenge and passkey removal all survive a denial', async () => {
+    assert.ok(auth, 'live test needs better-auth')
+    const address = `hg3-s2-${runId}@example.com`
+    await auth!.api.signUpEmail({ body: { email: address, name: 'S2', password: PASSWORD } })
+    const { headers } = await auth!.api.signInEmail({
+      body: { email: address, password: PASSWORD },
+      returnHeaders: true,
+    })
+    const cookie = headers
+      .getSetCookie()
+      .map((c) => c.split(';')[0])
+      .join('; ')
+
+    // Enrol and confirm for real (MFA becomes active).
+    const enrolled = await handleMfaEnrol(
+      post('/api/session/mfa/enrol', cookie, { currentPassword: PASSWORD }),
+      handlerDeps(0),
+    )
+    assert.equal(enrolled.status, 200)
+    const { secret } = (await enrolled.json()) as { secret: string }
+    const confirmed = await handleMfaConfirm(
+      post('/api/session/mfa/confirm', cookie, { code: totpCode(fromBase32(secret), NOW) }),
+      handlerDeps(0),
+    )
+    assert.equal(confirmed.status, 200)
+
+    // The user's plan workspace; the map now DENIES mfa for it.
+    const workspace = { plan: 'solo' }
+    await client.query(`UPDATE tier_entitlements SET min_plan = 'enterprise' WHERE feature = 'mfa'`)
+    invalidateTierEntitlementsCache()
+    try {
+      assert.equal(await can(workspace, 'mfa'), false, 'precondition: the map denies mfa')
+      const { getMfaStatus } = await import('./mfa-route')
+      const userQ = await client.query(`SELECT id FROM users WHERE email = $1`, [address.toLowerCase()])
+      const userId = userQ.rows[0]?.id as string | undefined
+      assert.ok(userId, 'created user must exist')
+      const status = await getMfaStatus(userId)
+      assert.equal(status.enabled, true)
+      assert.equal(shouldShowAuthenticatorSection(status, false), true)
+
+      // Regenerate recovery codes while denied.
+      const regen = await handleMfaRecoveryCodes(
+        post('/api/session/mfa/recovery-codes', cookie, {
+          currentPassword: PASSWORD,
+          code: totpCode(fromBase32(secret), NOW + STEP_MS),
+        }),
+        handlerDeps(1),
+      )
+      assert.equal(regen.status, 200)
+      const regenBody = (await regen.json()) as { recoveryCodes?: string[] }
+      assert.ok(Array.isArray(regenBody.recoveryCodes) && regenBody.recoveryCodes.length >= 5)
+
+      // The existing sign-in challenge still fires (and completes).
+      const sessionRows = await db.select().from(sessions).where(eq(sessions.userId, userId))
+      assert.ok(sessionRows.length >= 1, 'user must have a session')
+      const token = randomBytes(32).toString('hex')
+      const key = resolveMfaEncryptionKey()
+      await db.insert(userMfaChallenges).values({
+        id: newId('mfac').slice(0, 36),
+        userId,
+        tokenHash: hashMfaChallengeToken(token),
+        sessionId: sessionRows[0].id,
+        cookiesCiphertext: encryptUtf8(JSON.stringify({ setCookies: ['held=1; Path=/; HttpOnly'] }), key),
+        expiresAt: new Date(NOW + 10 * 60_000),
+      })
+      const verified = await handleMfaVerify(
+        post('/api/session/mfa/verify', `${MFA_CHALLENGE_COOKIE}=${token}`, {
+          code: totpCode(fromBase32(secret), NOW + 2 * STEP_MS),
+        }),
+        handlerDeps(2),
+      )
+      assert.equal(verified.status, 200, 'the challenge must still complete while denied')
+      assert.deepEqual((await verified.json()), { ok: true })
+
+      // Removing a passkey works while denied (never gated at all).
+      const passkeyId = newId('pk').slice(0, 36)
+      await db.insert(passkeys).values({
+        id: passkeyId,
+        name: 's2-test-key',
+        publicKey: 'test-public-key',
+        userId,
+        credentialID: `cred-${runId}`,
+        counter: 0,
+        deviceType: 'platform',
+        backedUp: false,
+      })
+      const removed = await handlePasskeyDelete(
+        post(`/api/session/passkey/${passkeyId}/delete`, cookie, { currentPassword: PASSWORD }),
+        passkeyId,
+        { log: () => {}, now: () => NOW + 3 * STEP_MS, allowReauth: () => true },
+      )
+      assert.equal(removed.status, 200)
+      assert.deepEqual((await removed.json()), { ok: true })
+      const leftover = await db.select().from(passkeys).where(eq(passkeys.id, passkeyId))
+      assert.equal(leftover.length, 0)
+
+      // Disable MFA last, still denied.
+      const disabled = await handleMfaDisable(
+        post('/api/session/mfa/disable', cookie, {
+          currentPassword: PASSWORD,
+          code: totpCode(fromBase32(secret), NOW + 4 * STEP_MS),
+        }),
+        handlerDeps(4),
+      )
+      assert.equal(disabled.status, 200, 'disable must work while denied')
+      assert.equal((await getMfaStatus(userId)).enabled, false)
+    } finally {
+      await client.query(`UPDATE tier_entitlements SET min_plan = 'self-hosted' WHERE feature = 'mfa'`)
+      invalidateTierEntitlementsCache()
+    }
   })
 })

@@ -92,10 +92,14 @@ describe('POST /api/session/mfa/enrol gates on the mfa feature (server-side)', (
   // Mutant coverage: removing the gate (or letting enrolment through when
   // the gate denies) fails the deny test; checking the wrong feature name
   // fails the `asked` assertion.
+  const signedIn: MfaEnrolAuthStub = { authenticate: async () => ({ id: 'user-1' }) }
+  type MfaEnrolAuthStub = { authenticate: () => Promise<{ id: string } | null> }
+
   it('denies with 403 FEATURE_UNAVAILABLE and asks the gate for exactly "mfa"', async () => {
     const { POST } = await import('../app/api/session/mfa/enrol/route')
     const asked: string[] = []
     const res = await POST(enrolRequest() as never, {
+      ...signedIn,
       featureCheck: async (feature: string) => {
         asked.push(feature)
         return false
@@ -110,6 +114,7 @@ describe('POST /api/session/mfa/enrol gates on the mfa feature (server-side)', (
     const { POST } = await import('../app/api/session/mfa/enrol/route')
     let calls = 0
     const res = await POST(enrolRequest() as never, {
+      ...signedIn,
       featureCheck: async () => {
         calls += 1
         return false
@@ -123,6 +128,7 @@ describe('POST /api/session/mfa/enrol gates on the mfa feature (server-side)', (
     const { POST } = await import('../app/api/session/mfa/enrol/route')
     const asked: string[] = []
     const res = await POST(enrolRequest() as never, {
+      ...signedIn,
       featureCheck: async (feature: string) => {
         asked.push(feature)
         return true
@@ -134,15 +140,116 @@ describe('POST /api/session/mfa/enrol gates on the mfa feature (server-side)', (
     assert.notEqual(res.status, 403)
   })
 
-  it('answers 403 (never 500) on the default gate path with no database', async () => {
+  it('signed-out on the default path (no database) is 401, never 403, never 500', async () => {
+    // S1 order rule with the REAL session reader: no database means no
+    // session, so the answer is 401 unauthorized — not the plan answer.
     const { POST } = await import('../app/api/session/mfa/enrol/route')
     const { restore } = captureWarnings()
     try {
       const res = await POST(enrolRequest() as never)
-      assert.equal(res.status, 403)
-      assert.deepEqual((await res.json()).code, 'FEATURE_UNAVAILABLE')
+      assert.equal(res.status, 401)
+      assert.deepEqual((await res.json()).error, 'unauthorized')
     } finally {
       restore()
+    }
+  })
+})
+
+describe('POST /api/session/mfa/enrol authenticates BEFORE the gate (S1)', () => {
+  // Mutant coverage: gating before authenticating makes the signed-out
+  // test below see 403 FEATURE_UNAVAILABLE, and the gate stub gets called.
+  it('a signed-out request is 401 and the gate is never consulted or logged', async () => {
+    const { POST } = await import('../app/api/session/mfa/enrol/route')
+    const asked: string[] = []
+    const { lines, restore } = captureWarnings()
+    try {
+      const res = await POST(enrolRequest() as never, {
+        authenticate: async () => null,
+        featureCheck: async (feature: string) => {
+          asked.push(feature)
+          return false
+        },
+      })
+      assert.equal(res.status, 401)
+      assert.deepEqual((await res.json()).error, 'unauthorized')
+    } finally {
+      restore()
+    }
+    assert.deepEqual(asked, [])
+    assert.equal(lines.filter((line) => line.includes('[hitly entitlements]')).length, 0)
+  })
+
+  it('a failing session lookup is 401 too (never 500, never the plan answer)', async () => {
+    const { POST } = await import('../app/api/session/mfa/enrol/route')
+    let gateCalls = 0
+    const res = await POST(enrolRequest() as never, {
+      authenticate: async () => {
+        throw new Error('session store exploded')
+      },
+      featureCheck: async () => {
+        gateCalls += 1
+        return false
+      },
+    })
+    assert.equal(res.status, 401)
+    assert.equal(gateCalls, 0)
+  })
+})
+
+describe('HITLY_TIER_ENTITLEMENTS_TTL_MS parsing (S4)', () => {
+  // Mutant coverage: the old Number('') === 0 behaviour would answer 0
+  // (cache-off) for blank values; the old missing clamp answers raw huge.
+  it('unset, empty, blank and unparseable values use the 10s default', async () => {
+    const { parseTtlMs } = await helper()
+    for (const raw of [undefined, '', '   ', '\t', 'abc', 'NaN', '10s', '-1', '-0.5', 'Infinity']) {
+      assert.equal(parseTtlMs(raw), 10_000, JSON.stringify(raw))
+    }
+  })
+
+  it('a valid 0 still disables the cache', async () => {
+    const { parseTtlMs } = await helper()
+    assert.equal(parseTtlMs('0'), 0)
+    assert.equal(parseTtlMs(' 0 '), 0)
+  })
+
+  it('valid values pass through and clamp to 300000 ms', async () => {
+    const { parseTtlMs, MAX_TTL_MS } = await helper()
+    assert.equal(MAX_TTL_MS, 300_000)
+    assert.equal(parseTtlMs('250'), 250)
+    assert.equal(parseTtlMs('99999'), 99_999)
+    assert.equal(parseTtlMs('300001'), 300_000)
+    assert.equal(parseTtlMs('999999999'), 300_000)
+  })
+})
+
+describe('management of existing MFA is never hidden (S2)', () => {
+  // Mutant coverage: hiding the whole section on deny (the pre-fix page)
+  // fails the enabled+denied row — an enrolled user would lose disable and
+  // recovery-code management.
+  it('the Authenticator-app section shows whenever MFA is enabled, even denied', async () => {
+    const { shouldShowAuthenticatorSection } = await import('./mfa')
+    assert.equal(shouldShowAuthenticatorSection({ enabled: true }, false), true)
+    assert.equal(shouldShowAuthenticatorSection({ enabled: true }, true), true)
+    assert.equal(shouldShowAuthenticatorSection({ enabled: false }, true), true)
+    // Only a not-enrolled user with the feature denied loses the affordance.
+    assert.equal(shouldShowAuthenticatorSection({ enabled: false }, false), false)
+  })
+
+  it('the disable, recovery-code, verify and passkey-remove routes never import the gate', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const here = import.meta.dirname
+    const ungated = [
+      '../app/api/session/mfa/disable/route.ts',
+      '../app/api/session/mfa/recovery-codes/route.ts',
+      '../app/api/session/mfa/verify/route.ts',
+      '../app/api/session/passkey/[id]/delete/route.ts',
+      '../app/api/session/passkey/[id]/route.ts',
+    ]
+    for (const rel of ungated) {
+      const source = fs.readFileSync(path.resolve(here, rel), 'utf8')
+      assert.ok(!source.includes('tier-entitlements'), `${rel} must not consult the tier map`)
+      assert.ok(!source.includes('canForCurrentWorkspace'), `${rel} must not gate on entitlements`)
     }
   })
 })

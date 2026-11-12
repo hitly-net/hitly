@@ -60,8 +60,10 @@ UPDATE tier_entitlements SET min_plan = 'team' WHERE feature = 'mfa';
 ```
 
 Reads refresh within the helper's cache TTL
-(`HITLY_TIER_ENTITLEMENTS_TTL_MS`, default 10000 ms; `0` disables caching),
-so an `UPDATE` takes effect without a restart. The `min_plan` column has a
+(`HITLY_TIER_ENTITLEMENTS_TTL_MS`): unset, empty/blank, or unparseable
+values use the default 10000 ms — never cache-off — `0` disables caching,
+and any valid value clamps to a maximum of 300000 ms, so an `UPDATE` takes
+effect without a restart. The `min_plan` column has a
 CHECK constraint against the known plans, so typos are rejected at write
 time.
 
@@ -89,6 +91,30 @@ Every deny path returns `false` and writes one value-free log line:
 
 There is no fail-open default anywhere on this path.
 
+## Gates cover new use only
+
+An entitlement decides **new** use. Whatever a user already has stays fully
+manageable when the feature is denied, so the check never strands account
+security or data:
+
+- With `mfa` denied, an enrolled user still sees the Authenticator-app
+  section on the Security page and can still **disable MFA** and
+  **regenerate recovery codes**; the sign-in **MFA challenge keeps firing**
+  for their logins. Only the enrolment affordance and
+  `POST /api/session/mfa/enrol` are gated.
+- Passkeys are never gated: listing, renaming and **removing** a passkey
+  always work.
+- With `project_lifecycle` denied, pause/archive are off, but existing
+  projects stay fully **viewable and deletable** (the direct-delete path).
+
+The same principle applies to any future gated feature: gate the
+enrolment-style action, never management or removal of existing state.
+
+Order rule: **authentication is checked before the entitlement**. A
+signed-out request to a gated route (e.g. MFA enrolment) is `401
+unauthorized` — it never sees the `403 feature_unavailable` plan answer and
+is never logged as a feature denial.
+
 ## Where the map is read
 
 - `apps/app/lib/tier-entitlements.ts` — the helper itself (`can`,
@@ -96,8 +122,10 @@ There is no fail-open default anywhere on this path.
 - `GET /api/v1/workspace/entitlements` — the evaluated map for the current
   workspace, for clients deciding which MFA/SSO affordances to offer.
   Enforcement never trusts this response; guarded actions re-check.
-- MFA enrolment (`POST /api/session/mfa/enrol`) and the Security settings
-  page gate on `mfa`.
+- MFA enrolment (`POST /api/session/mfa/enrol`, after authentication) and
+  the Security settings page gate on `mfa` — enrolment only; see
+  "Gates cover new use only". Disable, recovery-code regeneration and the
+  sign-in challenge are never gated.
 - Project pause/archive and the project config page gate on
   `project_lifecycle`.
 - Edition nav items with a `feature` are shown per plan.

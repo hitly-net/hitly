@@ -8,10 +8,17 @@
  *
  *   UPDATE tier_entitlements SET min_plan = 'pro' WHERE feature = 'sso_google';
  *
- * Rows are cached for HITLY_TIER_ENTITLEMENTS_TTL_MS (default 10000 ms,
- * 0 disables the cache), so an UPDATE takes effect within the TTL without a
- * restart. Fail-closed: an unknown feature, a missing row, an unknown plan,
- * or a missing database all deny and emit exactly one value-free log line.
+ * Rows are cached for HITLY_TIER_ENTITLEMENTS_TTL_MS: unset, empty or
+ * invalid values use the default 10000 ms (never cache-off), 0 disables
+ * the cache, and values clamp to a maximum of 300000 ms. An UPDATE takes
+ * effect within the TTL without a restart. Fail-closed: an unknown
+ * feature, a missing row, an unknown plan, or a missing/unreachable
+ * database all deny and emit exactly one value-free log line.
+ *
+ * Gates cover NEW use only: management of existing state (MFA disable and
+ * recovery-code regeneration, the sign-in challenge, passkey removal,
+ * project deletion) never consults can(). Only enrolment-style affordances
+ * and routes do.
  *
  * Seed rules (migration 0015 / TIER_ENTITLEMENT_SEED in @hitly/core):
  *   mfa                    all plans
@@ -26,12 +33,28 @@ import { requireApiWorkspace } from './api-session'
 
 const LOG_PREFIX = '[hitly entitlements]'
 const DEFAULT_TTL_MS = 10_000
+/** Upper bound on the cache window; larger configured values clamp here. */
+export const MAX_TTL_MS = 300_000
+
+/**
+ * HITLY_TIER_ENTITLEMENTS_TTL_MS parsing (product ruling): unset, empty,
+ * blank or unparseable values mean the 10s DEFAULT — never cache-off.
+ * A valid 0 still disables the cache; negatives are invalid (default);
+ * any valid value clamps into [0, MAX_TTL_MS].
+ */
+export function parseTtlMs(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_TTL_MS
+  const trimmed = raw.trim()
+  if (trimmed === '') return DEFAULT_TTL_MS
+  const value = Number(trimmed)
+  if (!Number.isFinite(value) || value < 0) return DEFAULT_TTL_MS
+  return Math.min(Math.floor(value), MAX_TTL_MS)
+}
 
 let cached: { map: Map<string, string>; expiresAt: number } | null = null
 
 function ttlMs(): number {
-  const raw = Number(process.env.HITLY_TIER_ENTITLEMENTS_TTL_MS)
-  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : DEFAULT_TTL_MS
+  return parseTtlMs(process.env.HITLY_TIER_ENTITLEMENTS_TTL_MS)
 }
 
 /** Test seam: forces the next read to re-query the table. */

@@ -137,18 +137,27 @@ test('missing tier_entitlements table: every read path denies, logs once, never 
     third.restore()
   }
 
-  // 4. POST /api/session/mfa/enrol: 403 FEATURE_UNAVAILABLE, never a 500.
+  // 4. POST /api/session/mfa/enrol (S1 order): signed-out is 401 first —
+  // even with the table missing it never 500s and never leaks the plan
+  // answer; an authenticated caller gets the fail-closed 403.
   const { POST } = await import('../app/api/session/mfa/enrol/route')
-  const request = new Request(`${APP_ORIGIN}/api/session/mfa/enrol`, {
-    method: 'POST',
-    headers: { origin: APP_ORIGIN, 'content-type': 'application/json' },
-    body: JSON.stringify({ currentPassword: 'x' }),
-  })
+  const enrolBody = { currentPassword: 'x' }
+  const enrolReq = () =>
+    new Request(`${APP_ORIGIN}/api/session/mfa/enrol`, {
+      method: 'POST',
+      headers: { origin: APP_ORIGIN, 'content-type': 'application/json' },
+      body: JSON.stringify(enrolBody),
+    })
   const fourth = captureWarnings()
   try {
-    const res = await POST(request as never)
-    assert.equal(res.status, 403)
-    assert.deepEqual((await res.json()).code, 'FEATURE_UNAVAILABLE')
+    const signedOut = await POST(enrolReq() as never)
+    assert.equal(signedOut.status, 401)
+    assert.deepEqual((await signedOut.json()).error, 'unauthorized')
+    const signedIn = await POST(enrolReq() as never, {
+      authenticate: async () => ({ id: 'user-missing-table' }),
+    })
+    assert.equal(signedIn.status, 403)
+    assert.deepEqual((await signedIn.json()).code, 'FEATURE_UNAVAILABLE')
   } finally {
     fourth.restore()
   }
