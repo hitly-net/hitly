@@ -20,6 +20,8 @@ import {
   shouldShowUnverifiedEmailBanner,
 } from './verified-gate'
 
+const APP_ROOT = join(__dirname, '..')
+
 const originalFlag = process.env.HITLY_REQUIRE_VERIFIED_EMAIL
 
 function withFlag(value: string | undefined, fn: () => void | Promise<void>) {
@@ -42,17 +44,17 @@ afterEach(() => {
 
 describe('HITLY_REQUIRE_VERIFIED_EMAIL flag', () => {
   it('defaults OFF: unset and anything not in the on-set does not gate', () => {
-    for (const value of [undefined, '', '0', 'false', 'off', 'yes', 'TRUE', '1 ']) {
+    for (const value of [undefined, '', '0', 'false', 'off', 'no', 'maybe', 'truex', '1x']) {
       withFlag(value, () => {
         assert.equal(requireVerifiedEmailGateEnabled(), false, JSON.stringify(value))
       })
     }
   })
 
-  it('turns ON only for 1 / true / on', () => {
-    for (const value of ['1', 'true', 'on']) {
+  it('turns ON for 1 / true / yes / on, trimmed and case-insensitive', () => {
+    for (const value of ['1', 'true', 'yes', 'on', 'TRUE', '1 ', 'On ', ' YES', '\tTrue\n', 'Yes']) {
       withFlag(value, () => {
-        assert.equal(requireVerifiedEmailGateEnabled(), true, value)
+        assert.equal(requireVerifiedEmailGateEnabled(), true, JSON.stringify(value))
       })
     }
   })
@@ -92,16 +94,54 @@ describe('emailNotVerifiedResponse (REST/MCP refusal shape)', () => {
   })
 })
 
-describe('shouldShowUnverifiedEmailBanner', () => {
-  it('shows only when gated and unverified', () => {
+describe('shouldShowUnverifiedEmailBanner (the pure banner decision used by AppShell)', () => {
+  it('flag off + unverified: no banner (closed beta shows nothing new)', () => {
     assert.equal(shouldShowUnverifiedEmailBanner({ flagEnabled: false, emailVerified: false }), false)
+  })
+  it('flag off + verified: no banner', () => {
     assert.equal(shouldShowUnverifiedEmailBanner({ flagEnabled: false, emailVerified: true }), false)
+  })
+  it('flag on + verified: no banner (verified users see nothing)', () => {
     assert.equal(shouldShowUnverifiedEmailBanner({ flagEnabled: true, emailVerified: true }), false)
+  })
+  it('flag on + unverified: banner shows', () => {
     assert.equal(shouldShowUnverifiedEmailBanner({ flagEnabled: true, emailVerified: false }), true)
   })
 })
 
-const APP_ROOT = join(__dirname, '..')
+describe('AppShell banner wiring (static pins; the async server component is not renderable in the node suite)', () => {
+  const appShell = readFileSync(join(APP_ROOT, 'components', 'app-shell.tsx'), 'utf8')
+
+  it('imports the decision helper and the flag reader from the gate module', () => {
+    const clause = /import\s+\{([^}]*)\}\s+from\s+'@\/lib\/verified-gate'/.exec(appShell)
+    assert.ok(clause, 'AppShell must import from @/lib/verified-gate')
+    const names = clause![1]!.split(',').map((n) => n.trim()).filter(Boolean)
+    assert.ok(names.includes('shouldShowUnverifiedEmailBanner'), 'the decision comes from the pure helper, not a re-implementation')
+    assert.ok(names.includes('requireVerifiedEmailGateEnabled'), 'the flag comes from the shared parser')
+  })
+
+  it('derives the render condition from the helper fed with the live flag and the real user flag (kills B1 and B3)', () => {
+    // B1 (banner with the flag off) fails: flagEnabled must come from the
+    // flag reader, never a constant.
+    // B3 (banner for verified users) fails: emailVerified must come from the
+    // session user, never a constant.
+    assert.match(
+      appShell,
+      /const\s+(\w+)\s*=\s*shouldShowUnverifiedEmailBanner\(\{[^}]*flagEnabled:\s*requireVerifiedEmailGateEnabled\(\)[^}]*emailVerified:\s*user\.emailVerified[^}]*\}\)/,
+      'the condition must be shouldShowUnverifiedEmailBanner({ flagEnabled: requireVerifiedEmailGateEnabled(), emailVerified: user.emailVerified })',
+    )
+  })
+
+  it('renders the banner exactly when the helper result is true (kills B2)', () => {
+    // B2 (never shows) fails: the JSX must render UnverifiedEmailBanner from
+    // the helper-assigned condition — no constant, no other gate.
+    const wired = /const\s+(\w+)\s*=\s*shouldShowUnverifiedEmailBanner\(/.exec(appShell)
+    assert.ok(wired, 'a const must capture the helper result')
+    const name = wired![1]!
+    const jsx = new RegExp(`\\{\\s*${name}\\s*\\?\\s*<UnverifiedEmailBanner\\s*\\/>\\s*:\\s*null\\s*\\}`)
+    assert.match(appShell, jsx, `<${name} ? <UnverifiedEmailBanner /> : null> must be the only gate on the banner`)
+  })
+})
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = []

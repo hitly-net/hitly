@@ -78,7 +78,8 @@ Marketing funnel: `WAITLIST_WEBHOOK_URL`.
 ## Verified-email gate (`HITLY_REQUIRE_VERIFIED_EMAIL`)
 
 Defaults OFF (closed beta does not block); GA ships it ON. Accepted values
-match the other flags: `1` / `true` / `on` enable it; anything else (unset
+match the other flags: `1` / `true` / `yes` / `on` enable it (compared after
+trim + lowercase, so `TRUE` or `1 ` are ON); anything else (unset
 included) leaves it off. Read per call, so the deployment can flip it
 without a code change.
 

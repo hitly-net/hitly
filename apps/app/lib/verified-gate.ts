@@ -36,10 +36,16 @@ export class VerifiedEmailRequiredError extends Error {
   }
 }
 
-/** Off unless explicitly on: 1 / true / on (same accepted values as HITLY_SIGNUP_ENABLED's inverse). */
+/**
+ * Off unless explicitly on. The raw value is trimmed and lowercased before
+ * comparison, so `TRUE`, `1 `, `On`, `yes` (any case/surrounding space) all
+ * enable the gate; unset and anything else leave it off.
+ */
+const ON_VALUES = ['1', 'true', 'yes', 'on']
+
 export function requireVerifiedEmailGateEnabled(): boolean {
-  const value = process.env.HITLY_REQUIRE_VERIFIED_EMAIL
-  return value === '1' || value === 'true' || value === 'on'
+  const value = (process.env.HITLY_REQUIRE_VERIFIED_EMAIL ?? '').trim().toLowerCase()
+  return ON_VALUES.includes(value)
 }
 
 /**
