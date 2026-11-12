@@ -1,9 +1,9 @@
 /**
- * Passkeys (client-safe half): endpoint constants, fixed messages, the
- * notice email builder, and the submit helpers the security and login
- * pages import. The handlers that touch auth, the database and WebAuthn
- * live in lib/passkey-route.ts, so client components never import the
- * challenge store or public keys.
+ * Passkeys (client-safe half): endpoint constants, fixed messages, and the
+ * submit helpers the security and login pages import. The handlers that
+ * touch auth, the database and WebAuthn live in lib/passkey-route.ts, so
+ * client components never import the challenge store or public keys; the
+ * branded passkey-added notice email lives in lib/passkey-emails.ts.
  *
  * Re-auth wording reuses CURRENT_PASSWORD_INCORRECT_MESSAGE from the
  * password-change flow; this module does not change that behaviour.
@@ -17,7 +17,7 @@
  */
 
 import { CURRENT_PASSWORD_INCORRECT_MESSAGE } from './password-change'
-import { RESET_REQUEST_NETWORK_MESSAGE, type MailFn } from './password-reset'
+import { RESET_REQUEST_NETWORK_MESSAGE } from './password-reset'
 
 export const PASSKEY_LIST_ENDPOINT = '/api/session/passkey'
 export const PASSKEY_REGISTER_OPTIONS_ENDPOINT = '/api/session/passkey/register/options'
@@ -159,29 +159,6 @@ export function normalisePasskeyName(value: unknown): string | null {
   const name = value.trim()
   if (!name || name.length > PASSKEY_NAME_MAX_LENGTH) return null
   return name
-}
-
-export function buildPasskeyAddedEmail({ to }: { to: string }) {
-  return {
-    to,
-    subject: 'HITLy: A passkey was added to your account',
-    text: [
-      'A passkey was added to your HITLy account.',
-      '',
-      'If this was not you, sign in and remove the passkey from Settings → Security, then change your password.',
-    ].join('\n'),
-  }
-}
-
-export function createSendPasskeyAddedNotice(send: MailFn) {
-  return async ({ email }: { email: string }) => {
-    void send(buildPasskeyAddedEmail({ to: email })).catch((error: unknown) => {
-      console.error(
-        '[hitly passkey] Failed to send passkey-added email:',
-        error instanceof Error ? error.message : error,
-      )
-    })
-  }
 }
 
 async function readError(response: Response): Promise<{ code?: string; error?: string }> {

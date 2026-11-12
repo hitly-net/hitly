@@ -17,7 +17,7 @@ Restart Metro after installing packages (`Ctrl+C`, then `yarn dev:mobile`).
 
 All launcher icons, the push notification icon and the splash logos are
 generated from the SVG sources in [`scripts/icons/brand-svg.ts`](scripts/icons/brand-svg.ts),
-which reuse the HITLy mark from the web brand assets (`apps/web/app/icon.svg`:
+which reuse the HITLy mark from the web brand assets (`apps/app/public/icon.svg`:
 the "H" glyph + idle-blue check, `#18181b` tile, `#2563eb` accent).
 
 Regenerate after touching the SVG sources:

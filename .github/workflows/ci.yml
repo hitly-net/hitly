@@ -19,7 +19,7 @@ jobs:
         env:
           POSTGRES_DB: hitly
           POSTGRES_USER: hitly
-          POSTGRES_PASSWORD: hitly
+          POSTGRES_PASSWORD: ciPgVerify2026x
         ports:
           - 5432:5432
         options: >-
@@ -37,13 +37,13 @@ jobs:
       - run: yarn install --frozen-lockfile
       - run: yarn db:migrate
         env:
-          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          DATABASE_URL: postgres://hitly:ciPgVerify2026x@localhost:5432/hitly
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
           HITLY_MFA_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
       - run: yarn lint
       - run: yarn test
         env:
-          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          DATABASE_URL: postgres://hitly:ciPgVerify2026x@localhost:5432/hitly
           BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
           BETTER_AUTH_URL: http://localhost:3001
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
@@ -55,8 +55,60 @@ jobs:
         env:
           BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
           BETTER_AUTH_URL: http://localhost:3001
-          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          DATABASE_URL: postgres://hitly:ciPgVerify2026x@localhost:5432/hitly
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
           HITLY_MFA_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
           WEB_URL: http://localhost:3000
+      - name: Signed-out brand assets are served (200 + image/svg+xml)
+        env:
+          BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
+          BETTER_AUTH_URL: http://localhost:3001
+          DATABASE_URL: postgres://hitly:ciPgVerify2026x@localhost:5432/hitly
+          HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
+          HITLY_MFA_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+          NEXT_PUBLIC_WEB_URL: http://localhost:3000
+          WEB_URL: http://localhost:3000
+        run: |
+          # Runtime proof for the brand-asset contract (unit tests pin the
+          # proxy allowlist and the public/ files; this checks the whole
+          # stack): every BRAND_ASSET_PATHS path must answer a signed-out
+          # GET with 200 + image/svg+xml byte-identical to the public/ file,
+          # and signed-out /login must carry the metadata favicon link
+          # (<link rel="icon" href="/icon.svg">), which public/ files do not
+          # get automatically.
+          cd apps/app
+          ASSETS=$(node -e "
+            const s = require('fs').readFileSync('lib/constants.ts', 'utf8')
+            const m = s.match(/export const BRAND_ASSET_PATHS = \[([\s\S]*?)\]/)
+            if (!m) throw new Error('BRAND_ASSET_PATHS not found in lib/constants.ts')
+            const list = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+            if (list.length === 0) throw new Error('BRAND_ASSET_PATHS is empty')
+            console.log(list.join(' '))
+          ")
+          echo "brand assets from constants: ${ASSETS}"
+          yarn workspace @hitly/app start &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3001/api/v1/health; then break; fi
+            sleep 1
+            if [ "$i" = 60 ]; then echo "server did not come up" >&2; exit 1; fi
+          done
+          for asset in ${ASSETS}; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3001${asset}")
+            ctype=$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:3001${asset}")
+            echo "GET ${asset} -> ${code} ${ctype}"
+            [ "$code" = "200" ] || { echo "FAIL: ${asset} status ${code}" >&2; exit 1; }
+            case "$ctype" in image/svg+xml*) ;; *) echo "FAIL: ${asset} content-type '${ctype}'" >&2; exit 1;; esac
+            curl -s "http://127.0.0.1:3001${asset}" -o /tmp/served-asset
+            cmp /tmp/served-asset "public/${asset#/}" \
+              || { echo "FAIL: ${asset} body differs from public/${asset#/}" >&2; exit 1; }
+          done
+          LOGIN_HTML=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/login)
+          [ "$LOGIN_HTML" = "200" ] || { echo "FAIL: /login status ${LOGIN_HTML}" >&2; exit 1; }
+          LOGIN_HTML=$(curl -s http://127.0.0.1:3001/login)
+          echo "${LOGIN_HTML}" | grep -o '<link rel="icon" href="/icon.svg"[^>]*type="image/svg+xml"' > /dev/null \
+            || echo "${LOGIN_HTML}" | grep -o '<link rel="icon"[^>]*href="/icon.svg"[^>]*>' > /dev/null \
+            || { echo "FAIL: signed-out /login HTML has no <link rel=\"icon\" href=\"/icon.svg\">" >&2; exit 1; }
+          echo "OK: signed-out /login declares the /icon.svg favicon"
