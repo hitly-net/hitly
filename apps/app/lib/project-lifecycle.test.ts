@@ -725,6 +725,23 @@ describe('archived opens route', () => {
   })
 })
 
+describe('retryResume archived guard', () => {
+  it('refuses archived projects at its own guard, before decideApproval', () => {
+    const approvalsSrc = readFileSync(new URL('./approvals.ts', import.meta.url), 'utf8')
+    const start = approvalsSrc.indexOf('export async function retryResume')
+    const end = approvalsSrc.indexOf('export function validateEditReason', start)
+    assert.ok(start >= 0 && end > start, 'retryResume source must be isolatable')
+    const retryResumeSrc = approvalsSrc.slice(start, end)
+    assert.match(
+      retryResumeSrc,
+      /const archived = await refuseIfProjectArchived\(approval\.projectId, workspaceId\)\s*if \(archived\) return archived/,
+    )
+    const guardAt = retryResumeSrc.indexOf('refuseIfProjectArchived')
+    const decideAt = retryResumeSrc.indexOf('decideApproval')
+    assert.ok(guardAt >= 0 && decideAt > guardAt, 'the archived guard must run before decideApproval')
+  })
+})
+
 describe('retryResume on paused and archived projects', () => {
   it('is allowed on paused and is 409 project_archived on archived', async () => {
     const receiver = await startCapturingReceiver()

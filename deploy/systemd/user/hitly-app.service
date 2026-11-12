@@ -1,5 +1,5 @@
 [Unit]
-Description=Hitly app (Next.js production, :3001)
+Description=HITLy app (Next.js production, :3001)
 After=network-online.target docker.service
 Wants=network-online.target
 

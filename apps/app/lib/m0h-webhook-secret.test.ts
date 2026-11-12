@@ -2,7 +2,7 @@
  * M0h item 9 (PR hitly#106): callbacks sign with a DEDICATED per-project
  * webhook secret (key-id carrying registry on credentials.webhookSigningSecrets),
  * NEVER with HITLY_RESUME_SECRET (credentials.resumeSecret, which stays the
- * origin->Hitly poll credential) - and rotation keeps the outgoing key
+ * origin->HITLy poll credential) - and rotation keeps the outgoing key
  * verifiable for an OVERLAP WINDOW. Real Postgres + capturing receiver.
  *
  * Run with: DATABASE_URL=... HITLY_ENCRYPTION_KEK=... yarn workspace @hitly/app test
