@@ -22,9 +22,11 @@ function signedOut(pathname: string) {
 }
 
 describe('brand assets are public', () => {
-  it('serves every icon/logo asset in app/ without a session (no redirect to /login)', () => {
+  it('passes every icon/logo asset in app/ signed-out (no redirect to /login)', () => {
     // Every Next metadata icon file in app/ must be on the allowlist, so a
     // newly added icon cannot silently ship behind the login wall again.
+    // Note: passing the proxy is not the same as being served — only
+    // /icon.svg is a Next metadata route today (see constants.ts note).
     const onDisk = fs
       .readdirSync(appDir)
       .filter((name) => /^(icon|apple-icon|favicon)(-.*)?\.(svg|png|ico)$/.test(name))
@@ -38,6 +40,20 @@ describe('brand assets are public', () => {
       const response = signedOut(asset)
       assert.equal(response.headers.get('location'), null, `${asset} must not redirect`)
       assert.ok(response.status < 300 || response.status >= 400, `${asset} must not be a redirect`)
+    }
+  })
+
+  it('is exactly the brand-asset list: nothing else can join the public allowlist', () => {
+    // The signed-out pass-through is limited to the brand assets — adding an
+    // unrelated path (e.g. '/inbox') to BRAND_ASSET_PATHS fails this pin.
+    assert.deepEqual(
+      [...BRAND_ASSET_PATHS].sort(),
+      ['/apple-icon.svg', '/icon-open.svg', '/icon.svg'],
+      'the public list is exactly the brand asset paths',
+    )
+    for (const notBrand of ['/inbox', '/favicon.ico', '/manifest.webmanifest', '/logo.svg']) {
+      assert.equal(isBrandAssetPath(notBrand), false, `${notBrand} is not a brand asset`)
+      assert.match(signedOut(notBrand).headers.get('location') ?? '', /\/login/, `${notBrand} still redirects`)
     }
   })
 
