@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { LISTED_PLUGIN_IDS } from '@hitly/core'
 import {
   approvals,
@@ -32,7 +32,7 @@ import { db, pool } from './db'
 import { newId } from './ids'
 import { generateApiKey } from './keys'
 import { parseProjectConfig, saveProjectConfig } from './project-config'
-import { insertNewProject } from './project-create'
+import { insertNewProject, insertNewProjectApiKey } from './project-create'
 import { requireDb, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 
@@ -334,5 +334,109 @@ describe('project config save (LP: Config tab)', () => {
     const sink = await decodeTenantJson(workspaceId, row.evidenceSinkConfig as Record<string, unknown>)
     assert.equal(sink.accessKeyId, 'stored-access-key', 'a blank S3 access key must never clear the stored one')
     assert.equal(sink.secretAccessKey, 'stored-secret-key', 'a blank S3 secret must never clear the stored one')
+  })
+})
+
+describe('unverified-email gate on create paths', () => {
+  const unverifiedUserId = newId('usr')
+  let gatedProjectId: string
+
+  async function withFlag<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+    const saved = process.env.HITLY_REQUIRE_VERIFIED_EMAIL
+    if (value === undefined) delete process.env.HITLY_REQUIRE_VERIFIED_EMAIL
+    else process.env.HITLY_REQUIRE_VERIFIED_EMAIL = value
+    try {
+      return await fn()
+    } finally {
+      if (saved === undefined) delete process.env.HITLY_REQUIRE_VERIFIED_EMAIL
+      else process.env.HITLY_REQUIRE_VERIFIED_EMAIL = saved
+    }
+  }
+
+  function createAs(actingUserId: string, name: string) {
+    return withTenant(workspaceId, () =>
+      insertNewProject({ userId: actingUserId, name, description: '', plugin: LISTED_PLUGIN_IDS[0] }),
+    )
+  }
+
+  function createKeyAs(actingUserId: string, projectId: string, name: string) {
+    return withTenant(workspaceId, () =>
+      insertNewProjectApiKey({ projectId, userId: actingUserId, name }),
+    )
+  }
+
+  async function keyCountFor(projectId: string) {
+    const rows = await database
+      .select({ id: projectApiKeys.id })
+      .from(projectApiKeys)
+      .where(eq(projectApiKeys.projectId, projectId))
+    return rows.length
+  }
+
+  before(async () => {
+    await database.insert(users).values({
+      id: unverifiedUserId,
+      email: `unverified-${unverifiedUserId.slice(-8)}@example.com`,
+      name: 'Unverified User',
+      emailVerified: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    gatedProjectId = await createAs(userId, 'Gate host project')
+  })
+
+  after(async () => {
+    await database.delete(projectApiKeys).where(eq(projectApiKeys.workspaceId, workspaceId))
+    await database.delete(projectMemberships).where(eq(projectMemberships.userId, unverifiedUserId))
+    await database.delete(projects).where(sql`${projects.name} LIKE ${'Gated %'}`)
+    await database.delete(users).where(eq(users.id, unverifiedUserId))
+  })
+
+  it('flag OFF (closed beta): an unverified creator works exactly as before', async () => {
+    await withFlag(undefined, async () => {
+      const projectId = await createAs(unverifiedUserId, 'Gated OFF project')
+      assert.ok(projectId, 'project row written')
+      const raw = await createKeyAs(unverifiedUserId, gatedProjectId, 'OFF key')
+      assert.ok(raw.startsWith('hitly_'), 'raw key returned')
+    })
+  })
+
+  it('flag ON: unverified project creation refused with the stable code, nothing written', async () => {
+    await withFlag('1', async () => {
+      await assert.rejects(() => createAs(unverifiedUserId, 'Gated ON project'), /email_not_verified/)
+      const rows = await database
+        .select({ id: projects.id })
+        .from(projects)
+        .where(sql`${projects.name} = ${'Gated ON project'}`)
+      assert.equal(rows.length, 0, 'refused create writes no project row')
+    })
+  })
+
+  it('flag ON: unverified API key creation refused, no key row', async () => {
+    await withFlag('1', async () => {
+      const before = await keyCountFor(gatedProjectId)
+      await assert.rejects(() => createKeyAs(unverifiedUserId, gatedProjectId, 'ON key'), /email_not_verified/)
+      assert.equal(await keyCountFor(gatedProjectId), before, 'refused key create writes no key row')
+    })
+  })
+
+  it('flag ON: verified creators are unaffected', async () => {
+    await withFlag('1', async () => {
+      const projectId = await createAs(userId, 'Gated verified project')
+      assert.ok(projectId)
+      const raw = await createKeyAs(userId, projectId, 'verified key')
+      assert.ok(raw.startsWith('hitly_'))
+    })
+  })
+
+  it('flag ON: verifying the address immediately unblocks the creator (current stored flag)', async () => {
+    await withFlag('1', async () => {
+      await database
+        .update(users)
+        .set({ emailVerified: true, updatedAt: new Date() })
+        .where(eq(users.id, unverifiedUserId))
+      const projectId = await createAs(unverifiedUserId, 'Gated after verify')
+      assert.ok(projectId, 'create succeeds once the stored flag is verified')
+    })
   })
 })

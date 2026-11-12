@@ -66,7 +66,25 @@ Session-auth routes outside v1: `/api/auth/[...all]` (Better Auth) and
 Same as the web app host, since it is the same process: `DATABASE_URL`,
 `BETTER_AUTH_URL`, `HITLY_CORS_ALLOWED_ORIGINS`, `HITLY_TRUSTED_PROXIES`,
 `HITLY_CRON_SECRET` (authorizes `POST /housekeeping`), `HITLY_SIGNUP_ENABLED`
-(drives `/signup-status`).
+(drives `/signup-status`), `HITLY_REQUIRE_VERIFIED_EMAIL` (GA gate, below).
+
+## Verified-email gate
+
+While `HITLY_REQUIRE_VERIFIED_EMAIL` is on, creating projects or project API
+keys with an unverified address is refused server-side inside the shared
+create helpers (`apps/app/lib/project-create.ts`) that back every create
+path - web server actions today, and any REST `/api/v1` or MCP create path
+that uses them (the API does not yet expose project/key creation directly;
+when it does it must go through those helpers, enforced by a source-scan
+test). The refusal is HTTP 403 with a stable machine-readable code:
+
+```json
+{ "error": "email_not_verified", "message": "Verify your email address to create projects and API keys..." }
+```
+
+Work-item notification dispatch (decision email, push) additionally skips
+unverified recipients while the flag is on; verification and password-reset
+mail is never suppressed. See [web-app.md](web-app.md).
 
 ## Unconfirmed
 

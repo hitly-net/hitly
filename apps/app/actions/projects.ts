@@ -17,7 +17,7 @@ import { parseAnswerField } from '@/lib/answer-form-helpers'
 import { generateApiKey } from '@/lib/keys'
 import { guardProjectAdminChange } from '@/lib/member-guard'
 import { newId } from '@/lib/ids'
-import { insertNewProject } from '@/lib/project-create'
+import { insertNewProject, insertNewProjectApiKey } from '@/lib/project-create'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
 import {
   deleteProject as deleteProjectRecord,
@@ -132,22 +132,15 @@ export async function updateProjectConfig(
 }
 
 export async function createProjectApiKey(projectId: string, formData: FormData) {
-  return withAppTenant(async ({ workspace }) => {
+  return withAppTenant(async ({ user }) => {
     await requireProjectAdmin(projectId)
     const name = String(formData.get('name') ?? 'Ingest key').trim() || 'Ingest key'
-    const generated = generateApiKey()
-    const database = requireDb()
-    await database.insert(projectApiKeys).values({
-      id: newId('key').slice(0, 36),
-      workspaceId: workspace.id,
-      projectId,
-      name,
-      hashedKey: generated.hashed,
-      prefix: generated.prefix,
-    })
+    // Single server-side create path (shared with REST/MCP callers), so the
+    // unverified-email gate is enforced there, not per-callsite.
+    const raw = await insertNewProjectApiKey({ projectId, userId: user.id, name })
     revalidatePath(`/projects/${projectId}`)
     revalidatePath(`/projects/${projectId}/config`)
-    return generated.raw
+    return raw
   })
 }
 

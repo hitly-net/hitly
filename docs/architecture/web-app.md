@@ -63,7 +63,8 @@ hosted-only behavior (see [cloud.md](cloud.md)).
 
 Core: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
 `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_WEB_URL`, `WEB_URL`.
-Hardening/limits: `HITLY_SIGNUP_ENABLED`, `HITLY_CORS_ALLOWED_ORIGINS`,
+Hardening/limits: `HITLY_SIGNUP_ENABLED`, `HITLY_REQUIRE_VERIFIED_EMAIL`,
+`HITLY_CORS_ALLOWED_ORIGINS`,
 `HITLY_TRUSTED_PROXIES`, `HITLY_DB_CONNECTION_TIMEOUT_MS`,
 `HITLY_DB_POOL_MAX`, `HITLY_CREATE_ONCE_RETENTION_DAYS`.
 Cryptography: `HITLY_ENCRYPTION_KEK`, `HITLY_MFA_ENCRYPTION_KEY`.
@@ -73,6 +74,32 @@ Mail/push (delegated, listed on their pages): `HITLY_MAIL_TRANSPORT`,
 Deep links: `HITLY_MOBILE_APP_ID`, `HITLY_IOS_TEAM_ID`,
 `HITLY_ANDROID_SHA256`.
 Marketing funnel: `WAITLIST_WEBHOOK_URL`.
+
+## Verified-email gate (`HITLY_REQUIRE_VERIFIED_EMAIL`)
+
+Defaults OFF (closed beta does not block); GA ships it ON. Accepted values
+match the other flags: `1` / `true` / `on` enable it; anything else (unset
+included) leaves it off. Read per call, so the deployment can flip it
+without a code change.
+
+While ON, a user whose `users.email_verified` is false can still sign in,
+but:
+
+- creating projects or project API keys is refused server-side. The check
+  lives in the shared create helpers (`lib/project-create.ts`), the only
+  server-side writers of the `projects` and `projectApiKeys` tables, so web
+  server actions and any REST `/api/v1` or MCP create path all pass through
+  it. The refusal carries the stable code `email_not_verified` and a
+  user-facing instruction to verify; REST/MCP callers get HTTP 403 with
+  `{ "error": "email_not_verified", "message": ... }`.
+- work-item notifications are suppressed for the unverified recipient: no
+  decision email, no push (`lib/notify.ts`).
+- the signed-in app shell shows a banner naming what the gate holds with a
+  resend-verification link; the resend reuses the existing rate-limited
+  signed-in endpoint `POST /api/session/resend-email-verification`.
+
+Account-security mail (verification, resend, password reset, email change)
+is never gated and always sends while the flag is on.
 
 ## Unconfirmed
 

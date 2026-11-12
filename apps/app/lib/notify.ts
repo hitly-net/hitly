@@ -23,6 +23,7 @@ import { listVisibleProjectIds } from './rbac'
 import { requireDb } from './require-db'
 import { afterTenantCommit, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
+import { requireVerifiedEmailGateEnabled } from './verified-gate'
 
 const APP_URL = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001'
 
@@ -144,6 +145,20 @@ async function notifyAssigneeEmail(args: {
   const userRows = await database.select().from(users).where(eq(users.id, args.assignedUserId)).limit(1)
   const assignee = userRows[0]
   if (!assignee) return
+
+  // GA gate: an unverified address gets no work-item notifications while the
+  // flag is on. Account-security mail (verification, reset) does not go
+  // through this function and is unaffected.
+  if (!assignee.emailVerified && requireVerifiedEmailGateEnabled()) {
+    await logProjectEvent({
+      projectId: args.projectId,
+      approvalId: args.approvalId,
+      level: 'info',
+      type: 'notified',
+      message: 'Email skipped (email not verified)',
+    })
+    return
+  }
 
   const enabled = await database
     .select()
@@ -317,8 +332,21 @@ export async function notifyPendingItemPush(args: {
   sendPush?: typeof sendExpoPush
 }) {
   return withTenant(args.workspaceId, async () => {
-    const recipientIds = await listPendingPushRecipientIds(args)
+    let recipientIds = await listPendingPushRecipientIds(args)
     if (recipientIds.length === 0) return
+
+    // GA gate: unverified addresses get no push while the flag is on.
+    if (requireVerifiedEmailGateEnabled()) {
+      const verifiedRows = await requireDb()
+        .select({ id: users.id, emailVerified: users.emailVerified })
+        .from(users)
+        .where(inArray(users.id, recipientIds))
+      const verified = new Set(
+        verifiedRows.filter((row) => row.emailVerified).map((row) => row.id),
+      )
+      recipientIds = recipientIds.filter((id) => verified.has(id))
+      if (recipientIds.length === 0) return
+    }
     const sendPush = args.sendPush ?? sendExpoPush
 
     // Titles reuse the branded-email wording helper (question / decision
