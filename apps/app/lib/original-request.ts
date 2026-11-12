@@ -26,7 +26,7 @@ import { decodeTenantJson } from './tenant-crypto'
  * Hash forms: `payloadHash` / `argsHash` are the hitl-spec 3.8 / 5 wire form,
  * `b64url(SHA-256(JCS(...)))` over the **stored original** (pre-redaction) so a
  * reviewer can verify off-host. `payloadSha256` / `argsSha256` stay hex SHA-256
- * over Hitly `canonicalJson` of that original because they anchor the
+ * over HITLy `canonicalJson` of that original because they anchor the
  * hitly.evidence.v1 chain (`proposed_sha256`).
  */
 

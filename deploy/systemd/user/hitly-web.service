@@ -1,5 +1,5 @@
 [Unit]
-Description=Hitly web (Next.js production, :3000)
+Description=HITLy web (Next.js production, :3000)
 After=network-online.target
 Wants=network-online.target
 

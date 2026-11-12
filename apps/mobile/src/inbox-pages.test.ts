@@ -42,6 +42,25 @@ test('source: inbox screens and client send nextCursor on later fetches', () => 
   assert.match(listSrc, /More items — load more/, 'list must show an honest remaining-items control')
 })
 
+test('pull-to-refresh calls AttentionProvider refresh()', () => {
+  const inboxSrc = fs.readFileSync(path.join(dir, '../app/(tabs)/inbox.tsx'), 'utf8')
+  assert.match(
+    inboxSrc,
+    /const \{ screenEpoch, refresh \} = useAttention\(\)/,
+    'inbox must take refresh from AttentionProvider',
+  )
+  const start = inboxSrc.indexOf('const refreshFromStart')
+  const end = inboxSrc.indexOf('const loadMore')
+  assert.ok(start >= 0 && end > start, 'refreshFromStart must be the pull-to-refresh handler')
+  const refreshFromStart = inboxSrc.slice(start, end)
+  assert.match(refreshFromStart, /void refresh\(\)/, 'pull-to-refresh must call AttentionProvider refresh()')
+  assert.match(
+    inboxSrc,
+    /onRefresh=\{\(\) => void refreshFromStart\(\)\}/,
+    'RefreshControl must use the handler that calls AttentionProvider refresh()',
+  )
+})
+
 test('source: inbox list has pull-to-refresh and a header refresh button', () => {
   const inboxSrc = fs.readFileSync(path.join(dir, '../app/(tabs)/inbox.tsx'), 'utf8')
   const listSrc = fs.readFileSync(path.join(dir, 'components/inbox/WorkItemList.tsx'), 'utf8')

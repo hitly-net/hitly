@@ -9,8 +9,8 @@ import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
  *
  * Callback HMACs are signed with a DEDICATED webhook secret, never with the
  * resume secret: `resumeSecret` (= HITLY_RESUME_SECRET on the origin side)
- * authenticates origin->Hitly polls; `webhookSigningSecrets` authenticates
- * Hitly->origin callbacks. Two credentials, two purposes - rotating one must
+ * authenticates origin->HITLy polls; `webhookSigningSecrets` authenticates
+ * HITLy->origin callbacks. Two credentials, two purposes - rotating one must
  * never invalidate the other, and a leaked webhook key cannot forge polls.
  *
  * Stored (tenant-encrypted) on projects.credentials:
