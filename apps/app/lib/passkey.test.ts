@@ -61,7 +61,7 @@ import {
   type PasskeyRouteDeps,
 } from './passkey-route'
 import { webAuthnRelyingParty } from './webauthn-rp'
-import { isEmailPasswordSignIn } from './mfa-sign-in'
+import { isEmailPasswordSignIn, isSignInHeld, sessionRoutePolicyFor } from './mfa-sign-in'
 
 if (!db || !auth) throw new Error('DATABASE_URL and BETTER_AUTH_SECRET required for tests')
 const database = db
@@ -591,7 +591,7 @@ describe('passkey client helpers and static wiring', () => {
     assert.ok(!mail.text.includes('http://'))
   })
 
-  it('plugin management paths 404; authenticate paths stay open; MFA hold is email-only', () => {
+  it('plugin management paths 404; authenticate paths stay open; UV passkey sign-in is not held', () => {
     const stock = Object.values(passkeyPlugin().endpoints)
       .map((endpoint) => endpoint.path as string)
       .sort()
@@ -637,10 +637,11 @@ describe('passkey client helpers and static wiring', () => {
     assert.match(routeSrc, /requireUserVerification:\s*true/)
     assert.match(routeSrc, /userVerification:\s*PASSKEY_USER_VERIFICATION/)
     assert.equal(isEmailPasswordSignIn(new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' })), true)
-    assert.equal(
-      isEmailPasswordSignIn(new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, { method: 'POST' })),
-      false,
-    )
+    const passkeySignIn = new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, { method: 'POST' })
+    assert.equal(isEmailPasswordSignIn(passkeySignIn), false)
+    assert.equal(isSignInHeld(passkeySignIn), false)
+    assert.equal(sessionRoutePolicyFor(passkeySignIn)?.action, 'uv-satisfies-mfa')
+    assert.equal(sessionRoutePolicyFor(passkeySignIn)?.mfa.startsWith('MFA satisfied by UV'), true)
     for (const name of ['register/options', 'register', '[id]/delete'] as const) {
       const file = fs.readFileSync(path.join(__dirname, `../app/api/session/passkey/${name}/route.ts`), 'utf-8')
       assert.ok(file.includes('isSameOrigin'))

@@ -2,7 +2,8 @@
  * LIVE passkey tests against real Postgres and the app's real Better Auth
  * instance (same harness as lib/password-change.live.test.ts): plugin
  * authenticate (deleted credential cannot sign in, challenge replay), and
- * passkey sign-in skipping the MFA hold that wraps email/password.
+ * passkey sign-in: UV satisfies MFA (full session even when TOTP is enrolled);
+ * an assertion without UV is rejected and mints nothing.
  *
  * Run with: yarn db:up && yarn db:migrate && yarn workspace @hitly/app test
  */
@@ -20,6 +21,7 @@ import { auth } from './auth'
 import { db, pool } from './db'
 import { handleAuthRequest } from '../app/api/auth/[...all]/route'
 import { newId } from './ids'
+import { MFA_CHALLENGE_COOKIE } from './mfa'
 import { holdPasswordSignInIfMfa } from './mfa-sign-in'
 import {
   PASSKEY_PLUGIN_AUTHENTICATE_PATHS,
@@ -187,14 +189,69 @@ describe('passkey plugin sign-in', () => {
     assert.equal(body.code, 'CHALLENGE_NOT_FOUND')
   })
 
-  it('does not hold a passkey sign-in for TOTP MFA', async () => {
-    const passkeySignIn = new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, { method: 'POST' })
-    const fakeSession = new Response(JSON.stringify({ user: { id: 'usr_x' } }), {
+  it('a UV passkey sign-in with no TOTP row is forwarded unchanged', async () => {
+    const address = email('uv-plain')
+    await createUser(address)
+    const user = await userByEmail(address)
+    assert.ok(user)
+    const uvSet = { response: fakeAssertion(`live-uv-plain-${run}`, true) }
+    assert.equal(assertionHasUserVerification(uvSet), true)
+    const session = new Response(JSON.stringify({ user: { id: user.id }, session: { id: 'ses_plain' } }), {
       status: 200,
-      headers: { 'content-type': 'application/json', 'set-cookie': 'better-auth.session_token=abc; Path=/' },
+      headers: {
+        'content-type': 'application/json',
+        'set-cookie': 'better-auth.session_token=plain-token; Path=/; HttpOnly',
+      },
     })
-    const held = await holdPasswordSignInIfMfa(passkeySignIn, fakeSession)
-    assert.equal(held, fakeSession)
+    const request = new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, {
+      method: 'POST',
+      headers: { origin: APP_URL, 'content-type': 'application/json' },
+      body: JSON.stringify(uvSet),
+    })
+    const admitted = await handleAuthRequest(request, async () => session)
+    const held = await holdPasswordSignInIfMfa(request, admitted)
+    assert.equal(held, session)
+    const cookies = held.headers.getSetCookie().join(';')
+    assert.match(cookies, /better-auth\.session_token=plain-token/)
+    assert.equal(cookies.includes(MFA_CHALLENGE_COOKIE), false)
+  })
+
+  it('a UV passkey sign-in mints a full session when TOTP is enrolled', async () => {
+    const address = email('uv-mfa')
+    await createUser(address)
+    const user = await userByEmail(address)
+    assert.ok(user)
+    await database.insert(userMfa).values({
+      id: newId('mfa').slice(0, 36),
+      userId: user.id,
+      totpCiphertext: 'placeholder-ciphertext',
+      enabled: true,
+    })
+    const uvSet = { response: fakeAssertion(`live-uv-mfa-${run}`, true) }
+    assert.equal(assertionHasUserVerification(uvSet), true)
+    const session = new Response(JSON.stringify({ user: { id: user.id }, session: { id: 'ses_mfa' } }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'set-cookie': 'better-auth.session_token=uv-full-session; Path=/; HttpOnly',
+      },
+    })
+    const request = new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, {
+      method: 'POST',
+      headers: { origin: APP_URL, 'content-type': 'application/json' },
+      body: JSON.stringify(uvSet),
+    })
+    const admitted = await handleAuthRequest(request, async () => session)
+    assert.equal(admitted, session, 'UV must reach the handler that mints the session')
+    const held = await holdPasswordSignInIfMfa(request, admitted)
+    assert.equal(held.status, 200)
+    assert.equal(held, session, 'UV passkey sign-in must not be rewritten into an MFA challenge')
+    const cookies = held.headers.getSetCookie().join(';')
+    assert.match(cookies, /better-auth\.session_token=uv-full-session/)
+    assert.equal(cookies.includes(MFA_CHALLENGE_COOKIE), false)
+    const body = (await held.json()) as { mfaRequired?: boolean; user?: { id?: string } }
+    assert.equal(body.mfaRequired, undefined)
+    assert.equal(body.user?.id, user.id)
   })
 
   it('a TOTP-enrolled user presenting a passkey assertion without UV gets no session', async () => {

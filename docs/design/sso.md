@@ -21,8 +21,8 @@ Read from the code. Anything not listed here is not on main.
 | Email + password | Enabled. Min length 8. Sign-up `POST /api/auth/sign-up/email`, sign-in `POST /api/auth/sign-in/email`. Reset: `revokeSessionsOnPasswordReset: true`. Signed-in change: `POST /api/session/change-password` with `revokeOtherSessions: true`, then a notice email. |
 | Email verification | `users.email_verified` exists (default `false`). **Better Auth `emailVerification` is not configured.** Public sign-up does not send a verification mail and does not set the flag. `/verify-email` is a static “check your inbox” page. The flag is set `true` after **new-account invite accept** (`acceptInviteWithNewAccount` — the token arrived in that inbox) or **confirmed email change**. **`acceptInviteAsUser` does not set `emailVerified`:** a signed-in existing user who accepts an invite keeps whatever flag they already had (typically `false` after public signup). That matters for linking: they stay “unverified local” even after joining a workspace. |
 | Email change | Signed-in, current password required. Live `users.email` is unchanged until the new inbox confirms a hashed one-time token (24h). Then `emailVerified` is set true and a notice goes to the **previous** address. |
-| MFA | HITLy-owned TOTP + recovery codes ([#124](https://github.com/hitly-net/hitly/pull/124), [#126](https://github.com/hitly-net/hitly/pull/126)). Tables `user_mfa`, `user_mfa_recovery_codes`, `user_mfa_challenges`. Enrol / disable / regenerate re-auth with **current password** (`verifyPassword`). Confirm enrol calls `revokeOtherSessions`. Login MFA is **only** wired on email/password sign-in (`holdPasswordSignInIfMfa` matches `POST …/sign-in/email`). |
-| Passkeys | **Not on main.** No passkey table, plugin, or UI. No open passkey PR in this repo at the time of writing. Treat as **planned** (a separate PR may land in parallel). Better Auth has a passkey plugin; HITLy would own enrolment and the MFA challenge the same way it owns TOTP. |
+| MFA | HITLy-owned TOTP + recovery codes ([#124](https://github.com/hitly-net/hitly/pull/124), [#126](https://github.com/hitly-net/hitly/pull/126)). Tables `user_mfa`, `user_mfa_recovery_codes`, `user_mfa_challenges`. Enrol / disable / regenerate re-auth with **current password** (`verifyPassword`). Confirm enrol calls `revokeOtherSessions`. `holdPasswordSignInIfMfa` holds email/password sign-in and any other session-minting sign-in when `user_mfa.enabled` (social callback seam included). A UV passkey sign-in is not held. |
+| Passkeys | On main ([#154](https://github.com/hitly-net/hitly/pull/154), [#157](https://github.com/hitly-net/hitly/pull/157)). User verification is required. A UV passkey sign-in satisfies HITLy MFA (ruling, 11 November 2026). Register, rename, and delete go through `/api/session/passkey` and still require the current password. |
 | Social SSO | Stub only. `socialProviders` from `@hitly/cloud/auth/providers` is `{}`. `SocialAuthButtons` renders nothing. Login and signup already mount the component. |
 | RBAC | Workspace roles `owner` / `admin` / `member` (`isWorkspaceAdmin` = owner or admin). Project roles `admin` / `user` / `reader` in `apps/app/lib/rbac.ts`. Users can belong to several workspaces (`memberships`). |
 | Invites | Tokenised, hashed, 14 days, email-bound. Signup disabled (`HITLY_SIGNUP_ENABLED=0`) still allows invite-gated account create. New-account accept (`acceptInviteWithNewAccount`) sets `emailVerified`. Signed-in accept (`acceptInviteAsUser`) does not. Bootstrap no longer auto-joins by email match. |
@@ -173,7 +173,7 @@ Failed link attempts (unverified email, last-method unlink, collision) audit as 
 
 ## 2. SSO and MFA
 
-HITLy MFA is **account-level**, not workspace-level, and is not Better Auth’s two-factor plugin. Social callbacks today would mint a full session: `holdPasswordSignInIfMfa` only wraps email/password sign-in. SSO must use the same hold pattern (stash Set-Cookie, issue `hitly.mfa_challenge`, finish on `/login/mfa`).
+HITLy MFA is **account-level**, not workspace-level, and is not Better Auth’s two-factor plugin. `holdPasswordSignInIfMfa` holds email/password sign-in and the social callback seam (`/callback/:id`, and `/oauth2/callback/:providerId` when that plugin is mounted): stash Set-Cookie, issue `hitly.mfa_challenge`, finish on `/login/mfa`. No social provider is mounted in the public app. A UV passkey sign-in is not held.
 
 ### 2.1 Recommendation
 
@@ -187,14 +187,16 @@ SSO-only users (no password) cannot use today’s enrol / disable / email-change
 
 Unchanged: HITLy-issued, HMAC stored, shown once, consume on use. They are not the IdP’s backup codes. Using one still completes the HITLy MFA challenge after SSO.
 
-### 2.3 Passkeys (planned)
+### 2.3 Passkeys
 
-A separate PR may add WebAuthn. Relative to SSO:
+Passkeys are on main. WebAuthn user verification is required, and an assertion without the UV flag is rejected before a session can be minted.
 
-- **Second factor:** a passkey can satisfy the MFA challenge after password or SSO, same slot as TOTP.
-- **Primary:** a discoverable passkey can sign in without SSO or password; if HITLy MFA is also enrolled, still require a *different* factor (TOTP or a second passkey), unless product explicitly allows a single passkey as both.
+**Ruling (11 November 2026):** a UV passkey sign-in satisfies HITLy MFA on its own. It is not held for TOTP or a recovery code, and it mints a full session even when `user_mfa.enabled` is set. The earlier line — require a different factor unless product allows a single passkey as both — is superseded by this ruling. `/login/mfa` stays TOTP and recovery codes. A passkey is not a second step on that page in this cut.
+
+Relative to SSO:
+
 - Unlink / last-method rules count a passkey as a sign-in method.
-- Do not block this SSO design on passkeys landing; wire the MFA hold so a passkey step can plug into the same challenge cookie.
+- The MFA hold still wraps password sign-in and the social callback seam. Passkey verify does not use the challenge cookie.
 
 ---
 
@@ -386,7 +388,7 @@ No new tests in this PR. Implementation PRs should cover:
 4. **Grace period** when turning on require-SSO: days, until each member links, or next login?
 5. **Break-glass.** Any owner, a named user, or Cloud support only? Should break-glass skip HITLy MFA (recommendation: no)?
 6. **SSO-only MFA.** Require HITLy TOTP for SSO users, offer it, or wait for passkeys?
-7. **Passkeys vs SSO.** Primary sign-in, second factor, or both? Does require-SSO accept a passkey in place of the IdP?
+7. **Passkeys vs SSO.** UV passkey sign-in satisfies HITLy MFA (ruling, 11 November 2026). Still open: does require-SSO accept a passkey in place of the IdP?
 8. **JIT vs invite-only.** On Cloud with signup off, is first Google login enough when the email domain is verified, or is an invite always required?
 9. **Mobile.** First-cut SSO on web only (today’s `SocialAuthButtons` on login/signup), or same providers in Expo via Better Auth?
 10. **Unverified legacy users.** Force email verification before any `linkSocial` UI, or let them explicit-link after password re-auth only? Password-reset takeover of an occupying unverified account is specified in §1.2 — confirm that is acceptable product-wise.
