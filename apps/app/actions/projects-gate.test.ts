@@ -18,6 +18,7 @@ import { before, beforeEach, describe, it, mock } from 'node:test'
 import {
   fakeDb,
   projectCreateFakes,
+  resumeSecretFakes,
   sim,
   withFlag,
 } from '../lib/gate-action-test-harness'
@@ -47,6 +48,10 @@ mock.module(new URL('../lib/tenant.ts', import.meta.url).href, {
   },
 })
 mock.module(new URL('../lib/project-create.ts', import.meta.url).href, { namedExports: projectCreateFakes })
+mock.module(new URL('../lib/resume-secret.ts', import.meta.url).href, { namedExports: resumeSecretFakes })
+mock.module(new URL('../lib/events.ts', import.meta.url).href, {
+  namedExports: { logProjectEvent: async () => undefined },
+})
 mock.module(new URL('../lib/rbac.ts', import.meta.url).href, {
   namedExports: {
     canManageWorkspace: () => true,
@@ -220,6 +225,53 @@ describe('unverified-email gate: action-path rollback (API keys)', () => {
         (error: unknown) => error instanceof Error && !(error instanceof VerifiedEmailRequiredError),
       )
       assert.equal(sim.keys.get('k9')!.hashed, 'orig_hash9', 'plain throw also rolled back')
+    })
+  })
+})
+
+describe('unverified-email gate: action-path rollback (resume secret regenerate, S13)', () => {
+  it('flag ON + unverified: typed result, stored resume secret UNCHANGED, no rotate committed', async () => {
+    sim.verified.set(ACTOR, false)
+    sim.seedResumeSecret('prj_rs', 'rs_original')
+    await withFlag('1', async () => {
+      const result = await actions.regenerateProjectResumeSecret('prj_rs')
+      expectTypedBlocked(result)
+      assert.equal(sim.resumeSecrets.get('prj_rs'), 'rs_original', 'refused rotation rolled back; old secret still stored')
+      assert.deepEqual(sim.committed.filter((op) => op.startsWith('rotate-resume:')), [], 'no resume rotate COMMITTED')
+      const call = sim.calls.find((c) => c.fn === 'rotateProjectResumeSecret')
+      assert.equal(call?.args.actorUserId, ACTOR, 'rotation is gated on the acting user')
+    })
+  })
+
+  it('flag ON + verified: rotation commits a new secret', async () => {
+    sim.verified.set(ACTOR, true)
+    sim.seedResumeSecret('prj_rs2', 'rs_original2')
+    await withFlag('1', async () => {
+      const next = await actions.regenerateProjectResumeSecret('prj_rs2')
+      assert.equal(typeof next, 'string')
+      assert.notEqual(sim.resumeSecrets.get('prj_rs2'), 'rs_original2')
+      assert.ok(sim.committed.some((op) => op === 'rotate-resume:prj_rs2'))
+    })
+  })
+
+  it('flag OFF + unverified: rotation behaves exactly as before', async () => {
+    sim.verified.set(ACTOR, false)
+    sim.seedResumeSecret('prj_rs3', 'rs_original3')
+    const next = await actions.regenerateProjectResumeSecret('prj_rs3')
+    assert.equal(typeof next, 'string')
+    assert.notEqual(sim.resumeSecrets.get('prj_rs3'), 'rs_original3')
+  })
+
+  it('a text-preserving plain throw from the rotate chokepoint propagates and rolls back', async () => {
+    sim.verified.set(ACTOR, false)
+    sim.plainTextThrow = true
+    sim.seedResumeSecret('prj_rs4', 'rs_original4')
+    await withFlag('1', async () => {
+      await assert.rejects(
+        () => actions.regenerateProjectResumeSecret('prj_rs4'),
+        (error: unknown) => error instanceof Error && !(error instanceof VerifiedEmailRequiredError),
+      )
+      assert.equal(sim.resumeSecrets.get('prj_rs4'), 'rs_original4')
     })
   })
 })

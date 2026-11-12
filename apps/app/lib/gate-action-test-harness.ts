@@ -38,8 +38,18 @@ export const sim = {
   projects: [] as Array<{ id: string; name: string; by: string }>,
   keys: new Map<string, SimKey>(),
   invites: [] as SimInvite[],
+  /** Stored resume secret per project id (fake project.credentials.resumeSecret). */
+  resumeSecrets: new Map<string, string>(),
+  /** Existing accounts by email (findUserByEmail fake). */
+  usersByEmail: new Map<string, { id: string; email: string }>(),
+  /** Membership rows written by the addExistingUserToWorkspace fake. */
+  memberships: [] as Array<{ id: string; workspaceId: string; userId: string; role: string }>,
+  /** "Added to workspace" mails committed by the fake chokepoint. */
+  addedMailCount: 0,
   /** Counts invite emails "sent" — only as a committed side effect. */
   inviteSendCount: 0,
+  /** When set, the fakeDb select().from().where().limit(1) chain returns these rows. */
+  nextRows: undefined as Array<Record<string, unknown>> | undefined,
   /** When set, lib fakes throw a PLAIN Error carrying the gate text (S11 soft mutant). */
   plainTextThrow: false,
   seq: 0,
@@ -52,7 +62,12 @@ export const sim = {
     sim.projects = []
     sim.keys = new Map()
     sim.invites = []
+    sim.resumeSecrets = new Map()
+    sim.usersByEmail = new Map()
+    sim.memberships = []
+    sim.addedMailCount = 0
     sim.inviteSendCount = 0
+    sim.nextRows = undefined
     sim.plainTextThrow = false
     sim.seq = 0
     delete process.env.HITLY_REQUIRE_VERIFIED_EMAIL
@@ -103,6 +118,12 @@ export const sim = {
   },
   seedInvite(invite: SimInvite) {
     sim.invites.push(invite)
+  },
+  seedResumeSecret(projectId: string, secret: string) {
+    sim.resumeSecrets.set(projectId, secret)
+  },
+  seedUserByEmail(email: string, user: { id: string; email: string }) {
+    sim.usersByEmail.set(email, user)
   },
 }
 
@@ -197,12 +218,49 @@ export const inviteFakes = {
   },
 }
 
+/** Fakes for lib/resume-secret.ts rotate, same mutant ordering. */
+export const resumeSecretFakes = {
+  async rotateProjectResumeSecret(args: { projectId: string; actorUserId: string }): Promise<
+    { error: string } | { ok: true; resumeSecret: string }
+  > {
+    sim.calls.push({ fn: 'rotateProjectResumeSecret', args: { ...args } })
+    if (!sim.resumeSecrets.has(args.projectId)) return { error: 'Project not found' }
+    const raw = `rs_rotated_${++sim.seq}`
+    sim.record(`rotate-resume:${args.projectId}`, () => sim.resumeSecrets.set(args.projectId, raw))
+    if (sim.gateBlocks(args.actorUserId)) throw sim.gateError()
+    return { ok: true as const, resumeSecret: raw }
+  },
+}
+
+/** Fake for the lib/invites.ts existing-user add chokepoint, same mutant ordering. */
+export const membershipAddFakes = {
+  addExistingUserToWorkspace: async (args: {
+    workspaceId: string
+    workspaceName: string
+    userId: string
+    email: string
+    role: 'admin' | 'member'
+    actorUserId: string
+    appUrl: string
+    database?: unknown
+    send?: unknown
+  }): Promise<void> => {
+    sim.calls.push({ fn: 'addExistingUserToWorkspace', args: { ...args } })
+    const id = `mem_sim_${++sim.seq}`
+    sim.record(`membership:${id}`, () => {
+      sim.memberships.push({ id, workspaceId: args.workspaceId, userId: args.userId, role: args.role })
+      sim.addedMailCount += 1
+    })
+    if (sim.gateBlocks(args.actorUserId)) throw sim.gateError()
+  },
+}
+
 /** Chainable no-op drizzle surface so action-internal requireProjectAdmin passes. */
 export const fakeDb = {
   select: () => ({
     from: () => ({
       where: () => ({
-        limit: async () => [{ id: 'row_sim' }],
+        limit: async () => sim.nextRows ?? [{ id: 'row_sim' }],
       }),
     }),
   }),

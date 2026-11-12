@@ -27,6 +27,8 @@ import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from
 import { clientFromHeaders } from '@/lib/request-client'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
 import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
+import { rotateProjectResumeSecret } from '@/lib/resume-secret'
+import { logProjectEvent } from '@/lib/events'
 import { headers } from 'next/headers'
 
 function revalidateWorkItem(approvalId: string, projectId: string) {
@@ -210,22 +212,29 @@ export async function regenerateProjectApiKey(projectId: string, keyId: string):
   }
 }
 
-export async function regenerateProjectResumeSecret(projectId: string) {
-  return withAppTenant(async () => {
-    await requireProjectAdmin(projectId)
-    const { rotateProjectResumeSecret } = await import('@/lib/resume-secret')
-    const result = await rotateProjectResumeSecret(projectId)
-    if ('error' in result) throw new Error(result.error)
-    const { logProjectEvent } = await import('@/lib/events')
-    await logProjectEvent({
-      projectId,
-      type: 'config',
-      message: 'Rotated resume secret',
+export async function regenerateProjectResumeSecret(projectId: string): Promise<GateBlockedResult | string> {
+  // Same rollback contract as the other gated actions: the gate error throws
+  // OUT of withAppTenant (transaction discarded), and the typed result is
+  // produced only outside it.
+  try {
+    return await withAppTenant(async ({ user }) => {
+      await requireProjectAdmin(projectId)
+      const result = await rotateProjectResumeSecret({ projectId, actorUserId: user.id })
+      if ('error' in result) throw new Error(result.error)
+      await logProjectEvent({
+        projectId,
+        type: 'config',
+        message: 'Rotated resume secret',
+      })
+      revalidatePath(`/projects/${projectId}`)
+      revalidatePath(`/projects/${projectId}/config`)
+      return result.resumeSecret
     })
-    revalidatePath(`/projects/${projectId}`)
-    revalidatePath(`/projects/${projectId}/config`)
-    return result.resumeSecret
-  })
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
+  }
 }
 
 export async function addProjectMember(projectId: string, formData: FormData) {

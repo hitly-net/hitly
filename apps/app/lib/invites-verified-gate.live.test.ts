@@ -17,7 +17,7 @@ import { invites, memberships, users, workspaces } from '@hitly/db/schema'
 import { clearSentMail, sentMail, type sendMail } from '@hitly/mail'
 import { db } from './db'
 import { newId } from './ids'
-import { createAndSendWorkspaceInvite, resendWorkspaceInvite } from './invites'
+import { addExistingUserToWorkspace, createAndSendWorkspaceInvite, resendWorkspaceInvite } from './invites'
 import { VerifiedEmailRequiredError } from './verified-gate'
 
 if (!db) throw new Error('DATABASE_URL required for tests')
@@ -237,6 +237,97 @@ describe('unverified-email gate on workspace invites (live)', () => {
       })
       assert.ok(created.id, 'invite succeeds once the stored flag is verified')
       assert.equal(send.calls(), 1)
+    })
+  })
+})
+
+describe('unverified-email gate on adding an EXISTING account (live, S10)', () => {
+  const addedUserId = newId('usr').slice(0, 36)
+  const addedEmail = `gate-${addedUserId.slice(-8)}@${run}.example.com`
+
+  before(async () => {
+    // The invite suite above has a test that verifies the unverified actor
+    // (verifying-unblocks check); restore the unverified state for this
+    // suite's actor.
+    await database
+      .update(users)
+      .set({ emailVerified: false, updatedAt: new Date() })
+      .where(eq(users.id, unverifiedActorId))
+    await database.insert(users).values({
+      id: addedUserId,
+      email: addedEmail,
+      name: 'Existing Account',
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+  })
+
+  after(async () => {
+    await database.delete(memberships).where(eq(memberships.userId, addedUserId))
+    await database.delete(users).where(eq(users.id, addedUserId))
+  })
+
+  async function membershipCount() {
+    const rows = await database
+      .select({ id: memberships.id })
+      .from(memberships)
+      .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, addedUserId)))
+    return rows.length
+  }
+
+  function addAs(actorId: string, role: 'admin' | 'member' = 'member', send = captureSend()) {
+    return {
+      promise: addExistingUserToWorkspace({
+        workspaceId,
+        workspaceName: 'Gate Co',
+        userId: addedUserId,
+        email: addedEmail,
+        role,
+        actorUserId: actorId,
+        appUrl: APP_URL,
+        database,
+        send: send.send,
+      }),
+      send,
+    }
+  }
+
+  it('flag ON: unverified actor cannot add an existing account — no membership row, no mail', async () => {
+    await withFlag('1', async () => {
+      const send = captureSend()
+      await assert.rejects(() => addAs(unverifiedActorId, 'member', send).promise, VerifiedEmailRequiredError)
+      assert.equal(await membershipCount(), 0, 'no membership row written')
+      assert.equal(send.calls(), 0, 'no "added to workspace" mail sent')
+    })
+  })
+
+  it('flag ON: refused for the admin role too', async () => {
+    await withFlag('1', async () => {
+      const send = captureSend()
+      await assert.rejects(() => addAs(unverifiedActorId, 'admin', send).promise, VerifiedEmailRequiredError)
+      assert.equal(await membershipCount(), 0)
+      assert.equal(send.calls(), 0)
+    })
+  })
+
+  it('flag ON: a verified actor adds the existing account and the mail goes out', async () => {
+    await withFlag('1', async () => {
+      const send = captureSend()
+      await addAs(verifiedActorId, 'member', send).promise
+      assert.equal(await membershipCount(), 1)
+      assert.equal(send.calls(), 1)
+      await database.delete(memberships).where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, addedUserId)))
+    })
+  })
+
+  it('flag OFF (closed beta): an unverified actor adds exactly as before', async () => {
+    await withFlag(undefined, async () => {
+      const send = captureSend()
+      await addAs(unverifiedActorId, 'member', send).promise
+      assert.equal(await membershipCount(), 1)
+      assert.equal(send.calls(), 1)
+      await database.delete(memberships).where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, addedUserId)))
     })
   })
 })

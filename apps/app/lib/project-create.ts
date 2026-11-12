@@ -19,7 +19,8 @@ import { assertEmailVerifiedForCreate } from './verified-gate'
  * helpers call this before any write, so the flag is checked while the
  * tenant transaction is still unwritten.
  */
-async function assertCreatorVerified(userId: string) {
+/** Shared actor gate: used by the create/rotate helpers here and by the resume-secret rotate chokepoint. */
+export async function assertCreatorVerified(userId: string) {
   const rows = await requireDb()
     .select({ emailVerified: users.emailVerified })
     .from(users)

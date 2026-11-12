@@ -20,6 +20,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { isBooleanFlag } from './boolean-flag'
 
 /** Stable machine-readable code for the refusal (API contract). */
 export const EMAIL_NOT_VERIFIED_CODE = 'email_not_verified'
@@ -73,15 +74,13 @@ export class VerifiedEmailRequiredError extends Error {
 }
 
 /**
- * Off unless explicitly on. The raw value is trimmed and lowercased before
- * comparison, so `TRUE`, `1 `, `On`, `yes` (any case/surrounding space) all
- * enable the gate; unset and anything else leave it off.
+ * Off unless explicitly on, parsed by the shared boolean-flag parser
+ * (lib/boolean-flag.ts): 1/true/yes/on enable it (after trim + lowercase),
+ * 0/false/off disable it, unset or unrecognised leave it off, and an
+ * unrecognised value earns one value-free startup warning.
  */
-const ON_VALUES = ['1', 'true', 'yes', 'on']
-
 export function requireVerifiedEmailGateEnabled(): boolean {
-  const value = (process.env.HITLY_REQUIRE_VERIFIED_EMAIL ?? '').trim().toLowerCase()
-  return ON_VALUES.includes(value)
+  return isBooleanFlag('HITLY_REQUIRE_VERIFIED_EMAIL', false)
 }
 
 /**

@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import { invites, memberships, users, workspaces } from '@hitly/db/schema'
-import { renderInviteEmail, sendMail } from '@hitly/mail'
+import { renderAddedToWorkspaceEmail, renderInviteEmail, sendMail } from '@hitly/mail'
 import { db } from './db'
 import { newId } from './ids'
 import { APIError } from 'better-auth/api'
@@ -9,6 +9,36 @@ import { currentInviteSignup, normaliseEmail, runWithInviteSignup, type InviteSi
 import { assertEmailVerifiedForCreate } from './verified-gate'
 
 /** How long an invite link stays valid. */
+/**
+ * Add an EXISTING account to a workspace (the inviteToWorkspace existing-user
+ * path). Single server-side writer for this transition: the unverified-email
+ * gate runs BEFORE any write, so a blocked add creates no membership row and
+ * sends no "added to workspace" mail.
+ */
+export async function addExistingUserToWorkspace(args: {
+  workspaceId: string
+  workspaceName: string
+  userId: string
+  email: string
+  role: 'admin' | 'member'
+  /** Signed-in account performing the add; unverified accounts are refused when the flag is ON. */
+  actorUserId: string
+  appUrl: string
+  database?: Database | Tx
+  send?: typeof sendMail
+}): Promise<void> {
+  const database = args.database ?? requireDatabase()
+  await assertActorEmailVerified(args.actorUserId, database)
+  await database.insert(memberships).values({
+    id: newId('mem').slice(0, 36),
+    workspaceId: args.workspaceId,
+    userId: args.userId,
+    role: args.role,
+  })
+  const rendered = await renderAddedToWorkspaceEmail({ appUrl: args.appUrl, workspaceName: args.workspaceName })
+  await (args.send ?? sendMail)({ to: args.email, ...rendered })
+}
+
 export const INVITE_TTL_DAYS = 14
 export const INVITE_TTL_MS = INVITE_TTL_DAYS * 24 * 60 * 60 * 1000
 

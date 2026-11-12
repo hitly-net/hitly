@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict'
 import { before, beforeEach, describe, it, mock } from 'node:test'
-import { fakeDb, inviteFakes, sim, withFlag } from '../lib/gate-action-test-harness'
+import { fakeDb, inviteFakes, membershipAddFakes, sim, withFlag } from '../lib/gate-action-test-harness'
 import { EMAIL_NOT_VERIFIED_CODE, VerifiedEmailRequiredError } from '../lib/verified-gate'
 
 mock.module('next/cache', { namedExports: { revalidatePath: () => undefined } })
@@ -29,7 +29,11 @@ mock.module(new URL('../lib/tenant.ts', import.meta.url).href, {
 })
 mock.module(new URL('../lib/require-db.ts', import.meta.url).href, { namedExports: { requireDb: () => fakeDb } })
 mock.module(new URL('../lib/invites.ts', import.meta.url).href, {
-  namedExports: { ...inviteFakes, revokeWorkspaceInvite: async () => true },
+  namedExports: {
+    ...inviteFakes,
+    ...membershipAddFakes,
+    revokeWorkspaceInvite: async () => true,
+  },
 })
 mock.module(new URL('../lib/rbac.ts', import.meta.url).href, {
   namedExports: { canManageWorkspace: () => true, getProjectAccess: async () => null, canAdminProject: () => false, canDecide: () => false },
@@ -41,7 +45,7 @@ mock.module(new URL('../lib/member-guard.ts', import.meta.url).href, {
   },
 })
 mock.module(new URL('../lib/workspace.ts', import.meta.url).href, {
-  namedExports: { findUserByEmail: async () => null, listUserWorkspaces: async () => [], bootstrapUserWorkspaces: async () => undefined },
+  namedExports: { findUserByEmail: async (email: string) => sim.usersByEmail.get(email) ?? null, listUserWorkspaces: async () => [], bootstrapUserWorkspaces: async () => undefined },
 })
 mock.module(new URL('../lib/mail.ts', import.meta.url).href, {
   namedExports: { sendMail: async () => ({ delivered: true as const }) },
@@ -148,5 +152,62 @@ describe('unverified-email gate: action-path rollback (invite resend)', () => {
     const result = await actions.resendInvite('inv_3')
     assert.equal(result, undefined)
     assert.notEqual(sim.invites[0].tokenHash, 'tok_original')
+  })
+})
+
+describe('unverified-email gate: action-path rollback (add EXISTING account, S10)', () => {
+  it('flag ON + unverified: typed result, no membership row committed, no "added" mail', async () => {
+    sim.verified.set(ACTOR, false)
+    sim.seedUserByEmail('existing@example.com', { id: 'usr_existing_sim', email: 'existing@example.com' })
+    sim.nextRows = [] // not yet a member
+    await withFlag('1', async () => {
+      const result = await actions.inviteToWorkspace(inviteForm('existing@example.com'))
+      expectTypedBlocked(result)
+      assert.equal(sim.memberships.length, 0, 'no membership row after refusal')
+      assert.deepEqual(sim.committed.filter((op) => op.startsWith('membership:')), [], 'no membership write COMMITTED')
+      assert.equal(sim.addedMailCount, 0, 'no "added to workspace" mail sent')
+      assert.equal(sim.invites.length, 0, 'no invite fallback written either')
+      const call = sim.calls.find((c) => c.fn === 'addExistingUserToWorkspace')
+      assert.equal(call?.args.actorUserId, ACTOR, 'the acting user is the gate subject')
+      assert.equal(call?.args.userId, 'usr_existing_sim', 'the existing account is the one added')
+    })
+  })
+
+  it('flag ON + unverified: refused even for the admin role', async () => {
+    sim.verified.set(ACTOR, false)
+    sim.seedUserByEmail('boss@example.com', { id: 'usr_boss_sim', email: 'boss@example.com' })
+    sim.nextRows = []
+    await withFlag('1', async () => {
+      const formData = new FormData()
+      formData.set('email', 'boss@example.com')
+      formData.set('role', 'admin')
+      const result = await actions.inviteToWorkspace(formData)
+      expectTypedBlocked(result)
+      assert.equal(sim.memberships.length, 0)
+      assert.equal(sim.addedMailCount, 0)
+    })
+  })
+
+  it('flag ON + verified: existing account added and mailed once', async () => {
+    sim.verified.set(ACTOR, true)
+    sim.seedUserByEmail('existing2@example.com', { id: 'usr_existing2', email: 'existing2@example.com' })
+    sim.nextRows = []
+    await withFlag('1', async () => {
+      const result = await actions.inviteToWorkspace(inviteForm('existing2@example.com'))
+      assert.equal(result, undefined, 'success path unchanged')
+      assert.equal(sim.memberships.length, 1)
+      assert.equal(sim.addedMailCount, 1)
+      assert.ok(sim.committed.some((op) => op.startsWith('membership:')))
+    })
+  })
+
+  it('flag OFF + unverified: existing account added exactly as before', async () => {
+    sim.verified.set(ACTOR, false)
+    sim.seedUserByEmail('existing3@example.com', { id: 'usr_existing3', email: 'existing3@example.com' })
+    sim.nextRows = []
+    const result = await actions.inviteToWorkspace(inviteForm('existing3@example.com'))
+    assert.equal(result, undefined)
+    assert.equal(sim.memberships.length, 1)
+    assert.equal(sim.addedMailCount, 1)
   })
 })

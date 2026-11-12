@@ -161,15 +161,57 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe('source-scan guards', () => {
-  it('only lib/project-create.ts writes projects/projectApiKeys (every create path is gated)', () => {
+  it('only gated lib chokepoints write projects/projectApiKeys (create AND update, S5)', () => {
     const writers: string[] = []
     for (const file of [...sourceFiles(join(APP_ROOT, 'app')), ...sourceFiles(join(APP_ROOT, 'actions')), ...sourceFiles(join(APP_ROOT, 'lib'))]) {
-      if (file.endsWith(`${sep}project-create.ts`)) continue
+      if (file.endsWith(`${sep}project-create.ts`)) continue // gated insert+rotate chokepoints
       if (file.endsWith('m0h-fixture.ts')) continue // test fixture, not a request path
       const source = readFileSync(file, 'utf8')
       if (/\.insert\((projects|projectApiKeys)\)/.test(source)) writers.push(relative(APP_ROOT, file))
+      const updates = source.match(/\.update\(projectApiKeys\)/g) ?? []
+      if (updates.length > 0) {
+        // The only allowed update outside the rotate chokepoint is the
+        // last-used telemetry in approvals.ts: exactly one update, setting
+        // lastUsedAt and nothing else.
+        const telemetryOnly =
+          file.endsWith(`${sep}approvals.ts`) &&
+          updates.length === 1 &&
+          /\.update\(projectApiKeys\)\s*\.set\(\{\s*lastUsedAt: new Date\(\)\s*\}\)/.test(source)
+        if (!telemetryOnly) writers.push(`${relative(APP_ROOT, file)} (update projectApiKeys)`)
+      }
     }
-    assert.deepEqual(writers, [], 'direct writes to projects/projectApiKeys must stay inside the gated create helpers')
+    assert.deepEqual(
+      writers,
+      [],
+      'direct writes to projects/projectApiKeys must stay inside the gated helpers in lib/project-create.ts ' +
+        '(key rotation goes through the gated rotateProjectApiKeyRecord; only lastUsedAt telemetry may update directly)',
+    )
+  })
+
+  it('resume-secret rotation gates the acting user BEFORE rewriting stored credentials (S13)', () => {
+    const source = readFileSync(join(APP_ROOT, 'lib', 'resume-secret.ts'), 'utf8')
+    const rotateIdx = source.indexOf('export async function rotateProjectResumeSecret')
+    assert.notEqual(rotateIdx, -1)
+    const gateIdx = source.indexOf('assertCreatorVerified(actorUserId)', rotateIdx)
+    const writeIdx = source.indexOf('.update(projects)', rotateIdx)
+    assert.notEqual(gateIdx, -1, 'the rotate path calls the actor gate')
+    assert.notEqual(writeIdx, -1, 'the rotate path rewrites credentials')
+    assert.ok(gateIdx < writeIdx, 'the gate runs before the stored secret can be replaced')
+  })
+
+  it('adding an EXISTING account gates BEFORE the membership insert and mail (S10)', () => {
+    const source = readFileSync(join(APP_ROOT, 'lib', 'invites.ts'), 'utf8')
+    const addIdx = source.indexOf('export async function addExistingUserToWorkspace')
+    assert.notEqual(addIdx, -1, 'the single existing-user-add chokepoint exists')
+    const gateIdx = source.indexOf('assertActorEmailVerified(args.actorUserId, database)', addIdx)
+    const insertIdx = source.indexOf('.insert(memberships)', addIdx)
+    const mailIdx = source.indexOf('renderAddedToWorkspaceEmail', addIdx)
+    assert.notEqual(gateIdx, -1, 'the add path calls the actor gate')
+    assert.ok(gateIdx < insertIdx && gateIdx < mailIdx, 'the gate runs before any membership write or mail render')
+    // The action must go through the chokepoint, never insert memberships itself.
+    const team = readFileSync(join(APP_ROOT, 'actions', 'team.ts'), 'utf8')
+    assert.match(team, /addExistingUserToWorkspace\(\{/, 'inviteToWorkspace adds via the gated chokepoint')
+    assert.ok(!/\.insert\(memberships\)/.test(team), 'the action never inserts memberships directly')
   })
 
   it('account-security mail modules never reference the gate', () => {
@@ -241,6 +283,7 @@ describe('server actions convert a blocked create into the typed result (static 
       [projectsActions, 'createProject', 'withAppTenant(', 'insertNewProject('],
       [projectsActions, 'createProjectApiKey', 'withAppTenant(', 'insertNewProjectApiKey('],
       [projectsActions, 'regenerateProjectApiKey', 'withAppTenant(', 'rotateProjectApiKeyRecord('],
+      [projectsActions, 'regenerateProjectResumeSecret', 'withAppTenant(', 'rotateProjectResumeSecret('],
       [teamActions, 'inviteToWorkspace', 'withTenant(', 'createAndSendWorkspaceInvite('],
       [teamActions, 'resendInvite', 'withTenant(', 'resendWorkspaceInvite('],
     ]

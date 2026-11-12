@@ -13,18 +13,16 @@ import { newId } from '@/lib/ids'
 import { canManageWorkspace } from '@/lib/rbac'
 import { requireDb } from '@/lib/require-db'
 import { withTenant } from '@/lib/tenant'
-import { renderAddedToWorkspaceEmail } from '@hitly/mail'
-import { sendMail } from '@/lib/mail'
-import { createAndSendWorkspaceInvite, resendWorkspaceInvite, revokeWorkspaceInvite } from '@/lib/invites'
+import {
+  addExistingUserToWorkspace,
+  createAndSendWorkspaceInvite,
+  resendWorkspaceInvite,
+  revokeWorkspaceInvite,
+} from '@/lib/invites'
 import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
 import { findUserByEmail } from '@/lib/workspace'
 
 const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
-
-async function sendAddedToWorkspaceMail(args: { to: string; workspaceName: string }) {
-  const rendered = await renderAddedToWorkspaceEmail({ appUrl: APP_URL, workspaceName: args.workspaceName })
-  await sendMail({ to: args.to, ...rendered })
-}
 
 export async function inviteToWorkspace(formData: FormData): Promise<GateBlockedResult | void> {
   const { user, workspace, role } = await getAppContext()
@@ -56,13 +54,18 @@ export async function inviteToWorkspace(formData: FormData): Promise<GateBlocked
           .where(and(eq(memberships.workspaceId, workspace.id), eq(memberships.userId, existingUser.id)))
           .limit(1)
         if (existing.length > 0) throw new Error('That person is already a member')
-        await database.insert(memberships).values({
-          id: newId('mem').slice(0, 36),
+        // Single gated writer (lib/invites.ts): the unverified-email gate
+        // runs before the membership insert and the "added" mail.
+        await addExistingUserToWorkspace({
           workspaceId: workspace.id,
+          workspaceName: workspace.name,
           userId: existingUser.id,
+          email,
           role: invitedRole,
+          actorUserId: user.id,
+          appUrl: APP_URL,
+          database,
         })
-        await sendAddedToWorkspaceMail({ to: email, workspaceName: workspace.name })
       } else {
         // Emails a one-time accept link (lib/invites.ts); inviting the same
         // address again replaces the earlier link. The unverified-email gate

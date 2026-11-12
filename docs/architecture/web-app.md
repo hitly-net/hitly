@@ -77,10 +77,13 @@ Marketing funnel: `WAITLIST_WEBHOOK_URL`.
 
 ## Verified-email gate (`HITLY_REQUIRE_VERIFIED_EMAIL`)
 
-Defaults OFF (closed beta does not block); GA ships it ON. Accepted values
-match the other flags: `1` / `true` / `yes` / `on` enable it (compared after
-trim + lowercase, so `TRUE` or `1 ` are ON); anything else (unset
-included) leaves it off. Read per call, so the deployment can flip it
+Defaults OFF (closed beta does not block); GA ships it ON. The value is
+parsed by the same shared parser as the other boolean flags
+(`lib/boolean-flag.ts`): `1` / `true` / `yes` / `on` enable it, `0` /
+`false` / `off` disable it (compared after trim + lowercase, so `TRUE` or
+`1 ` are ON), unset leaves it at its default, and an unrecognised value
+also falls back to the default with one startup warning that names the
+variable but never its value. Read per call, so the deployment can flip it
 without a code change.
 
 While ON, a user whose `users.email_verified` is false can still sign in,
@@ -102,16 +105,31 @@ but:
   `resendWorkspaceInvite` in `lib/invites.ts`) before the invite row is
   written or the token rotated, so nothing is written and no invite email
   goes out.
+- adding an EXISTING account to the workspace is refused the same way: the
+  gate runs in the single add path (`addExistingUserToWorkspace` in
+  `lib/invites.ts`) for any role, before the membership row is written and
+  before the "added to workspace" mail, so a blocked add writes nothing and
+  sends no mail.
+- regenerating a project resume secret is gated like an API-key regenerate:
+  the gate runs in `rotateProjectResumeSecret` (`lib/resume-secret.ts`)
+  before the stored credentials are rewritten, so a refused rotation leaves
+  the current resume secret intact and produces no new one. This is a
+  web-only action; there is no REST `/api/v1` or MCP resume-secret
+  regeneration surface today, and any future one must go through the same
+  chokepoint.
 - work-item notifications are suppressed for the unverified recipient: no
   decision email, no push (`lib/notify.ts`).
 - the signed-in app shell shows a banner naming what the gate holds with a
   resend-verification link; the resend reuses the existing rate-limited
   signed-in endpoint `POST /api/session/resend-email-verification`.
-- a gate-blocked web create (project, API key, invite send/resend) is NOT a
+- a gate-blocked web create (project, API key, invite send/resend, resume
+  secret regenerate) is NOT a
   crash: the server action returns the typed result
   `{ status: 'error', code: 'email_not_verified', message }` and the client
   renders the shared "Verify your email to continue" state with the same
   resend-verification link — never a 500, stack trace or raw error id.
+  The gate error always throws out of the tenant transaction (so anything
+  written before it rolls back); the typed result is produced only outside.
 
 Account-security mail (verification, resend, password reset, email change)
 is never gated and always sends while the flag is on.

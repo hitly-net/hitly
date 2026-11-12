@@ -33,6 +33,7 @@ import { newId } from './ids'
 import { generateApiKey, hashApiKey } from './keys'
 import { parseProjectConfig, saveProjectConfig } from './project-config'
 import { insertNewProject, insertNewProjectApiKey, rotateProjectApiKeyRecord } from './project-create'
+import { rotateProjectResumeSecret } from './resume-secret'
 import { requireDb, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 
@@ -479,6 +480,54 @@ describe('unverified-email gate on create paths', () => {
         rotateProjectApiKeyRecord({ projectId: gatedProjectId, keyId: target.id, userId: unverifiedUserId }),
       )
       assert.ok(newRaw.startsWith('hitly_'))
+    })
+  })
+
+  async function storedResumeSecret(projectId: string): Promise<string> {
+    const rows = await database
+      .select({ credentials: projects.credentials })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1)
+    const credentials = await decodeTenantJson(workspaceId, rows[0]!.credentials)
+    return typeof credentials.resumeSecret === 'string' ? credentials.resumeSecret : ''
+  }
+
+  function rotateResumeAs(actingUserId: string, projectId: string) {
+    return withTenant(workspaceId, () =>
+      rotateProjectResumeSecret({ projectId, actorUserId: actingUserId }),
+    )
+  }
+
+  it('flag ON: unverified user cannot regenerate the resume secret; the stored secret is untouched (S13)', async () => {
+    await withFlag('1', async () => {
+      const beforeSecret = await storedResumeSecret(gatedProjectId)
+      assert.ok(beforeSecret, 'the host project has a resume secret')
+      await assert.rejects(
+        () => rotateResumeAs(unverifiedUserId, gatedProjectId),
+        /email_not_verified/,
+      )
+      assert.equal(await storedResumeSecret(gatedProjectId), beforeSecret, 'stored resume secret unchanged after refusal')
+    })
+  })
+
+  it('flag ON: verified user regenerates the resume secret', async () => {
+    await withFlag('1', async () => {
+      const beforeSecret = await storedResumeSecret(gatedProjectId)
+      const result = await rotateResumeAs(userId, gatedProjectId)
+      assert.equal('ok' in result && result.ok, true)
+      const after = await storedResumeSecret(gatedProjectId)
+      assert.notEqual(after, beforeSecret, 'the stored secret rotated')
+      assert.equal(after, (result as { resumeSecret: string }).resumeSecret)
+    })
+  })
+
+  it('flag OFF (closed beta): an unverified user regenerates the resume secret exactly as before', async () => {
+    await withFlag(undefined, async () => {
+      const beforeSecret = await storedResumeSecret(gatedProjectId)
+      const result = await rotateResumeAs(unverifiedUserId, gatedProjectId)
+      assert.equal('ok' in result && result.ok, true)
+      assert.notEqual(await storedResumeSecret(gatedProjectId), beforeSecret)
     })
   })
 
