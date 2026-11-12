@@ -687,5 +687,14 @@ describe('passkey client helpers and static wiring', () => {
       const file = fs.readFileSync(path.join(__dirname, `../app/api/session/passkey/${name}/route.ts`), 'utf-8')
       assert.ok(file.includes('isSameOrigin'))
     }
+    // There is deliberately NO collection route (app/api/session/passkey/
+    // route.ts): a signed-in GET /api/session/passkey 404s because nothing
+    // calls it. The settings page server-renders the list via
+    // listPasskeysForUser (app/settings/security/page.tsx) and mobile has no
+    // passkey fetches. PASSKEY_LIST_ENDPOINT is only the prefix helper for
+    // the per-item endpoints. This assert fails the day a real caller (or a
+    // real route) appears, forcing the pair to be added together.
+    assert.equal(fs.existsSync(path.join(__dirname, '../app/api/session/passkey/route.ts')), false)
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, 'passkey-route.ts'), 'utf-8'), /export async function handlePasskeyList\b/)
   })
 })
