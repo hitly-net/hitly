@@ -2,7 +2,7 @@
  * Single source of truth for the HITLy app-icon artwork.
  *
  * The geometry is lifted verbatim from the existing web brand assets
- * (apps/web/app/icon.svg / apple-icon.svg): the "H" glyph plus the
+ * (apps/app/public/icon.svg / apple-icon.svg): the "H" glyph plus the
  * idle-blue check mark, so the mobile app stays on-brand with the web app.
  * Every generated PNG is rendered from the SVG strings built here, so
  * regenerating assets is fully reproducible:

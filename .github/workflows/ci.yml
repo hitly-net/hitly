@@ -60,3 +60,32 @@ jobs:
           HITLY_MFA_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
           WEB_URL: http://localhost:3000
+      - name: Signed-out brand assets are served (200 + image/svg+xml)
+        env:
+          BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
+          BETTER_AUTH_URL: http://localhost:3001
+          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
+          HITLY_MFA_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+          NEXT_PUBLIC_WEB_URL: http://localhost:3000
+          WEB_URL: http://localhost:3000
+        run: |
+          # The auth proxy allowlist (pinned in lib/brand-assets.test.ts)
+          # only decides whether the request reaches the Next public-file
+          # handler; this proves the real runtime: every brand asset must
+          # answer a signed-out GET with 200 + image/svg+xml from next start.
+          yarn workspace @hitly/app start &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3001/api/v1/health; then break; fi
+            sleep 1
+            if [ "$i" = 60 ]; then echo "server did not come up" >&2; exit 1; fi
+          done
+          for asset in /icon.svg /icon-open.svg /apple-icon.svg; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3001${asset}")
+            ctype=$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:3001${asset}")
+            echo "GET ${asset} -> ${code} ${ctype}"
+            [ "$code" = "200" ] || { echo "FAIL: ${asset} status ${code}" >&2; exit 1; }
+            case "$ctype" in image/svg+xml*) ;; *) echo "FAIL: ${asset} content-type '${ctype}'" >&2; exit 1;; esac
+          done
