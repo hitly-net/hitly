@@ -24,6 +24,7 @@ import {
   memberships,
   sessions,
   userMfa,
+  userMfaChallenges,
   userMfaRecoveryCodes,
   users,
   workspaces,
@@ -60,6 +61,7 @@ import {
   type MfaRouteDeps,
 } from './mfa-route'
 import {
+  hasFreshSessionCookie,
   holdPasswordSignInIfMfa,
   isSignInHeld,
   mountedEndpointKey,
@@ -1188,5 +1190,129 @@ describe('MFA hold covers every session-minting sign-in', () => {
     assert.ok(user)
     const events = await database.select().from(accountSecurityEvents).where(eq(accountSecurityEvents.userId, user.id))
     assert.ok(events.some((event) => event.type === ACCOUNT_SECURITY_EVENT.verificationLockout))
+  })
+
+  it('keeps a password lockout when a later OAuth callback is held', async () => {
+    const address = email('hold-lockout-after-password')
+    const { secret } = await enableMfa(address)
+    const signIn = (await authApi.signInEmail({
+      body: { email: address, password: PASSWORD },
+      asResponse: true,
+    })) as unknown as Response
+    const gated = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' }),
+      signIn,
+      routeMocks(),
+    )
+    const challenge = challengeCookieOf(gated)
+    for (let i = 0; i < MFA_VERIFY_FAILURE_LIMIT; i += 1) {
+      const failed = await handleMfaVerify(post(MFA_VERIFY_ENDPOINT, challenge, { code: '000000' }), routeMocks())
+      assert.equal(failed.status, 400)
+    }
+    const callback = await responseWithSession(address, 302, { location: `${APP_URL}/inbox` })
+    const held = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/callback/google`, { method: 'GET' }),
+      callback,
+      routeMocks(),
+    )
+    const locked = await handleMfaVerify(
+      post(MFA_VERIFY_ENDPOINT, challengeCookieOf(held), { code: totpAt(secret, 1) }),
+      mocksAt(1),
+    )
+    assert.equal(locked.status, 429)
+    assert.equal(forwardsSessionCookie(locked), false)
+  })
+
+  it('rejects a held sign-in when the session user does not match the response user', async () => {
+    const owner = await enableMfa(email('hold-session-owner'))
+    const otherAddress = email('hold-session-other')
+    await createUser(otherAddress)
+    const minted = await responseWithSession(otherAddress, 200, { 'content-type': 'application/json' })
+    const cookieHeader = minted.headers
+      .getSetCookie()
+      .map((value) => value.split(';')[0])
+      .join('; ')
+    const stolen = await sessionFromCookie(cookieHeader)
+    assert.ok(stolen?.session?.id)
+    const headers = new Headers({ 'content-type': 'application/json' })
+    for (const cookie of minted.headers.getSetCookie()) headers.append('set-cookie', cookie)
+    const mismatched = new Response(JSON.stringify({ user: { id: owner.user.id } }), { status: 200, headers })
+    const held = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/sign-in/social`, { method: 'POST' }),
+      mismatched,
+      routeMocks(),
+    )
+    assert.equal(held.status, 500)
+    assert.deepEqual(await held.json(), { error: 'sign_in_failed' })
+    assert.equal(forwardsSessionCookie(held), false)
+    assert.equal(
+      held.headers.getSetCookie().some((value) => value.startsWith(`${MFA_CHALLENGE_COOKIE}=`)),
+      false,
+    )
+    assert.equal((await database.select().from(sessions).where(eq(sessions.id, stolen.session.id))).length, 0)
+    const challenges = await database.select().from(userMfaChallenges).where(eq(userMfaChallenges.userId, owner.user.id))
+    assert.equal(challenges.length, 0)
+  })
+
+  it('a new hold deletes the previous held session', async () => {
+    const address = email('hold-replaces-session')
+    await enableMfa(address)
+    const user = await userByEmail(address)
+    assert.ok(user)
+    const first = await responseWithSession(address, 302, { location: `${APP_URL}/inbox` })
+    const held = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/callback/google`, { method: 'GET' }),
+      first,
+      routeMocks(),
+    )
+    assert.ok(challengeCookieOf(held))
+    const prior = await database.select().from(userMfaChallenges).where(eq(userMfaChallenges.userId, user.id))
+    assert.equal(prior.length, 1)
+    const previousSessionId = prior[0]!.sessionId
+    assert.equal((await database.select().from(sessions).where(eq(sessions.id, previousSessionId))).length, 1)
+
+    const second = await responseWithSession(address, 302, { location: `${APP_URL}/inbox` })
+    const heldAgain = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/callback/google`, { method: 'GET' }),
+      second,
+      routeMocks(),
+    )
+    assert.ok(challengeCookieOf(heldAgain))
+    assert.equal((await database.select().from(sessions).where(eq(sessions.id, previousSessionId))).length, 0)
+    const next = await database.select().from(userMfaChallenges).where(eq(userMfaChallenges.userId, user.id))
+    assert.equal(next.length, 1)
+    assert.notEqual(next[0]!.sessionId, previousSessionId)
+    assert.equal((await database.select().from(sessions).where(eq(sessions.id, next[0]!.sessionId))).length, 1)
+  })
+
+  it('a Max-Age=0 session cookie is not a fresh sign-in and the callback stays unchanged', async () => {
+    const address = email('hold-max-age-zero')
+    await enableMfa(address)
+    const minted = await responseWithSession(address, 302, { location: `${APP_URL}/inbox` })
+    const headers = new Headers({ location: `${APP_URL}/inbox` })
+    let sawSession = false
+    for (const cookie of minted.headers.getSetCookie()) {
+      const pair = cookie.split(';')[0]?.trim() ?? ''
+      if (/^(?:__Secure-)?better-auth\.session_token=/.test(pair)) {
+        headers.append('set-cookie', `${cookie}; Max-Age=0`)
+        sawSession = true
+      } else {
+        headers.append('set-cookie', cookie)
+      }
+    }
+    assert.equal(sawSession, true)
+    const cleared = new Response(null, { status: 302, headers })
+    assert.equal(hasFreshSessionCookie(cleared.headers.getSetCookie()), false)
+    const held = await holdPasswordSignInIfMfa(
+      new Request(`${APP_URL}/api/auth/callback/google`, { method: 'GET' }),
+      cleared,
+      routeMocks(),
+    )
+    assert.equal(held, cleared)
+    assert.equal(forwardsSessionCookie(held), false)
+    assert.equal(
+      held.headers.getSetCookie().some((value) => value.startsWith(`${MFA_CHALLENGE_COOKIE}=`)),
+      false,
+    )
   })
 })
