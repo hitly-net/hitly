@@ -43,12 +43,19 @@ async function loadMap(): Promise<EntitlementMap | null> {
   if (!db) return null
   const now = Date.now()
   if (cached && cached.expiresAt > now) return cached.map
-  const rows = await db
-    .select({ feature: tierEntitlements.feature, minPlan: tierEntitlements.minPlan })
-    .from(tierEntitlements)
-  const map = new Map(rows.map((row) => [row.feature, row.minPlan]))
-  cached = { map, expiresAt: now + ttlMs() }
-  return map
+  try {
+    const rows = await db
+      .select({ feature: tierEntitlements.feature, minPlan: tierEntitlements.minPlan })
+      .from(tierEntitlements)
+    const map = new Map(rows.map((row) => [row.feature, row.minPlan]))
+    cached = { map, expiresAt: now + ttlMs() }
+    return map
+  } catch {
+    // Missing table, connection failure, or any other DB error: never
+    // propagate — callers deny. Failures are never cached, so the next
+    // read retries once the database recovers.
+    return null
+  }
 }
 
 /**
@@ -89,7 +96,14 @@ export async function canForCurrentWorkspace(
 ): Promise<boolean> {
   const log = deps.log ?? ((line: string) => console.warn(line))
   const resolveWorkspace = deps.resolveWorkspace ?? defaultResolveWorkspace
-  const workspace = await resolveWorkspace()
+  let workspace: { plan: string } | null
+  try {
+    workspace = await resolveWorkspace()
+  } catch {
+    // Session/workspace lookup failed (e.g. database down): deny, never 500.
+    log(`${LOG_PREFIX} workspace lookup failed; denied "${feature}"`)
+    return false
+  }
   if (!workspace) {
     log(`${LOG_PREFIX} no current workspace; denied "${feature}"`)
     return false

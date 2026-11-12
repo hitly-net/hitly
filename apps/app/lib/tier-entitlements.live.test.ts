@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
-import { ENTITLEMENT_FEATURES, TIER_ENTITLEMENT_SEED, type EntitlementFeature } from '@hitly/core'
+import { ENTITLEMENT_FEATURES, TIER_ENTITLEMENT_SEED, planRank, type EntitlementFeature } from '@hitly/core'
 import { tierEntitlements } from '@hitly/db/schema'
 import {
   can,
@@ -145,11 +145,13 @@ describe('overrides need no code change', () => {
     // Exactly the documented operator move:
     await client.query(`UPDATE tier_entitlements SET min_plan = 'solo' WHERE feature = 'sso_google'`)
     invalidateTierEntitlementsCache()
-    assert.equal(await can({ plan: 'solo' }, 'sso_google'), true)
-    assert.equal(await can({ plan: 'self-hosted' }, 'sso_google'), false)
-
-    await client.query(`UPDATE tier_entitlements SET min_plan = 'team' WHERE feature = 'sso_google'`)
-    invalidateTierEntitlementsCache()
+    try {
+      assert.equal(await can({ plan: 'solo' }, 'sso_google'), true)
+      assert.equal(await can({ plan: 'self-hosted' }, 'sso_google'), false)
+    } finally {
+      await client.query(`UPDATE tier_entitlements SET min_plan = 'team' WHERE feature = 'sso_google'`)
+      invalidateTierEntitlementsCache()
+    }
     assert.equal(await can({ plan: 'solo' }, 'sso_google'), false)
   })
 
@@ -157,8 +159,14 @@ describe('overrides need no code change', () => {
     assert.equal(await can({ plan: 'solo' }, 'mfa'), true)
     await client.query(`UPDATE tier_entitlements SET min_plan = 'team' WHERE feature = 'mfa'`)
     invalidateTierEntitlementsCache()
-    assert.equal(await can({ plan: 'solo' }, 'mfa'), false)
-    assert.equal(await can({ plan: 'team' }, 'mfa'), true)
+    try {
+      assert.equal(await can({ plan: 'solo' }, 'mfa'), false)
+      assert.equal(await can({ plan: 'team' }, 'mfa'), true)
+    } finally {
+      await client.query(`UPDATE tier_entitlements SET min_plan = 'self-hosted' WHERE feature = 'mfa'`)
+      invalidateTierEntitlementsCache()
+    }
+    assert.equal(await can({ plan: 'solo' }, 'mfa'), true)
   })
 })
 
@@ -187,5 +195,65 @@ describe('workspace affordances', () => {
       resolveWorkspace: async () => ({ plan: 'team' }),
     })
     assert.equal(team, true)
+  })
+
+  it('canForCurrentWorkspace denies (never throws) when the resolver itself fails', async () => {
+    const { lines, restore } = captureWarnings()
+    try {
+      const denied = await canForCurrentWorkspace('mfa', {
+        resolveWorkspace: async () => {
+          throw new Error('connection failure')
+        },
+      })
+      assert.equal(denied, false)
+    } finally {
+      restore()
+    }
+    assert.equal(lines.length, 1)
+    assert.match(lines[0], /workspace lookup failed; denied "mfa"/)
+  })
+})
+
+describe('GET /api/v1/workspace/entitlements (live map)', () => {
+  // Mutant coverage: a route that hardcoded the plan (e.g. always
+  // enterprise) fails both the echoed plan and the per-plan map match.
+  it('each plan returns exactly its map and follows the caller plan', async () => {
+    const { GET } = await import('../app/api/v1/workspace/entitlements/route')
+    for (const plan of ALL_PLANS) {
+      const res = await GET(undefined, {
+        resolveSession: async () => ({ ok: true as const, workspace: { plan } }),
+      })
+      assert.equal(res.status, 200, plan)
+      const body = (await res.json()) as { plan: string; features: Record<string, boolean> }
+      assert.equal(body.plan, plan)
+      for (const feature of ENTITLEMENT_FEATURES) {
+        const expected = planRank(plan) >= planRank(TIER_ENTITLEMENT_SEED[feature])
+        assert.equal(body.features[feature], expected, `${plan}/${feature}`)
+      }
+    }
+  })
+})
+
+describe('project lifecycle follows the map, not hardcoded true', () => {
+  // Mutant coverage: canUseProjectLifecycle hardcoded to `return true`
+  // fails the demoted-plan assertion.
+  it('demoting project_lifecycle in the table gates pause/archive', async () => {
+    const { canUseProjectLifecycle } = await import('./project-lifecycle')
+    assert.equal(await canUseProjectLifecycle({ id: 'wsp-mut', plan: 'solo' }), true)
+    await client.query(
+      `UPDATE tier_entitlements SET min_plan = 'enterprise' WHERE feature = 'project_lifecycle'`,
+    )
+    invalidateTierEntitlementsCache()
+    try {
+      assert.equal(await canUseProjectLifecycle({ id: 'wsp-mut', plan: 'solo' }), false)
+      assert.equal(await canUseProjectLifecycle({ id: 'wsp-mut', plan: 'team' }), false)
+      assert.equal(await canUseProjectLifecycle({ id: 'wsp-mut', plan: 'enterprise' }), true)
+    } finally {
+      await client.query(
+        `UPDATE tier_entitlements SET min_plan = 'self-hosted' WHERE feature = 'project_lifecycle'`,
+      )
+      invalidateTierEntitlementsCache()
+    }
+    assert.equal(await canUseProjectLifecycle({ id: 'wsp-mut', plan: 'solo' }), true)
   })
 })

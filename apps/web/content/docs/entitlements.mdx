@@ -81,7 +81,11 @@ Every deny path returns `false` and writes one value-free log line:
 - unknown feature name → `unknown feature "…"; denied`
 - missing row → `no entitlement row for "…"; denied`
 - unknown workspace plan or unknown `min_plan` → denied
-- database unreachable → `database unavailable; denied "…"`
+- database unreachable or the table missing → `database unavailable; denied "…"`
+  (the check never throws: guarded routes answer 403/404/200-with-all-denied,
+  never 500)
+- current-workspace lookup failure (e.g. session store down) → `workspace
+  lookup failed; denied "…"`
 
 There is no fail-open default anywhere on this path.
 
