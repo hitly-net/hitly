@@ -7,6 +7,7 @@ import {
   renderDecisionNeededEmail,
   renderEmailChangedNoticeEmail,
   renderEmailChangeVerificationEmail,
+  renderEmailVerificationEmail,
   renderInviteEmail,
   renderPasswordChangedEmail,
   renderPasswordResetEmail,
@@ -197,6 +198,19 @@ describe('email-change verification + notice', () => {
     assert.equal(mail.subject, 'HITLy: Your email address was changed')
     assert.ok(!/https?:\/\//.test(mail.text), 'no link in the notice text')
     assert.ok(!/href=/.test(mail.html), 'no link in the notice HTML')
+  })
+})
+
+describe('sign-up email verification', () => {
+  const link = `${APP_URL}/verify-email?token=${'c'.repeat(32)}`
+
+  it('carries the one-time confirm link and the expiry', async () => {
+    const mail = await renderEmailVerificationEmail({ appUrl: APP_URL, link, ttlHours: 24 })
+    expectWellFormed(mail, 'email-verification')
+    assert.equal(mail.subject, 'HITLy: Verify your email address')
+    expectButtonAndLink(mail, link, 'email-verification')
+    assert.ok(mail.text.includes('24 hours'))
+    assert.ok(mail.text.includes('works once'))
   })
 })
 

@@ -25,8 +25,8 @@ Route groups (from the route tree):
 
 Session-auth routes outside v1: `/api/auth/[...all]` (Better Auth) and
 `/api/session/*` - `mfa/{enrol,verify,disable,recovery-codes,confirm}`,
-`change-password`, `change-email`, `verify-email-change`, `sign-out` (all
-POST).
+`change-password`, `change-email`, `verify-email-change`, `verify-email`,
+`resend-email-verification`, `sign-out` (all POST).
 
 ## Key interfaces
 

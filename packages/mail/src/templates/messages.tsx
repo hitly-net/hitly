@@ -347,6 +347,54 @@ export async function renderEmailChangedNoticeEmail(args: SecurityNoticeArgs): P
   }
 }
 
+// ---------------------------------------------------------------------------
+// Public sign-up email verification
+// ---------------------------------------------------------------------------
+
+export type EmailVerificationArgs = { appUrl: string; link: string; ttlHours: number }
+
+function EmailVerificationView({ appUrl, link, ttlHours }: { appUrl: string; link: string; ttlHours: number }) {
+  return (
+    <EmailLayout
+      appUrl={appUrl}
+      preview="Verify your email address"
+      footerContext="This message was sent because a HITLy account was created for this address."
+    >
+      <Body>
+        <Text style={{ margin: '0 0 14px' }}>Hi,</Text>
+        <Text style={{ margin: '0 0 16px', fontSize: '17px', lineHeight: '24px', fontWeight: 600 }}>
+          Confirm this email address for your HITLy account.
+        </Text>
+        <Text style={{ margin: '0 0 8px' }}>
+          Open the link below and press Confirm. The link expires in {ttlHours} hours and works once. If you did not
+          create a HITLy account, you can ignore this email.
+        </Text>
+        <OpenInHitlyButton href={link} />
+        <PlainLink href={link} />
+      </Body>
+    </EmailLayout>
+  )
+}
+
+export async function renderEmailVerificationEmail(args: EmailVerificationArgs): Promise<RenderedEmail> {
+  const html = await render(<EmailVerificationView appUrl={args.appUrl} link={args.link} ttlHours={args.ttlHours} />)
+  const text = [
+    'Confirm this email address for your HITLy account.',
+    '',
+    `Open this link and press Confirm (it expires in ${args.ttlHours} hours and works once):`,
+    '',
+    args.link,
+    '',
+    'If you did not create a HITLy account, you can ignore this email.',
+    '',
+  ].join('\n')
+  return {
+    subject: 'HITLy: Verify your email address',
+    text: text + textFooter('This message was sent because a HITLy account was created for this address.'),
+    html,
+  }
+}
+
 export async function renderPasswordChangedEmail(args: SecurityNoticeArgs): Promise<RenderedEmail> {
   const html = await render(
     <SecurityNoticeView

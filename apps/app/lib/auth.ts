@@ -13,6 +13,8 @@ import { emailAndPasswordOptions } from './auth-email-password'
 import { bootstrapUserWorkspaces } from './workspace'
 import { isSignupEnabled } from './signup'
 import { gateAccountCreation } from './invites'
+import { currentInviteSignup } from './invite-signup'
+import { issueEmailVerification } from './email-verification-issue'
 import { resolveAuthSecret } from './auth-secret'
 import { trustedProxyAuthOptions } from './trusted-proxies'
 import { authLogger, handleAuthApiError } from './auth-logging'
@@ -61,6 +63,19 @@ function createAuth(database: NonNullable<typeof db>) {
               name: user.name,
               email: user.email,
             })
+            // Invite accept proves the inbox and sets emailVerified itself.
+            // Better Auth's emailVerification option is not used: 1.6.27 issues
+            // a stateless JWT and confirms it with a GET. Public sign-up stores
+            // a hashed single-use token instead (lib/email-verification-issue.ts).
+            // A failure here must not undo the account that was just created.
+            if (currentInviteSignup()) return
+            try {
+              await issueEmailVerification({ userId: user.id, email: user.email })
+            } catch (error) {
+              console.warn(
+                `[hitly email-verification] Could not store the signup verification: ${error instanceof Error ? error.name : 'error'}`,
+              )
+            }
           },
         },
       },
