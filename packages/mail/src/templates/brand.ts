@@ -1,9 +1,10 @@
 /**
  * HITLy email branding. One brand colour, one logo, one footer.
  *
- * The logo is the app's own icon (apps/app/app/icon.svg, served by the Next
- * app at /icon.svg). It is referenced as an absolute URL on the app's own
- * host — no third-party image hosts, pixels, or trackers of any kind.
+ * The logo is the app's own icon (apps/app/public/icon.svg, served by the
+ * Next app as a static file at /icon.svg). It is referenced as an absolute
+ * URL on the app's own host — no third-party image hosts, pixels, or
+ * trackers of any kind.
  * Clients that block or strip images show the alt text "HITLy" instead.
  */
 

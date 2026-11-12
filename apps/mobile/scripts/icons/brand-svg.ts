@@ -2,7 +2,7 @@
  * Single source of truth for the HITLy app-icon artwork.
  *
  * The geometry is lifted verbatim from the existing web brand assets
- * (apps/web/app/icon.svg / apple-icon.svg): the "H" glyph plus the
+ * (apps/app/public/icon.svg / apple-icon.svg): the "H" glyph plus the
  * idle-blue check mark, so the mobile app stays on-brand with the web app.
  * Every generated PNG is rendered from the SVG strings built here, so
  * regenerating assets is fully reproducible:
@@ -17,11 +17,11 @@ export const BRAND_BLUE = '#2563eb'
 /** Glyph colour on the dark tile. */
 export const BRAND_FG = '#fafafa'
 
-/** The "H" glyph path from apps/web/app/icon.svg (viewBox 0 0 512 512). */
+/** The "H" glyph path from apps/app/public/icon.svg (viewBox 0 0 512 512). */
 export const H_PATH =
   'M88,56 L168,56 L168,216 L328,216 L328,56 L408,56 L408,456 L328,456 L328,296 L168,296 L168,456 L88,456 Z'
 
-/** The check mark stroke from apps/web/app/icon.svg. */
+/** The check mark stroke from apps/app/public/icon.svg. */
 export const CHECK_PATH = 'M318 372 L362 416 L448 308'
 
 function svg(width: number, inner: string): string {
