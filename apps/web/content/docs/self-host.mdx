@@ -51,11 +51,11 @@ Older self-host installs used MariaDB. There is no in-place upgrade: stand up Po
 
 ## Rate limiting
 
-Rate limiting is **shared through Postgres**: every app process counts into the `rate_limit_buckets` table (migration `0015`), so limits hold across replicas instead of resetting per process. One atomic `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per request opens or extends a fixed window; expired rows are swept opportunistically from the same path (at most once every 5 minutes per process), so no cron is required.
+Rate limiting is **shared through Postgres**: every app process counts into the `rate_limit_buckets` table (migration `0016`), so limits hold across replicas instead of resetting per process. One atomic `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per request opens or extends a fixed window; expired rows are swept opportunistically from the same path (at most once every 5 minutes per process), so no cron is required.
 
 Buckets are keyed by `SHA-256(route + NUL + subject)` — raw IPs, emails and API keys are never stored or logged; the `route` column only names the family (`auth`, `mfa-reauth`, `mfa-verify`, `password-change`, `passkey-reauth`, `email-change`, `resend-email-verification`, `reset-check`, `reset-check-shared`, `reset-email`, `ingest`). Every limited answer is a `429` with a `Retry-After` header in seconds.
 
-When the database is unavailable the limiter logs one line per process and transparently falls back to per-process counting — endpoints stay protected, limits just become per-node until Postgres returns. Set `HITLY_RATE_LIMIT_DB=0` to force per-process counting everywhere (e.g. to run without migration `0015`).
+When the database is unavailable the limiter logs one line per process and transparently falls back to per-process counting — endpoints stay protected, limits just become per-node until Postgres returns. Set `HITLY_RATE_LIMIT_DB=0` to force per-process counting everywhere (e.g. to run without migration `0016`).
 
 Per-family limits and windows come from env (whole numbers; invalid values fail fast at start naming the variable), defaulting to the constants shipped with each route:
 
