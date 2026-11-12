@@ -39,10 +39,10 @@ import {
   PASSKEY_CHALLENGE_TTL_MS,
   PASSKEY_DEFAULT_NAME,
   PASSKEY_USER_VERIFICATION,
-  createSendPasskeyAddedNotice,
   normalisePasskeyName,
   type PasskeyListItem,
 } from './passkey'
+import { createSendPasskeyAddedNotice } from './passkey-emails'
 import { PASSKEY_REAUTH_LIMITED_LOG, passkeyReauthLimiter } from './passkey-limit'
 import { resetCheckClientKey } from './reset-check-limit'
 import { webAuthnRelyingParty } from './webauthn-rp'

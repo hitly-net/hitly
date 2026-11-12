@@ -41,12 +41,12 @@ import {
   PASSKEY_CHALLENGE_COOKIE,
   PASSKEY_USER_VERIFICATION,
   assertionHasUserVerification,
-  buildPasskeyAddedEmail,
   isPasskeyPluginManagementPath,
   passkeyDeleteEndpoint,
   passkeyItemEndpoint,
   submitPasskeyRegisterOptions,
 } from './passkey'
+import { buildPasskeyAddedEmail, createSendPasskeyAddedNotice } from './passkey-emails'
 import {
   consumePasskeyRegisterChallenge,
   handlePasskeyDelete,
@@ -390,6 +390,36 @@ describe('passkey registration', () => {
     assert.ok(lines.some((line) => line === `${PASSKEY_ADDED_LOG} user=${user.id}`))
   })
 
+  it('sends one branded passkey-added notice through the default mail path', async () => {
+    const address = email(`register-branded-mail-${run}`)
+    const cred = `cred-branded-${run}`
+    const outbox: { to: string; subject: string; text: string; html?: string }[] = []
+    // No notifyAdded override: exercise the handler's default notice, which
+    // must be the branded builder on the app's mail path.
+    const deps = routeMocks(
+      {
+        notifyAdded: createSendPasskeyAddedNotice(async (message) => {
+          outbox.push(message)
+          return { delivered: true }
+        }),
+      },
+      cred,
+    )
+    await registerPasskey(address, cred, deps)
+    // Fire-and-forget send: two ticks settle the render + send chain.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.equal(outbox.length, 1, 'exactly one notice')
+    const mail = outbox[0]!
+    assert.equal(mail.to, address)
+    assert.equal(mail.subject, 'HITLy: A passkey was added to your account')
+    assert.ok(mail.html?.includes('#2563eb'), 'branded HTML shell')
+    assert.ok(mail.html?.includes('HITLy'), 'brand name in HTML')
+    assert.ok(!mail.text.includes(PASSWORD), 'no password in the email')
+    assert.ok(!/https?:\/\//.test(mail.text), 'no link in the notice text')
+  })
+
   it('rejects a replayed registration challenge', async () => {
     const address = email('register-replay')
     const cred = `cred-replay-${run}`
@@ -584,11 +614,17 @@ describe('passkey client helpers and static wiring', () => {
     assert.deepEqual(outcome, { ok: false, message: CURRENT_PASSWORD_INCORRECT_MESSAGE })
   })
 
-  it('the notice email carries no secret', () => {
-    const mail = buildPasskeyAddedEmail({ to: email('notice') })
+  it('the branded notice email carries no secret and renders through the shared template', async () => {
+    const mail = await buildPasskeyAddedEmail({ to: email('notice') })
     assert.match(mail.subject, /passkey/i)
-    assert.ok(!mail.text.includes(PASSWORD))
-    assert.ok(!mail.text.includes('http://'))
+    // Rendered by the branded shell (packages/mail layout): HTML document,
+    // brand colour and brand name — the same template as the other emails.
+    assert.ok(mail.html.startsWith('<!DOCTYPE'), 'branded HTML document')
+    assert.ok(mail.html.includes('#2563eb'), 'brand colour')
+    assert.ok(mail.html.includes('HITLy'), 'brand name in HTML')
+    assert.ok(!mail.text.includes(PASSWORD), 'no password in the email')
+    assert.ok(!/https?:\/\//.test(mail.text), 'no link in the notice text')
+    assert.ok(!/href=/.test(mail.html), 'no link in the notice HTML')
   })
 
   it('plugin management paths 404; authenticate paths stay open; UV passkey sign-in is not held', () => {
@@ -636,6 +672,11 @@ describe('passkey client helpers and static wiring', () => {
     const routeSrc = fs.readFileSync(path.join(__dirname, 'passkey-route.ts'), 'utf-8')
     assert.match(routeSrc, /requireUserVerification:\s*true/)
     assert.match(routeSrc, /userVerification:\s*PASSKEY_USER_VERIFICATION/)
+    // The added-notice must come from the branded server-only module, never
+    // re-inlined as a plain-text email in the client-safe or route module.
+    assert.match(routeSrc, /from '\.\/passkey-emails'/)
+    const clientSrc = fs.readFileSync(path.join(__dirname, 'passkey.ts'), 'utf-8')
+    assert.doesNotMatch(clientSrc, /buildPasskeyAddedEmail|renderPasskeyAddedEmail|@hitly\/mail/)
     assert.equal(isEmailPasswordSignIn(new Request(`${APP_URL}/api/auth/sign-in/email`, { method: 'POST' })), true)
     const passkeySignIn = new Request(`${APP_URL}/api/auth/passkey/verify-authentication`, { method: 'POST' })
     assert.equal(isEmailPasswordSignIn(passkeySignIn), false)
