@@ -28,4 +28,4 @@ const migrationsFolder = path.join(path.dirname(fileURLToPath(import.meta.url)),
 
 await migrate(db, { migrationsFolder })
 await client.end()
-console.log('Hitly migrations applied')
+process.stdout.write('HITLy migrations applied\n')

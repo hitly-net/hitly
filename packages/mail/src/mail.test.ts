@@ -73,6 +73,7 @@ test('default From display name uses HITLy brand', async () => {
   })
   assert.deepEqual(result, { delivered: true })
   assert.equal(sentMail[0]?.from, 'HITLy <noreply@hitly.net>')
+  assert.equal(sentMail[0]?.subject, 'HITLy: ask_user needs a decision')
 })
 
 async function captureInfo(fn: () => Promise<unknown>): Promise<string> {
