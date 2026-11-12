@@ -76,7 +76,8 @@ async function rewriteAuthenticateOptions(response: Response): Promise<Response>
 export async function GET(request: Request) {
   const next = handlers()
   if (!next) return NextResponse.json({ error: 'Database not configured' }, { status: 503 })
-  return handleAuthRequest(request, next.GET)
+  const response = await handleAuthRequest(request, next.GET)
+  return holdPasswordSignInIfMfa(request, response)
 }
 
 export async function POST(request: Request) {
