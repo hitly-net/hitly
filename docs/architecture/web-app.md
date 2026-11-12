@@ -93,11 +93,25 @@ but:
   it. The refusal carries the stable code `email_not_verified` and a
   user-facing instruction to verify; REST/MCP callers get HTTP 403 with
   `{ "error": "email_not_verified", "message": ... }`.
+- regenerating an existing project API key is gated the same way as
+  creating one: rotation goes through `rotateProjectApiKeyRecord` in
+  `lib/project-create.ts`, so a refused regenerate leaves the stored key
+  (hash and prefix) untouched and produces no new secret.
+- sending or resending a workspace invite is refused: the gate sits in the
+  single invite paths (`createAndSendWorkspaceInvite` /
+  `resendWorkspaceInvite` in `lib/invites.ts`) before the invite row is
+  written or the token rotated, so nothing is written and no invite email
+  goes out.
 - work-item notifications are suppressed for the unverified recipient: no
   decision email, no push (`lib/notify.ts`).
 - the signed-in app shell shows a banner naming what the gate holds with a
   resend-verification link; the resend reuses the existing rate-limited
   signed-in endpoint `POST /api/session/resend-email-verification`.
+- a gate-blocked web create (project, API key, invite send/resend) is NOT a
+  crash: the server action returns the typed result
+  `{ status: 'error', code: 'email_not_verified', message }` and the client
+  renders the shared "Verify your email to continue" state with the same
+  resend-verification link — never a 500, stack trace or raw error id.
 
 Account-security mail (verification, resend, password reset, email change)
 is never gated and always sends while the flag is on.

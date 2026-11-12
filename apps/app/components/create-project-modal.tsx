@@ -1,11 +1,38 @@
 'use client'
 
-import { useRef } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { createProject } from '@/actions/projects'
+import { VerifyEmailRequiredNotice } from '@/components/verify-email-required'
 import { PluginSelect } from '@/components/plugin-select'
+import { isGateBlockedResult } from '@/lib/verified-gate'
 
-export function CreateProjectModal() {
+export function CreateProjectModal({
+  create = createProject,
+}: {
+  create?: (formData: FormData) => Promise<Awaited<ReturnType<typeof createProject>>>
+}) {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+  // A gate-blocked create returns the typed state instead of throwing, so
+  // the modal renders "Verify your email to continue" rather than a 500.
+  const [gateBlocked, setGateBlocked] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      const result = await create(new FormData(event.currentTarget))
+      if (isGateBlockedResult(result)) {
+        setGateBlocked(true)
+      } else {
+        // Success paths redirect server-side; clear any stale blocked state.
+        setGateBlocked(false)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <>
@@ -22,7 +49,7 @@ export function CreateProjectModal() {
       >
         <h2 className="text-lg font-semibold">Create project</h2>
         <p className="mt-1 text-sm text-zinc-500">A project maps to one origin and collects its work items.</p>
-        <form action={createProject} className="mt-4 flex flex-col gap-3">
+        <form ref={formRef} onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1">
             <span className="text-sm text-zinc-500">Name</span>
             <input
@@ -42,6 +69,7 @@ export function CreateProjectModal() {
             />
           </label>
           <PluginSelect />
+          {gateBlocked ? <VerifyEmailRequiredNotice /> : null}
           <div className="mt-2 flex justify-end gap-2">
             <button
               type="button"
@@ -52,7 +80,8 @@ export function CreateProjectModal() {
             </button>
             <button
               type="submit"
-              className="h-10 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+              disabled={busy}
+              className="h-10 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
             >
               Create
             </button>

@@ -76,7 +76,12 @@ create helpers (`apps/app/lib/project-create.ts`) that back every create
 path - web server actions today, and any REST `/api/v1` or MCP create path
 that uses them (the API does not yet expose project/key creation directly;
 when it does it must go through those helpers, enforced by a source-scan
-test). The refusal is HTTP 403 with a stable machine-readable code:
+test). Key regeneration is gated identically through
+`rotateProjectApiKeyRecord` in the same file (the API does not expose a
+regenerate route today either). Workspace invite sends/resends are gated in
+the single invite paths (`apps/app/lib/invites.ts`): nothing is written and
+no email goes out. The refusal is HTTP 403 with a stable machine-readable
+code:
 
 ```json
 { "error": "email_not_verified", "message": "Verify your email address to create projects and API keys..." }

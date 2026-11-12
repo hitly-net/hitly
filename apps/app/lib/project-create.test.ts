@@ -30,9 +30,9 @@ import {
 import { decideApproval, ingestApproval } from './approvals'
 import { db, pool } from './db'
 import { newId } from './ids'
-import { generateApiKey } from './keys'
+import { generateApiKey, hashApiKey } from './keys'
 import { parseProjectConfig, saveProjectConfig } from './project-config'
-import { insertNewProject, insertNewProjectApiKey } from './project-create'
+import { insertNewProject, insertNewProjectApiKey, rotateProjectApiKeyRecord } from './project-create'
 import { requireDb, withTenant } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
 
@@ -417,6 +417,68 @@ describe('unverified-email gate on create paths', () => {
       const before = await keyCountFor(gatedProjectId)
       await assert.rejects(() => createKeyAs(unverifiedUserId, gatedProjectId, 'ON key'), /email_not_verified/)
       assert.equal(await keyCountFor(gatedProjectId), before, 'refused key create writes no key row')
+    })
+  })
+
+  it('flag ON: unverified user cannot regenerate an existing key; the stored key is untouched', async () => {
+    await withFlag('1', async () => {
+      const raw = await createKeyAs(userId, gatedProjectId, 'rotate target')
+      const rows = await database
+        .select({ id: projectApiKeys.id, hashedKey: projectApiKeys.hashedKey, prefix: projectApiKeys.prefix })
+        .from(projectApiKeys)
+        .where(eq(projectApiKeys.projectId, gatedProjectId))
+      const target = rows.find((row) => row.hashedKey === hashApiKey(raw))
+      assert.ok(target, 'rotate target key exists')
+      await assert.rejects(
+        () =>
+          withTenant(workspaceId, () =>
+            rotateProjectApiKeyRecord({ projectId: gatedProjectId, keyId: target.id, userId: unverifiedUserId }),
+          ),
+        /email_not_verified/,
+      )
+      const unchanged = await database
+        .select({ hashedKey: projectApiKeys.hashedKey, prefix: projectApiKeys.prefix })
+        .from(projectApiKeys)
+        .where(eq(projectApiKeys.id, target.id))
+      assert.deepEqual(unchanged[0], { hashedKey: target.hashedKey, prefix: target.prefix }, 'stored key unchanged after refusal')
+    })
+  })
+
+  it('flag ON: verified user regenerates; old secret stops working', async () => {
+    await withFlag('1', async () => {
+      const raw = await createKeyAs(userId, gatedProjectId, 'rotate ok')
+      const rows = await database
+        .select({ id: projectApiKeys.id, hashedKey: projectApiKeys.hashedKey })
+        .from(projectApiKeys)
+        .where(eq(projectApiKeys.projectId, gatedProjectId))
+      const target = rows.find((row) => row.hashedKey === hashApiKey(raw))
+      assert.ok(target, 'rotate target key exists')
+      const newRaw = await withTenant(workspaceId, () =>
+        rotateProjectApiKeyRecord({ projectId: gatedProjectId, keyId: target.id, userId }),
+      )
+      assert.ok(newRaw.startsWith('hitly_'))
+      assert.notEqual(newRaw, raw, 'a new secret is produced')
+      const after = await database
+        .select({ hashedKey: projectApiKeys.hashedKey })
+        .from(projectApiKeys)
+        .where(eq(projectApiKeys.id, target.id))
+      assert.notEqual(after[0].hashedKey, target.hashedKey, 'the old secret stops working')
+    })
+  })
+
+  it('flag OFF: an unverified user regenerates exactly as before', async () => {
+    await withFlag(undefined, async () => {
+      const raw = await createKeyAs(userId, gatedProjectId, 'rotate off')
+      const rows = await database
+        .select({ id: projectApiKeys.id, hashedKey: projectApiKeys.hashedKey })
+        .from(projectApiKeys)
+        .where(eq(projectApiKeys.projectId, gatedProjectId))
+      const target = rows.find((row) => row.hashedKey === hashApiKey(raw))
+      assert.ok(target, 'rotate target key exists')
+      const newRaw = await withTenant(workspaceId, () =>
+        rotateProjectApiKeyRecord({ projectId: gatedProjectId, keyId: target.id, userId: unverifiedUserId }),
+      )
+      assert.ok(newRaw.startsWith('hitly_'))
     })
   })
 

@@ -14,10 +14,9 @@ import {
 } from '@hitly/db/schema'
 import { getAppContext, withAppTenant } from '@/lib/context'
 import { parseAnswerField } from '@/lib/answer-form-helpers'
-import { generateApiKey } from '@/lib/keys'
 import { guardProjectAdminChange } from '@/lib/member-guard'
 import { newId } from '@/lib/ids'
-import { insertNewProject, insertNewProjectApiKey } from '@/lib/project-create'
+import { insertNewProject, insertNewProjectApiKey, rotateProjectApiKeyRecord } from '@/lib/project-create'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
 import {
   deleteProject as deleteProjectRecord,
@@ -27,6 +26,7 @@ import {
 import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from '@/lib/rbac'
 import { clientFromHeaders } from '@/lib/request-client'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
+import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
 import { headers } from 'next/headers'
 
 function revalidateWorkItem(approvalId: string, projectId: string) {
@@ -65,17 +65,33 @@ async function requireProjectAdmin(projectId: string) {
   return { ...ctx, access }
 }
 
-export async function createProject(formData: FormData) {
+/**
+ * Result of a key create/regenerate. A gate-blocked action returns the typed
+ * state instead of throwing, so the web UI renders the verify-email state
+ * rather than an error page or a 500.
+ */
+export type ApiKeyActionResult = { apiKey: string } | GateBlockedResult
+
+export async function createProject(formData: FormData): Promise<GateBlockedResult | void> {
   return withAppTenant(async ({ user, role }) => {
     if (!canManageWorkspace(role)) {
       throw new Error('Only workspace admins can create projects')
     }
-    const projectId = await insertNewProject({
-      userId: user.id,
-      name: formData.get('name'),
-      description: formData.get('description'),
-      plugin: formData.get('plugin'),
-    })
+    let projectId: string
+    try {
+      projectId = await insertNewProject({
+        userId: user.id,
+        name: formData.get('name'),
+        description: formData.get('description'),
+        plugin: formData.get('plugin'),
+      })
+    } catch (error) {
+      // A gate-blocked create is a product state, not a crash: return the
+      // typed result so the modal renders "Verify your email to continue".
+      const blocked = toGateBlockedResult(error)
+      if (blocked) return blocked
+      throw error
+    }
     revalidatePath('/projects')
     redirect(`/projects/${projectId}/config`)
   })
@@ -131,16 +147,23 @@ export async function updateProjectConfig(
   })
 }
 
-export async function createProjectApiKey(projectId: string, formData: FormData) {
+export async function createProjectApiKey(projectId: string, formData: FormData): Promise<ApiKeyActionResult> {
   return withAppTenant(async ({ user }) => {
     await requireProjectAdmin(projectId)
     const name = String(formData.get('name') ?? 'Ingest key').trim() || 'Ingest key'
-    // Single server-side create path (shared with REST/MCP callers), so the
-    // unverified-email gate is enforced there, not per-callsite.
-    const raw = await insertNewProjectApiKey({ projectId, userId: user.id, name })
+    let raw: string
+    try {
+      // Single server-side create path (shared with REST/MCP callers), so the
+      // unverified-email gate is enforced there, not per-callsite.
+      raw = await insertNewProjectApiKey({ projectId, userId: user.id, name })
+    } catch (error) {
+      const blocked = toGateBlockedResult(error)
+      if (blocked) return blocked
+      throw error
+    }
     revalidatePath(`/projects/${projectId}`)
     revalidatePath(`/projects/${projectId}/config`)
-    return raw
+    return { apiKey: raw }
   })
 }
 
@@ -165,22 +188,21 @@ export async function deleteProjectApiKey(projectId: string, keyId: string) {
   })
 }
 
-export async function regenerateProjectApiKey(projectId: string, keyId: string) {
-  return withAppTenant(async () => {
+export async function regenerateProjectApiKey(projectId: string, keyId: string): Promise<ApiKeyActionResult> {
+  return withAppTenant(async ({ user }) => {
     await requireProjectAdmin(projectId)
-    const database = await requireProjectApiKey(projectId, keyId)
-    const generated = generateApiKey()
-    await database
-      .update(projectApiKeys)
-      .set({
-        hashedKey: generated.hashed,
-        prefix: generated.prefix,
-        lastUsedAt: null,
-      })
-      .where(and(eq(projectApiKeys.id, keyId), eq(projectApiKeys.workspaceId, requireTenantWorkspaceId())))
+    let raw: string
+    try {
+      // Single server-side regenerate path, gated exactly like a create.
+      raw = await rotateProjectApiKeyRecord({ projectId, keyId, userId: user.id })
+    } catch (error) {
+      const blocked = toGateBlockedResult(error)
+      if (blocked) return blocked
+      throw error
+    }
     revalidatePath(`/projects/${projectId}`)
     revalidatePath(`/projects/${projectId}/config`)
-    return generated.raw
+    return { apiKey: raw }
   })
 }
 

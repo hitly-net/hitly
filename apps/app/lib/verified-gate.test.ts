@@ -13,11 +13,15 @@ import { join, relative, sep } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import {
   EMAIL_NOT_VERIFIED_CODE,
+  VERIFY_TO_CONTINUE_TITLE,
   VerifiedEmailRequiredError,
   assertEmailVerifiedForCreate,
   emailNotVerifiedResponse,
+  gateBlockedResult,
+  isGateBlockedResult,
   requireVerifiedEmailGateEnabled,
   shouldShowUnverifiedEmailBanner,
+  toGateBlockedResult,
 } from './verified-gate'
 
 const APP_ROOT = join(__dirname, '..')
@@ -182,3 +186,81 @@ describe('source-scan guards', () => {
     }
   })
 })
+
+describe('typed gate-blocked result (S1: no throw, no 500, no error id)', () => {
+  it('carries the stable code, error status and a verify-your-email message', () => {
+    const result = gateBlockedResult()
+    assert.deepEqual(result, {
+      status: 'error',
+      code: EMAIL_NOT_VERIFIED_CODE,
+      message: expect_includes_verify(result.message),
+    })
+    assert.equal(result.code, 'email_not_verified')
+  })
+
+  it('isGateBlockedResult accepts only the typed shape', () => {
+    assert.equal(isGateBlockedResult(gateBlockedResult()), true)
+    assert.equal(isGateBlockedResult({ status: 'error', code: 'other' }), false)
+    assert.equal(isGateBlockedResult({ apiKey: 'hitly_x' }), false)
+    assert.equal(isGateBlockedResult(null), false)
+    assert.equal(isGateBlockedResult('email_not_verified'), false)
+  })
+
+  it('toGateBlockedResult maps ONLY the gate error; every other throw passes through as null', () => {
+    assert.deepEqual(toGateBlockedResult(new VerifiedEmailRequiredError()), gateBlockedResult())
+    assert.equal(toGateBlockedResult(new Error('Name is required')), null)
+    assert.equal(toGateBlockedResult({ digest: 'NEXT_REDIRECT' }), null)
+    assert.equal(toGateBlockedResult(undefined), null)
+  })
+
+  it('the web headline is the agreed copy', () => {
+    assert.equal(VERIFY_TO_CONTINUE_TITLE, 'Verify your email to continue')
+  })
+})
+
+function expect_includes_verify(message: string): string {
+  assert.match(message, /Verify your email/i)
+  return message
+}
+
+describe('server actions convert a blocked create into the typed result (static pins)', () => {
+  const projectsActions = readFileSync(join(APP_ROOT, 'actions', 'projects.ts'), 'utf8')
+  const teamActions = readFileSync(join(APP_ROOT, 'actions', 'team.ts'), 'utf8')
+
+  it('project create, key create and key regenerate all catch the gate and return the typed result', () => {
+    for (const name of ['createProject', 'createProjectApiKey', 'regenerateProjectApiKey']) {
+      const fn = actionBody(projectsActions, name)
+      assert.match(fn, /toGateBlockedResult\(error\)/, `${name} must map the gate error onto the typed result`)
+      assert.match(fn, /if \(blocked\) return blocked/, `${name} must RETURN the typed state, not rethrow it`)
+      assert.match(fn, /throw error/, `${name} must still rethrow every other failure`)
+    }
+  })
+
+  it('key regenerate rotates through the gated lib chokepoint', () => {
+    assert.match(projectsActions, /rotateProjectApiKeyRecord\(\{ projectId, keyId, userId: user\.id \}\)/)
+    const lib = readFileSync(join(APP_ROOT, 'lib', 'project-create.ts'), 'utf8')
+    const fn = actionBody(lib, 'rotateProjectApiKeyRecord')
+    assert.match(fn, /await assertCreatorVerified\(args\.userId\)/, 'regenerate is gated like a create')
+  })
+
+  it('invite send and resend catch the gate and return the typed result, and name the actor to the lib', () => {
+    for (const name of ['inviteToWorkspace', 'resendInvite']) {
+      const fn = actionBody(teamActions, name)
+      assert.match(fn, /toGateBlockedResult\(error\)/, `${name} must map the gate error onto the typed result`)
+      assert.match(fn, /if \(blocked\) return blocked/, `${name} must RETURN the typed state, not rethrow it`)
+    }
+    assert.match(teamActions, /actorUserId: user\.id/, 'invites name the acting account to the lib')
+    const invites = readFileSync(join(APP_ROOT, 'lib', 'invites.ts'), 'utf8')
+    assert.match(invites, /async function createAndSendWorkspaceInvite[\s\S]*?await assertActorEmailVerified\(args\.actorUserId, database\)[\s\S]*?insert\(invites\)/,
+      'create path gates BEFORE the invite row is written')
+    assert.match(invites, /async function resendWorkspaceInvite[\s\S]*?await assertActorEmailVerified\(args\.actorUserId, database\)[\s\S]*?update\(invites\)/,
+      'resend gates BEFORE the token is rotated')
+  })
+})
+
+function actionBody(source: string, name: string): string {
+  const start = source.search(new RegExp(`export async function ${name}\\(`))
+  assert.notEqual(start, -1, `${name} must exist as an exported async action`)
+  const next = source.indexOf('export async function', start + 10)
+  return source.slice(start, next === -1 ? source.length : next)
+}

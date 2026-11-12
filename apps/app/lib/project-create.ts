@@ -1,5 +1,5 @@
 import { isListedPluginId } from '@hitly/core'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import {
   projectApiKeys,
   projectChannels,
@@ -106,5 +106,37 @@ export async function insertNewProjectApiKey(args: {
     hashedKey: generated.hashed,
     prefix: generated.prefix,
   })
+  return generated.raw
+}
+
+/**
+ * Rotates an existing project API key in the current tenant workspace:
+ * the single server-side path that replaces a stored key secret. The web
+ * action calls this, and any present or future REST /api/v1 or MCP
+ * regenerate path must go through it too, so the unverified-email gate
+ * holds for regeneration exactly as it does for creation. Returns the new
+ * raw key (shown once); the old secret stops working at once.
+ */
+export async function rotateProjectApiKeyRecord(args: {
+  projectId: string
+  keyId: string
+  userId: string
+}): Promise<string> {
+  const workspaceId = requireTenantWorkspaceId()
+  const database = requireDb()
+  const scope = and(
+    eq(projectApiKeys.id, args.keyId),
+    eq(projectApiKeys.projectId, args.projectId),
+    eq(projectApiKeys.workspaceId, workspaceId),
+  )
+  const rows = await database.select({ id: projectApiKeys.id }).from(projectApiKeys).where(scope).limit(1)
+  if (!rows[0]) throw new Error('Key not found')
+  await assertCreatorVerified(args.userId)
+
+  const generated = generateApiKey()
+  await database
+    .update(projectApiKeys)
+    .set({ hashedKey: generated.hashed, prefix: generated.prefix, lastUsedAt: null })
+    .where(scope)
   return generated.raw
 }

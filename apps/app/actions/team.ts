@@ -16,6 +16,7 @@ import { withTenant } from '@/lib/tenant'
 import { renderAddedToWorkspaceEmail } from '@hitly/mail'
 import { sendMail } from '@/lib/mail'
 import { createAndSendWorkspaceInvite, resendWorkspaceInvite, revokeWorkspaceInvite } from '@/lib/invites'
+import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
 import { findUserByEmail } from '@/lib/workspace'
 
 const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
@@ -25,7 +26,7 @@ async function sendAddedToWorkspaceMail(args: { to: string; workspaceName: strin
   await sendMail({ to: args.to, ...rendered })
 }
 
-export async function inviteToWorkspace(formData: FormData) {
+export async function inviteToWorkspace(formData: FormData): Promise<GateBlockedResult | void> {
   const { user, workspace, role } = await getAppContext()
   if (!canManageWorkspace(role)) {
     throw new Error('Only workspace admins can invite people')
@@ -57,16 +58,25 @@ export async function inviteToWorkspace(formData: FormData) {
     await sendAddedToWorkspaceMail({ to: email, workspaceName: workspace.name })
   } else {
     // Emails a one-time accept link (lib/invites.ts); inviting the same
-    // address again replaces the earlier link.
-    await createAndSendWorkspaceInvite({
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      email,
-      role: invitedRole,
-      invitedByUserId: user.id,
-      appUrl: APP_URL,
-      database,
-    })
+    // address again replaces the earlier link. The unverified-email gate is
+    // enforced in that single path; a blocked send comes back as the typed
+    // state so the form renders it instead of crashing.
+    try {
+      await createAndSendWorkspaceInvite({
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        email,
+        role: invitedRole,
+        invitedByUserId: user.id,
+        actorUserId: user.id,
+        appUrl: APP_URL,
+        database,
+      })
+    } catch (error) {
+      const blocked = toGateBlockedResult(error)
+      if (blocked) return blocked
+      throw error
+    }
   }
   revalidatePath('/settings/team')
 }
@@ -118,18 +128,26 @@ export async function cancelInvite(inviteId: string) {
 }
 
 /** Emails a fresh accept link for a pending invite; any earlier link stops working. */
-export async function resendInvite(inviteId: string) {
-  const { workspace, role } = await getAppContext()
+export async function resendInvite(inviteId: string): Promise<GateBlockedResult | void> {
+  const { workspace, role, user } = await getAppContext()
   if (!canManageWorkspace(role)) {
     throw new Error('Only workspace admins can resend invites')
   }
-  const result = await resendWorkspaceInvite({
-    workspaceId: workspace.id,
-    workspaceName: workspace.name,
-    inviteId,
-    appUrl: APP_URL,
-    database: requireDb(),
-  })
+  let result: { ok: true; expiresAt: Date } | { ok: false }
+  try {
+    result = await resendWorkspaceInvite({
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      inviteId,
+      actorUserId: user.id,
+      appUrl: APP_URL,
+      database: requireDb(),
+    })
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
+  }
   if (!result.ok) throw new Error('Invite not found')
   revalidatePath('/settings/team')
 }

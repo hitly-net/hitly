@@ -28,6 +28,42 @@ export const EMAIL_NOT_VERIFIED_CODE = 'email_not_verified'
 export const EMAIL_NOT_VERIFIED_MESSAGE =
   'Verify your email address to create projects and API keys and to receive notifications. Check your inbox for the verification link, or resend it from the banner at the top of the app.'
 
+/** Headline of the web state shown when a gated action is refused. */
+export const VERIFY_TO_CONTINUE_TITLE = 'Verify your email to continue'
+
+/**
+ * Typed result a server action returns when the gate blocks the create:
+ * never a throw, so the web app renders a clear state instead of an error
+ * page or a 500. Serialisable by construction.
+ */
+export type GateBlockedResult = {
+  status: 'error'
+  code: typeof EMAIL_NOT_VERIFIED_CODE
+  message: string
+}
+
+export function gateBlockedResult(message: string = EMAIL_NOT_VERIFIED_MESSAGE): GateBlockedResult {
+  return { status: 'error', code: EMAIL_NOT_VERIFIED_CODE, message }
+}
+
+export function isGateBlockedResult(value: unknown): value is GateBlockedResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { status?: unknown }).status === 'error' &&
+    (value as { code?: unknown }).code === EMAIL_NOT_VERIFIED_CODE
+  )
+}
+
+/**
+ * Maps a thrown value onto the typed result. Returns null for anything that
+ * is not the gate error, so the caller rethrows normal failures unchanged
+ * (including Next's redirect control-flow throw).
+ */
+export function toGateBlockedResult(error: unknown): GateBlockedResult | null {
+  return error instanceof VerifiedEmailRequiredError ? gateBlockedResult() : null
+}
+
 export class VerifiedEmailRequiredError extends Error {
   readonly code = EMAIL_NOT_VERIFIED_CODE
   constructor() {
