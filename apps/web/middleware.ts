@@ -21,6 +21,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // RFC 9116 discovery files must stay reachable on every host (e.g.
+  // /.well-known/security.txt, served by app/.well-known/security.txt/route.ts).
+  if (pathname.startsWith('/.well-known/')) {
+    return NextResponse.next()
+  }
+
   // Allow static assets (favicon, etc.) through
   if (
     pathname === '/favicon.ico' ||
