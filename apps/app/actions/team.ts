@@ -40,43 +40,49 @@ export async function inviteToWorkspace(formData: FormData): Promise<GateBlocked
     throw new Error('Invalid role')
   }
 
-  const database = requireDb()
-  const existingUser = await findUserByEmail(email)
-  if (existingUser) {
-    const existing = await database
-      .select({ id: memberships.id })
-      .from(memberships)
-      .where(and(eq(memberships.workspaceId, workspace.id), eq(memberships.userId, existingUser.id)))
-      .limit(1)
-    if (existing.length > 0) throw new Error('That person is already a member')
-    await database.insert(memberships).values({
-      id: newId('mem').slice(0, 36),
-      workspaceId: workspace.id,
-      userId: existingUser.id,
-      role: invitedRole,
+  try {
+    // The DB work runs inside the tenant transaction: a gate error must
+    // THROW OUT of withTenant so anything written before it rolls back
+    // (a normal return would COMMIT). The typed result is produced only
+    // after the transaction has been discarded. requireDb() INSIDE the
+    // callback resolves to the transaction handle.
+    await withTenant(workspace.id, async () => {
+      const database = requireDb()
+      const existingUser = await findUserByEmail(email)
+      if (existingUser) {
+        const existing = await database
+          .select({ id: memberships.id })
+          .from(memberships)
+          .where(and(eq(memberships.workspaceId, workspace.id), eq(memberships.userId, existingUser.id)))
+          .limit(1)
+        if (existing.length > 0) throw new Error('That person is already a member')
+        await database.insert(memberships).values({
+          id: newId('mem').slice(0, 36),
+          workspaceId: workspace.id,
+          userId: existingUser.id,
+          role: invitedRole,
+        })
+        await sendAddedToWorkspaceMail({ to: email, workspaceName: workspace.name })
+      } else {
+        // Emails a one-time accept link (lib/invites.ts); inviting the same
+        // address again replaces the earlier link. The unverified-email gate
+        // is enforced in that single path before any write.
+        await createAndSendWorkspaceInvite({
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+          email,
+          role: invitedRole,
+          invitedByUserId: user.id,
+          actorUserId: user.id,
+          appUrl: APP_URL,
+          database,
+        })
+      }
     })
-    await sendAddedToWorkspaceMail({ to: email, workspaceName: workspace.name })
-  } else {
-    // Emails a one-time accept link (lib/invites.ts); inviting the same
-    // address again replaces the earlier link. The unverified-email gate is
-    // enforced in that single path; a blocked send comes back as the typed
-    // state so the form renders it instead of crashing.
-    try {
-      await createAndSendWorkspaceInvite({
-        workspaceId: workspace.id,
-        workspaceName: workspace.name,
-        email,
-        role: invitedRole,
-        invitedByUserId: user.id,
-        actorUserId: user.id,
-        appUrl: APP_URL,
-        database,
-      })
-    } catch (error) {
-      const blocked = toGateBlockedResult(error)
-      if (blocked) return blocked
-      throw error
-    }
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
   }
   revalidatePath('/settings/team')
 }
@@ -135,14 +141,18 @@ export async function resendInvite(inviteId: string): Promise<GateBlockedResult 
   }
   let result: { ok: true; expiresAt: Date } | { ok: false }
   try {
-    result = await resendWorkspaceInvite({
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      inviteId,
-      actorUserId: user.id,
-      appUrl: APP_URL,
-      database: requireDb(),
-    })
+    // Tenant transaction: a gate error throws OUT so a write made before it
+    // (e.g. the rotated token of a mutant ordering) rolls back with it.
+    result = await withTenant(workspace.id, () =>
+      resendWorkspaceInvite({
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        inviteId,
+        actorUserId: user.id,
+        appUrl: APP_URL,
+        database: requireDb(),
+      }),
+    )
   } catch (error) {
     const blocked = toGateBlockedResult(error)
     if (blocked) return blocked

@@ -236,6 +236,23 @@ describe('server actions convert a blocked create into the typed result (static 
     }
   })
 
+  it('the typed conversion happens OUTSIDE the tenant transaction (rollback guarantee, M2)', () => {
+    const cases: Array<[string, string, string, string]> = [
+      [projectsActions, 'createProject', 'withAppTenant(', 'insertNewProject('],
+      [projectsActions, 'createProjectApiKey', 'withAppTenant(', 'insertNewProjectApiKey('],
+      [projectsActions, 'regenerateProjectApiKey', 'withAppTenant(', 'rotateProjectApiKeyRecord('],
+      [teamActions, 'inviteToWorkspace', 'withTenant(', 'createAndSendWorkspaceInvite('],
+      [teamActions, 'resendInvite', 'withTenant(', 'resendWorkspaceInvite('],
+    ]
+    for (const [source, name, txCall, writeCall] of cases) {
+      const body = actionBody(source, name)
+      const gateIdx = body.indexOf('toGateBlockedResult')
+      assert.notEqual(gateIdx, -1, `${name} converts the gate error`)
+      assert.ok(body.indexOf(txCall) < gateIdx, `${name}: the transaction scope opens before the conversion`)
+      assert.ok(body.lastIndexOf(writeCall) < gateIdx, `${name}: conversion happens only after the transaction (and its writes) are left behind, so a gate error thrown inside rolls the transaction back before any typed return`)
+    }
+  })
+
   it('key regenerate rotates through the gated lib chokepoint', () => {
     assert.match(projectsActions, /rotateProjectApiKeyRecord\(\{ projectId, keyId, userId: user\.id \}\)/)
     const lib = readFileSync(join(APP_ROOT, 'lib', 'project-create.ts'), 'utf8')
