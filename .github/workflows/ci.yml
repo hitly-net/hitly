@@ -70,10 +70,23 @@ jobs:
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
           WEB_URL: http://localhost:3000
         run: |
-          # The auth proxy allowlist (pinned in lib/brand-assets.test.ts)
-          # only decides whether the request reaches the Next public-file
-          # handler; this proves the real runtime: every brand asset must
-          # answer a signed-out GET with 200 + image/svg+xml from next start.
+          # Runtime proof for the brand-asset contract (unit tests pin the
+          # proxy allowlist and the public/ files; this checks the whole
+          # stack): every BRAND_ASSET_PATHS path must answer a signed-out
+          # GET with 200 + image/svg+xml byte-identical to the public/ file,
+          # and signed-out /login must carry the metadata favicon link
+          # (<link rel="icon" href="/icon.svg">), which public/ files do not
+          # get automatically.
+          cd apps/app
+          ASSETS=$(node -e "
+            const s = require('fs').readFileSync('lib/constants.ts', 'utf8')
+            const m = s.match(/export const BRAND_ASSET_PATHS = \[([\s\S]*?)\]/)
+            if (!m) throw new Error('BRAND_ASSET_PATHS not found in lib/constants.ts')
+            const list = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+            if (list.length === 0) throw new Error('BRAND_ASSET_PATHS is empty')
+            console.log(list.join(' '))
+          ")
+          echo "brand assets from constants: ${ASSETS}"
           yarn workspace @hitly/app start &
           SERVER_PID=$!
           trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
@@ -82,10 +95,20 @@ jobs:
             sleep 1
             if [ "$i" = 60 ]; then echo "server did not come up" >&2; exit 1; fi
           done
-          for asset in /icon.svg /icon-open.svg /apple-icon.svg; do
+          for asset in ${ASSETS}; do
             code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3001${asset}")
             ctype=$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:3001${asset}")
             echo "GET ${asset} -> ${code} ${ctype}"
             [ "$code" = "200" ] || { echo "FAIL: ${asset} status ${code}" >&2; exit 1; }
             case "$ctype" in image/svg+xml*) ;; *) echo "FAIL: ${asset} content-type '${ctype}'" >&2; exit 1;; esac
+            curl -s "http://127.0.0.1:3001${asset}" -o /tmp/served-asset
+            cmp /tmp/served-asset "public/${asset#/}" \
+              || { echo "FAIL: ${asset} body differs from public/${asset#/}" >&2; exit 1; }
           done
+          LOGIN_HTML=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/login)
+          [ "$LOGIN_HTML" = "200" ] || { echo "FAIL: /login status ${LOGIN_HTML}" >&2; exit 1; }
+          LOGIN_HTML=$(curl -s http://127.0.0.1:3001/login)
+          echo "${LOGIN_HTML}" | grep -o '<link rel="icon" href="/icon.svg"[^>]*type="image/svg+xml"' > /dev/null \
+            || echo "${LOGIN_HTML}" | grep -o '<link rel="icon"[^>]*href="/icon.svg"[^>]*>' > /dev/null \
+            || { echo "FAIL: signed-out /login HTML has no <link rel=\"icon\" href=\"/icon.svg\">" >&2; exit 1; }
+          echo "OK: signed-out /login declares the /icon.svg favicon"

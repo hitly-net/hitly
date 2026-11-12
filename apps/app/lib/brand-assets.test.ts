@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NextRequest } from 'next/server'
 import { BRAND_ASSET_PATHS, isBrandAssetPath } from './constants'
+import { metadata } from './app-metadata'
 import { proxy } from '../proxy'
 
 /**
@@ -18,8 +19,11 @@ import { proxy } from '../proxy'
  * alike). lib/brand-assets.test.ts pins that the files really are there —
  * passing the proxy is NOT the same as being served (an app/ file that
  * matches no Next metadata convention 404s), and /favicon-updater's swaps
- * depend on /icon-open.svg actually resolving. The CI workflow additionally
- * GETs each path from a real `next start` after the build step.
+ * depend on /icon-open.svg actually resolving. Because public/ files get no
+ * automatic <link rel="icon">, lib/app-metadata.ts declares the favicon in
+ * the root metadata. The CI workflow additionally GETs each path from a
+ * real `next start` after the build step (byte-comparing bodies) and
+ * asserts signed-out /login HTML carries the favicon link.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -125,5 +129,27 @@ describe('brand assets are public', () => {
         `${iconPath} is a valid SVG document`,
       )
     }
+  })
+
+  it('declares the favicon through root metadata (public/ files get no auto <link rel=icon>)', () => {
+    // Moving the SVGs to public/ removed Next's metadata-file injection of
+    // <link rel="icon">; without an explicit icons entry, signed-out pages
+    // (login, signup, reset, invite, verify-email) ship without a favicon.
+    // The exported metadata object carries it, and the root layout must
+    // re-export exactly that object (the CI workflow asserts the rendered
+    // /login HTML for the real link).
+    assert.deepEqual(metadata.icons, {
+      icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
+    }, 'metadata.icons is exactly the /icon.svg link')
+    const iconLink = (metadata.icons as { icon: Array<{ url: string; type: string }> }).icon[0]!
+    assert.ok(isBrandAssetPath(iconLink.url), 'the metadata icon href is an allowlisted brand asset')
+
+    const layout = fs.readFileSync(path.join(appDir, 'layout.tsx'), 'utf-8')
+    assert.match(
+      layout,
+      /import \{ metadata \} from '@\/lib\/app-metadata'/,
+      'the root layout imports the shared metadata module',
+    )
+    assert.match(layout, /export \{ metadata \}/, 'the root layout re-exports it as its metadata')
   })
 })
