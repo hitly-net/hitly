@@ -44,7 +44,7 @@ On the host, with SSH key auth already working:
 NEXT_PUBLIC_APP_URL=http://<your-host>:3001
 ```
 
-We don't collect telemetry or usage data anywhere. Next.js and Turborepo CLI telemetry are always off (`NEXT_TELEMETRY_DISABLED=1`, `TURBO_TELEMETRY_DISABLED=1`). `HITLY_TELEMETRY` only turns on the marketing-site Plausible page script (unset = no script). Plausible settings are baked in at **build** time — changing `HITLY_TELEMETRY` / `NEXT_PUBLIC_PLAUSIBLE_*` requires a rebuild. hitly.net example (not a default): `HITLY_TELEMETRY=1`, `NEXT_PUBLIC_PLAUSIBLE_DOMAIN=hitly.net`, `NEXT_PUBLIC_PLAUSIBLE_SRC=https://click.hitly.net/js/script.js`.
+We don't collect telemetry or usage data anywhere. Next.js and Turborepo CLI telemetry are always off (`NEXT_TELEMETRY_DISABLED=1`, `TURBO_TELEMETRY_DISABLED=1`). `HITLY_TELEMETRY` only turns on the marketing-site Plausible page script (unset = no script). The value is trimmed; only `1` or `true` turn it on. Plausible settings are baked in at **build** time — changing `HITLY_TELEMETRY` / `NEXT_PUBLIC_PLAUSIBLE_*` requires a rebuild. hitly.net example (not a default): `HITLY_TELEMETRY=1`, `NEXT_PUBLIC_PLAUSIBLE_DOMAIN=hitly.net`, `NEXT_PUBLIC_PLAUSIBLE_SRC=https://click.hitly.net/js/script.js`.
 
 `apps/app/.env.production`:
 

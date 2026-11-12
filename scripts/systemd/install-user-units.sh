@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Hitly user systemd units on the LAN production host (<your-host>).
+# Install HITLy user systemd units on the production host (<your-host>).
 # Run from the repo on that host after git pull — not for local Mac development.
 set -euo pipefail
 

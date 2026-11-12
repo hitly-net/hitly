@@ -240,7 +240,7 @@ When the latest decision includes a typed ask_user answer, the same payload also
 - **When it is set.** `GET /api/v1/approvals/:id` (session / reviewer Bearer) includes `openedRefs` when the item is **actionable for this reviewer** (`canAct`). The host builds it from `opened` project events recorded by `POST /api/v1/approvals/:id/opens` (each event carries `itemRef`, `openedAt`, and the actor). The field is **omitted** when the reviewer cannot act (already decided, expired, cancelled, or no decide permission) — there is nothing to hydrate.
 - **How clients use it.** Reviewer clients (mobile and web) hydrate the must-open checklist from `openedRefs` on load, then union in taps from the current visit. Re-entering an approval does not force opening every item again, and a tap on an already-recorded ref should not POST another `opened` event from the checklist. The host still re-validates on decide against the recorded events, not against this field.
 
-A project API key on the same GET route still returns the slim origin-poll payload and never includes `openedRefs`. That payload does include top-level `answerSchema` (the stored ask_user schema, or `null` when the request has none).
+A project API key on the same GET route still returns the slim origin-poll payload and never includes `openedRefs`. That payload does include top-level `answerSchema` (the stored ask_user schema, or `null` when the request has none). When the request has a decided typed ask_user answer, the requester GET also returns top-level `answer` (`{ kind, value }`). The key is omitted when there is none — never `answer: null`.
 
 ### Original request (view / copy)
 

@@ -377,6 +377,38 @@ describe('push tokens', { concurrency: false }, () => {
     }
   })
 
+  it('secret field names never appear in the Android push payload (S1)', async () => {
+    const token = expoToken(`names-${newId('t').slice(-8)}`)
+    await registerPushToken({ userId: fixture.reviewerId, token, platform: 'android' })
+    const secretFieldNames = ['cb_auth_token', 'cbAuthToken', 'authorization', 'authHeader']
+    const captured: Array<Record<string, unknown>> = []
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/push/send')) {
+        const body = JSON.parse(String(init?.body)) as Array<Record<string, unknown>>
+        captured.push(...body)
+        return jsonResponse({ data: body.map(() => ({ status: 'ok', id: 't' })) })
+      }
+      if (url.includes('/push/getReceipts')) return jsonResponse({ data: {} })
+      if (origFetch) return origFetch(input, init)
+      throw new Error(`unexpected fetch ${url}`)
+    }) as typeof fetch
+
+    await ingestHttpAsk(fixture, 'https://origin.example', {
+      args: { amount: 99, cb_auth_token: 'field-set', cbAuthToken: 'field-set' },
+      metadata: { pageId: 'p1', cb_auth_token: 'field-set', authorization: 'field-set', authHeader: 'field-set' },
+      cb_auth_token: 'field-set',
+      cbAuthToken: 'field-set',
+    })
+    await flushAfterTenantCommitForTests()
+    assert.ok(captured[0], 'ingest must send a push')
+    const serialized = JSON.stringify(captured[0])
+    for (const name of secretFieldNames) {
+      assert.equal(serialized.includes(name), false, `push payload must not contain secret field name ${name}`)
+    }
+    assert.equal(serialized.includes('field-set'), false, 'push payload must not include secret field values')
+  })
+
   it('evicts the oldest token when the user exceeds the cap', async () => {
     const suffix = newId('t').slice(-8)
     const tokens: string[] = []

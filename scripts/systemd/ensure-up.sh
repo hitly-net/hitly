@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Keep Hitly production processes up when user linger is not enabled.
+# Keep HITLy production processes up when user linger is not enabled.
 # Intended for <your-host> until `loginctl enable-linger <user>` can run as root.
 set -euo pipefail
 
