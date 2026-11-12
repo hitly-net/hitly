@@ -19,7 +19,7 @@ jobs:
         env:
           POSTGRES_DB: hitly
           POSTGRES_USER: hitly
-          POSTGRES_PASSWORD: hitly
+          POSTGRES_PASSWORD: ciPgVerify2026x
         ports:
           - 5432:5432
         options: >-
@@ -37,13 +37,13 @@ jobs:
       - run: yarn install --frozen-lockfile
       - run: yarn db:migrate
         env:
-          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          DATABASE_URL: postgres://hitly:ciPgVerify2026x@localhost:5432/hitly
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
           HITLY_MFA_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
       - run: yarn lint
       - run: yarn test
         env:
-          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          DATABASE_URL: postgres://hitly:ciPgVerify2026x@localhost:5432/hitly
           BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
           BETTER_AUTH_URL: http://localhost:3001
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
@@ -55,7 +55,7 @@ jobs:
         env:
           BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
           BETTER_AUTH_URL: http://localhost:3001
-          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          DATABASE_URL: postgres://hitly:ciPgVerify2026x@localhost:5432/hitly
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
           HITLY_MFA_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
@@ -64,7 +64,7 @@ jobs:
         env:
           BETTER_AUTH_SECRET: ci-test-only-4f9b2c7e1a8d6053b2e9c4a7
           BETTER_AUTH_URL: http://localhost:3001
-          DATABASE_URL: postgres://hitly:hitly@localhost:5432/hitly
+          DATABASE_URL: postgres://hitly:ciPgVerify2026x@localhost:5432/hitly
           HITLY_ENCRYPTION_KEK: MUuABxT4HueJ6x7wI6sNX26957d3cI13fntizJDyynY=
           HITLY_MFA_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
           NEXT_PUBLIC_WEB_URL: http://localhost:3000
