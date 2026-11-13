@@ -1,3 +1,4 @@
+import { newId } from './ids'
 import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { betterAuth } from 'better-auth'
@@ -18,7 +19,9 @@ import {
  */
 
 const APP_URL = 'http://localhost:3001'
-const EMAIL = 'alex@example.com'
+const RUN_TAG = newId('rl').slice(-10)
+const EMAIL = 'alex-' + RUN_TAG + '@example.com'
+const NOBODY = 'nobody-' + RUN_TAG + '@example.com'
 
 describe('reset email limiter', () => {
   it('sends up to the limit per account, then skips with a value-free log line', async () => {
@@ -40,7 +43,7 @@ describe('reset email limiter', () => {
     }
 
     // Case and spacing don't make a new account.
-    await send({ user: { email: ' ALEX@Example.com ' }, token: 'tokX' })
+    await send({ user: { email: ' ' + EMAIL.toUpperCase() + ' ' }, token: 'tokX' })
     assert.equal(sent.length, RESET_EMAIL_LIMIT)
     // Another account is unaffected.
     await send({ user: { email: 'sam@example.com' }, token: 'tokS' })
@@ -55,7 +58,7 @@ describe('reset email limiter', () => {
     const key = resetEmailKey(EMAIL)
     assert.match(key, /^[0-9a-f]{64}$/)
     assert.ok(!key.includes('alex'))
-    assert.equal(resetEmailKey(' Alex@Example.COM '), key)
+    assert.equal(resetEmailKey(' ' + EMAIL.toUpperCase() + ' '), key)
   })
 })
 
@@ -121,7 +124,7 @@ async function drainMail() {
     const replies: { status: number; body: string }[] = []
     try {
       for (let i = 0; i < RESET_EMAIL_LIMIT + 2; i += 1) replies.push(await requestReset(auth, EMAIL))
-      replies.push(await requestReset(auth, 'nobody@example.com'))
+      replies.push(await requestReset(auth, NOBODY))
       await drainMail()
     } finally {
       console.warn = warn

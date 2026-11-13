@@ -52,12 +52,15 @@ import {
 import {
   MFA_LOCKOUT_LOG,
   MFA_LOCKOUT_MS,
+  MFA_REAUTH_ATTEMPT_WINDOW_MS,
   MFA_REAUTH_LIMITED_LOG,
+  MFA_VERIFY_ATTEMPT_WINDOW_MS,
   MFA_VERIFY_FAILURE_LIMIT,
   MFA_VERIFY_LIMITED_LOG,
-  mfaReauthLimiter,
-  mfaVerifyLimiter,
+  mfaReauthAcquire,
+  mfaVerifyAcquire,
 } from './mfa-limit'
+import { resolveDecision, withRetryAfter, type RateAcquire } from './rate-limit'
 import { renderOtpauthQr } from './mfa-qr'
 import { resetCheckClientKey } from './reset-check-limit'
 
@@ -88,8 +91,8 @@ export interface MfaRouteDeps {
   /** Better Auth revoke-other-sessions; same helper password change uses. */
   revokeOtherSessions?: (headers: Headers) => Promise<void>
   clientKey?: (headers: Headers) => string
-  allowReauth?: (key: string) => boolean
-  allowVerify?: (key: string) => boolean
+  allowReauth?: RateAcquire
+  allowVerify?: RateAcquire
   now?: () => number
   database?: Database
   encryptionKey?: Buffer
@@ -250,7 +253,7 @@ async function requireReauthUser(
   const log = deps.log ?? ((line: string) => console.warn(line))
   const getSessionUser = deps.getSessionUser ?? defaultGetSessionUser
   const verifyPassword = deps.verifyPassword ?? defaultVerifyPassword
-  const allow = deps.allowReauth ?? mfaReauthLimiter
+  const allow = deps.allowReauth ?? mfaReauthAcquire
   const clientKey = deps.clientKey ?? resetCheckClientKey
 
   let user: MfaSessionUser | null
@@ -266,9 +269,10 @@ async function requireReauthUser(
   const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword : ''
   if (!currentPassword) return json({ code: 'MISSING_FIELDS' }, 400)
 
-  if (!allow(clientKey(request.headers))) {
+  const budget = await resolveDecision(allow, clientKey(request.headers), MFA_REAUTH_ATTEMPT_WINDOW_MS)
+  if (!budget.allowed) {
     log(MFA_REAUTH_LIMITED_LOG)
-    return json({ error: 'too_many_attempts' }, 429)
+    return withRetryAfter(json({ error: 'too_many_attempts' }, 429), budget.retryAfterMs)
   }
 
   let passwordOk: boolean
@@ -349,7 +353,7 @@ export async function handleMfaConfirm(request: ChangeRequest, deps: MfaRouteDep
   const log = deps.log ?? ((line: string) => console.warn(line))
   const getSessionUser = deps.getSessionUser ?? defaultGetSessionUser
   const revokeOtherSessions = deps.revokeOtherSessions ?? defaultRevokeOtherSessions
-  const allow = deps.allowVerify ?? mfaVerifyLimiter
+  const allow = deps.allowVerify ?? mfaVerifyAcquire
   const clientKey = deps.clientKey ?? resetCheckClientKey
   const now = deps.now ?? Date.now
 
@@ -366,9 +370,11 @@ export async function handleMfaConfirm(request: ChangeRequest, deps: MfaRouteDep
   const code = typeof body.code === 'string' ? body.code : ''
   if (!normaliseTotpCode(code)) return json({ error: 'invalid_code' }, 400)
 
-  if (!allow(`user:${user.id}`) || !allow(clientKey(request.headers))) {
+  const userBudget = await resolveDecision(allow, `user:${user.id}`, MFA_VERIFY_ATTEMPT_WINDOW_MS)
+  const clientBudget = await resolveDecision(allow, clientKey(request.headers), MFA_VERIFY_ATTEMPT_WINDOW_MS)
+  if (!userBudget.allowed || !clientBudget.allowed) {
     log(MFA_VERIFY_LIMITED_LOG)
-    return json({ error: 'too_many_attempts' }, 429)
+    return withRetryAfter(json({ error: 'too_many_attempts' }, 429), Math.max(userBudget.retryAfterMs, clientBudget.retryAfterMs))
   }
 
   let database: Database
@@ -428,7 +434,7 @@ export async function handleMfaDisable(request: ChangeRequest, deps: MfaRouteDep
 
     const code = presentedCode(body)
     if (!code) return json({ error: 'invalid_code' }, 400)
-    const limited = rateLimitVerify(user.id, request.headers, deps, log)
+    const limited = await rateLimitVerify(user.id, request.headers, deps, log)
     if (limited) return limited
 
     const result = await database.transaction(async (tx) => {
@@ -476,7 +482,7 @@ export async function handleMfaRecoveryCodes(request: ChangeRequest, deps: MfaRo
 
     const code = presentedCode(body)
     if (!code) return json({ error: 'invalid_code' }, 400)
-    const limited = rateLimitVerify(user.id, request.headers, deps, log)
+    const limited = await rateLimitVerify(user.id, request.headers, deps, log)
     if (limited) return limited
 
     const result = await database.transaction(async (tx) => {
@@ -504,17 +510,19 @@ function presentedCode(body: Record<string, unknown>): string {
   return typeof body.code === 'string' ? body.code : ''
 }
 
-function rateLimitVerify(
+async function rateLimitVerify(
   userId: string,
   headers: Headers,
   deps: MfaRouteDeps,
   log: (line: string) => void,
-): NextResponse | null {
-  const allow = deps.allowVerify ?? mfaVerifyLimiter
+): Promise<NextResponse | null> {
+  const allow = deps.allowVerify ?? mfaVerifyAcquire
   const clientKey = deps.clientKey ?? resetCheckClientKey
-  if (!allow(`user:${userId}`) || !allow(clientKey(headers))) {
+  const userBudget = await resolveDecision(allow, `user:${userId}`, MFA_VERIFY_ATTEMPT_WINDOW_MS)
+  const clientBudget = await resolveDecision(allow, clientKey(headers), MFA_VERIFY_ATTEMPT_WINDOW_MS)
+  if (!userBudget.allowed || !clientBudget.allowed) {
     log(MFA_VERIFY_LIMITED_LOG)
-    return json({ error: 'too_many_attempts' }, 429)
+    return withRetryAfter(json({ error: 'too_many_attempts' }, 429), Math.max(userBudget.retryAfterMs, clientBudget.retryAfterMs))
   }
   return null
 }
@@ -654,7 +662,7 @@ export async function handleMfaVerify(request: ChangeRequest, deps: MfaRouteDeps
     return expired
   }
 
-  const limited = rateLimitVerify(challenge.userId, request.headers, deps, log)
+  const limited = await rateLimitVerify(challenge.userId, request.headers, deps, log)
   if (limited) return limited
 
   try {

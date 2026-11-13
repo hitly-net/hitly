@@ -11,6 +11,34 @@ export interface RateLimiter {
   tryConsume(id: string): ConsumeResult
 }
 
+/** The async shape the server asks for: shared-database or per-process. */
+export type McpRateAcquire = (clientId: string) => Promise<{ ok: boolean; retryAfterMs: number }>
+
+/**
+ * The per-key budget counted into the shared `rate_limit_buckets` table
+ * (same table the HITLy app counts into), so replicas share one limit. The
+ * shared limiter counts in process and logs one line whenever the database
+ * query fails, so a database outage degrades to the old per-process limit
+ * rather than refusing or allowing traffic unchecked.
+ */
+export async function createDbBackedRateLimiter(options: {
+  databaseUrl: string
+  limit: number
+  windowMs: number
+  log?: (line: string) => void
+}): Promise<{ acquire: McpRateAcquire; close: () => Promise<void> }> {
+  const { createDefaultRateLimitPool, createSharedRateLimiter } = await import('@hitly/db/rate-limit')
+  const pool = await createDefaultRateLimitPool(options.databaseUrl)
+  const limiter = createSharedRateLimiter({ pool, log: options.log })
+  return {
+    async acquire(clientId: string) {
+      const decision = await limiter.acquire('mcp', clientId, { limit: options.limit, windowMs: options.windowMs })
+      return { ok: decision.allowed, retryAfterMs: decision.retryAfterMs }
+    },
+    close: () => pool.end(),
+  }
+}
+
 export function createRateLimiter(
   limit: number,
   windowMs: number,

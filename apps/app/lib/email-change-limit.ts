@@ -1,12 +1,15 @@
 import { createRateLimiter, type RateLimiter } from './reset-check-limit'
+import { createRateAcquire } from './rate-limit'
 
 /**
  * A per-client limit on signed-in email-change requests, using the same
  * limiter factory as password-change. Past the limit the route answers 429
- * without checking the password again.
+ * (with Retry-After) without checking the password again.
  *
- * The limit is per server process. It never stores or logs a password or a
- * token, and the key is the client address, not the account.
+ * Attempts count into the shared database (lib/rate-limit.ts) so the limit
+ * holds across server processes; the per-process factory above is the
+ * fallback while the database is unavailable. It never stores or logs a
+ * password or a token, and the key is the client address, not the account.
  */
 
 export const EMAIL_CHANGE_ATTEMPT_LIMIT = 10
@@ -22,4 +25,7 @@ export function createEmailChangeAttemptLimiter(options: { now?: () => number } 
   })
 }
 
-export const emailChangeAttemptLimiter = createEmailChangeAttemptLimiter()
+export const emailChangeAttemptAcquire = createRateAcquire('email-change', {
+  limit: EMAIL_CHANGE_ATTEMPT_LIMIT,
+  windowMs: EMAIL_CHANGE_ATTEMPT_WINDOW_MS,
+})

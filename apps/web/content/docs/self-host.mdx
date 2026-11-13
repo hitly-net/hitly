@@ -49,6 +49,34 @@ Local Compose runs **Postgres 16** (`postgres://USER:PASSWORD@localhost:5432/hit
 
 Older self-host installs used MariaDB. There is no in-place upgrade: stand up Postgres, run `yarn db:migrate` on an empty database, and re-create workspaces. Schema was squashed to a single Postgres migration.
 
+## Rate limiting
+
+Rate limiting is **shared through Postgres**: every app process counts into the `rate_limit_buckets` table (migration `0016`), so limits hold across replicas instead of resetting per process. One atomic `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per request opens or extends a fixed window; expired rows are swept opportunistically from the same path (at most once every 5 minutes per process), so no cron is required.
+
+Buckets are keyed by `SHA-256(route + NUL + subject)` — raw IPs, emails and API keys are never stored or logged; the `route` column only names the family (`auth`, `mfa-reauth`, `mfa-verify`, `password-change`, `passkey-reauth`, `email-change`, `resend-email-verification`, `reset-check`, `reset-check-shared`, `reset-email`, `ingest`). Every limited answer is a `429` with a `Retry-After` header in seconds.
+
+When the database is unavailable the limiter logs one line per process and transparently falls back to per-process counting — endpoints stay protected, limits just become per-node until Postgres returns. Set `HITLY_RATE_LIMIT_DB=0` to force per-process counting everywhere (e.g. to run without migration `0016`).
+
+Per-family limits and windows come from env (whole numbers; invalid values fail fast at start naming the variable), defaulting to the constants shipped with each route:
+
+| Variable | Default | Covers |
+| --- | --- | --- |
+| — (no override) | Better Auth's own per-endpoint rules | `/api/auth` endpoints, counted through `customStorage` (hashed client IP + path) |
+| `HITLY_RATE_LIMIT_MFA_REAUTH_LIMIT` / `_WINDOW_MS` | 10 / 15 min | MFA re-auth challenges |
+| `HITLY_RATE_LIMIT_MFA_VERIFY_LIMIT` / `_WINDOW_MS` | 10 / 15 min | TOTP verify attempts |
+| `HITLY_RATE_LIMIT_PASSWORD_CHANGE_LIMIT` / `_WINDOW_MS` | 10 / 15 min | password changes |
+| `HITLY_RATE_LIMIT_PASSKEY_REAUTH_LIMIT` / `_WINDOW_MS` | 10 / 15 min | passkey re-auth |
+| `HITLY_RATE_LIMIT_EMAIL_CHANGE_LIMIT` / `_WINDOW_MS` | 10 / 15 min | email changes |
+| `HITLY_RATE_LIMIT_RESEND_EMAIL_VERIFICATION_LIMIT` / `_WINDOW_MS` | 5 / 15 min | verification resends |
+| `HITLY_RATE_LIMIT_RESET_CHECK_LIMIT` / `_WINDOW_MS` | 30 / 60 s | reset-token checks per client (`HITLY_RATE_LIMIT_RESET_CHECK_SHARED_*`, default 600 / 60 s, caps clients with no usable address) |
+| `HITLY_RATE_LIMIT_RESET_EMAIL_LIMIT` / `_WINDOW_MS` | 5 / 60 min | reset emails per account |
+| `HITLY_RATE_LIMIT_INGEST_LIMIT` / `_WINDOW_MS` | 120 / 60 s | `POST /api/v1/approvals` per API key |
+| `HITLY_RATE_LIMIT_REST_READ_LIMIT` / `_WINDOW_MS` | 600 / 60 s | REST `/api/v1` reads: session-authed routes (per session user), key-authed GETs `GET /api/v1/approvals` and `GET /api/v1/approvals/by-run-id` (per hashed API key), unauthenticated `health` and `signup-status` (per hashed client-address key) |
+| `HITLY_RATE_LIMIT_REST_WRITE_LIMIT` / `_WINDOW_MS` | 120 / 60 s | REST `/api/v1` key/token-authed mutations: requester `POST /api/v1/approvals/[id]/cancel` with an API key, `POST /api/v1/housekeeping` (per hashed cron token) |
+| `HITLY_RATE_LIMIT_INVITE_LIMIT` / `_WINDOW_MS` | 30 / 60 s | `POST /api/v1/invites/lookup` and `/accept` per invite token (hashed) |
+
+`HITLY_RATE_LIMIT_AUTH_ENABLED=1|0` forces Better Auth's own limiter on or off; the default keeps its production-only behaviour. The MCP server limits per API key in-process by default; set `HITLY_MCP_DATABASE_URL` to count through the same shared table (tune with `HITLY_MCP_RATE_LIMIT` / `HITLY_MCP_RATE_LIMIT_WINDOW_MS`).
+
 ## What is not in this repo
 
 Stripe billing, hosted plan limits, and SSO ship in a private `@hitly/cloud` overlay used by [hitly.net](https://hitly.net). The `@hitly/cloud` package here is a stub: billing API routes return 404, and the nav hides Cloud-only items.

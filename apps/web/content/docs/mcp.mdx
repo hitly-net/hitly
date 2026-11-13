@@ -27,7 +27,7 @@ Authorization: Bearer <your-project-api-key>
 - **Keep it secret.** Anyone with the key can create, read and cancel your project's MCP requests. Do not commit it to a repository or embed it in client-side code; rotate it from the project settings if it leaks.
 - **Scope.** The key is a *requester* credential: it can call `request_approval`, `ask_user`, `get_decision`, `list_pending` and `cancel`, and only for requests that same key created - requests created with a key are readable and cancellable only with that key. It cannot decide: there is deliberately no decide tool.
 - A missing or malformed key gets `401` with a `WWW-Authenticate: Bearer realm="hitly-mcp"` challenge. (Resume tokens, `hitly_resume_...`, are a different credential and are refused here.)
-- Each key has a request-rate budget (default 120 requests per minute); exceeding it answers `429` with a `Retry-After` header.
+- Each key has a request-rate budget (default 120 requests per minute); exceeding it answers `429` with a `Retry-After` header. The budget is per process by default; set `HITLY_MCP_DATABASE_URL` to the app's Postgres so every MCP replica counts against one shared budget through the same `rate_limit_buckets` table the web app uses (keys are stored only as hashes). Tune with `HITLY_MCP_RATE_LIMIT` / `HITLY_MCP_RATE_LIMIT_WINDOW_MS`; `HITLY_MCP_RATE_LIMIT=0` disables limiting.
 
 ## Set up a client
 

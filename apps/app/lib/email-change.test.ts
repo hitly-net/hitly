@@ -185,6 +185,9 @@ function changeRequest(cookie: string | undefined, body: unknown, extraHeaders: 
 function routeMocks(overrides: Partial<EmailChangeRouteDeps> = {}): EmailChangeRouteDeps {
   return {
     log: () => {},
+    // Fresh per-process budget per call: the shipped default now counts in
+    // the shared database, which would couple independent tests and runs.
+    allow: createEmailChangeAttemptLimiter(),
     // Same defaults the route would build, but tracked so tests can drain.
     sendVerification: createSendEmailChangeVerification(APP_URL, sendMail, { track: trackMail }),
     sendChangedNotice: createSendEmailChangedNotice(sendMail, { track: trackMail }),
@@ -545,6 +548,7 @@ describe('email change request policy', () => {
       deps,
     )
     assert.equal(blocked.status, 429)
+    assert.equal(blocked.headers.get('retry-after'), '900', 'a spent budget names the seconds left in its window')
     assert.deepEqual(await blocked.json(), { error: 'too_many_attempts' })
 
     const other = await handleEmailChange(

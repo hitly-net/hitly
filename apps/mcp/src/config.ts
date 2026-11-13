@@ -55,6 +55,14 @@ export interface McpConfig {
   /** Requests per key per window; 0 disables. */
   rateLimit: number
   rateWindowMs: number
+  /**
+   * Optional Postgres connection string (HITLY_MCP_DATABASE_URL). When set,
+   * the per-key budget counts into the shared rate_limit_buckets table (same
+   * table the app uses), so the limit holds across MCP replicas; unset keeps
+   * the per-process limiter. The limiter never blocks on the database: on any
+   * query error it counts in process and logs one line.
+   */
+  rateDatabaseUrl?: string
   capabilities: Set<HostCapability>
 }
 
@@ -118,6 +126,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     allowedOrigins: parseAllowedOrigins(env.HITLY_MCP_ALLOWED_ORIGINS),
     rateLimit: parseRate(env.HITLY_MCP_RATE_LIMIT, DEFAULT_RATE_LIMIT, 'HITLY_MCP_RATE_LIMIT', 0),
     rateWindowMs: parseRate(env.HITLY_MCP_RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_WINDOW_MS, 'HITLY_MCP_RATE_LIMIT_WINDOW_MS', 1),
+    rateDatabaseUrl: env.HITLY_MCP_DATABASE_URL?.trim() || undefined,
     capabilities,
   }
 }

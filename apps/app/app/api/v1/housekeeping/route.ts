@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { registerDefaultHousekeepingJobs } from '@/lib/housekeeping/jobs'
 import { listHousekeepingJobs, runDueHousekeeping } from '@/lib/housekeeping/scheduler'
+import { applyRestLimit, hashRestSubject } from '@/lib/rest-limit'
 
 function authorize(request: Request) {
   const secret = process.env.HITLY_CRON_SECRET
@@ -10,10 +11,17 @@ function authorize(request: Request) {
   return process.env.NODE_ENV !== 'production'
 }
 
+function requestToken(request: Request): string {
+  const header = request.headers.get('authorization')
+  return header?.startsWith('Bearer ') ? header.slice(7) : 'unprotected'
+}
+
 export async function POST(request: Request) {
   if (!authorize(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const limited = await applyRestLimit('write', hashRestSubject('housekeeping:' + requestToken(request)))
+  if (limited) return limited
 
   let body: { job?: string; force?: boolean } = {}
   try {

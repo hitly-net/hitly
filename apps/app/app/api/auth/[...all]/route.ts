@@ -54,6 +54,13 @@ export async function handleAuthRequest(
   const response = await run(withNativeAuthOrigin(request))
   if (response instanceof Response) {
     if (response.status === 404) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    // The shared-database endpoint limiter (lib/rate-limit.ts) answers 429
+    // through Better Auth, which names the wait in X-Retry-After; answer the
+    // standard Retry-After header too so any client can honour it.
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('retry-after') ?? response.headers.get('x-retry-after')
+      if (retryAfter && !response.headers.get('retry-after')) response.headers.set('retry-after', retryAfter)
+    }
     if (isPasskeyPluginAuthenticatePath(request.url, '/passkey/generate-authenticate-options') && response.ok) {
       return rewriteAuthenticateOptions(response)
     }
