@@ -16,9 +16,12 @@
  * database all deny and emit exactly one value-free log line.
  *
  * Gates cover NEW use only: management of existing state (MFA disable and
- * recovery-code regeneration, the sign-in challenge, passkey removal,
- * project deletion) never consults can(). Only enrolment-style affordances
- * and routes do.
+ * recovery-code regeneration, the sign-in challenge, passkey removal) never
+ * consults can(). Only enrolment-style affordances and routes do. With
+ * project_lifecycle denied, existing projects stay fully viewable and
+ * removable: pause/archive go off, but deleteProject keeps its direct
+ * confirm-name deletion path (can() there only selects which path, it never
+ * blocks removal).
  *
  * Seed rules (migration 0015 / TIER_ENTITLEMENT_SEED in @hitly/core):
  *   mfa                    all plans

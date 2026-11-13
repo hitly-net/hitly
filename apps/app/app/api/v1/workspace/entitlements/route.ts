@@ -32,7 +32,18 @@ export async function GET(
   deps: EntitlementsRouteDeps & Record<string, unknown> = {},
 ): Promise<NextResponse> {
   const resolveSession = deps.resolveSession ?? (requireApiWorkspace as () => Promise<ApiWorkspaceCtx>)
-  const ctx = await resolveSession()
+  let ctx: ApiWorkspaceCtx
+  try {
+    ctx = await resolveSession()
+  } catch {
+    // Session-layer/database outage: answer 503 unavailable with Retry-After
+    // — never a 500 (product ruling S-A). Entitlement LOOKUPS fail closed
+    // inside the helper; this is the transport-level outage answer.
+    return NextResponse.json(
+      { error: 'unavailable' },
+      { status: 503, headers: { 'retry-after': '5' } },
+    )
+  }
   if (!ctx.ok) return ctx.error
   if (!ctx.workspace) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const entitlements = deps.entitlements ?? getEntitlementsForWorkspace

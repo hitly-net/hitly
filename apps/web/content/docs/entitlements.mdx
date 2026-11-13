@@ -84,8 +84,10 @@ Every deny path returns `false` and writes one value-free log line:
 - missing row → `no entitlement row for "…"; denied`
 - unknown workspace plan or unknown `min_plan` → denied
 - database unreachable or the table missing → `database unavailable; denied "…"`
-  (the check never throws: guarded routes answer 403/404/200-with-all-denied,
-  never 500)
+  (entitlement lookups fail closed; a full database outage shows the standard
+  error page on `/settings/security`, and the JSON API
+  `GET /api/v1/workspace/entitlements` answers 503 `{"error":"unavailable"}`
+  with a `Retry-After` header — never a 500)
 - current-workspace lookup failure (e.g. session store down) → `workspace
   lookup failed; denied "…"`
 

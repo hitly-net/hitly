@@ -20,7 +20,6 @@ import { MFA_CHALLENGE_COOKIE, shouldShowAuthenticatorSection } from './mfa'
 import { encryptUtf8, fromBase32, resolveMfaEncryptionKey, totpCode } from './mfa-crypto'
 import {
   handleMfaConfirm,
-  handleMfaDisable,
   handleMfaEnrol,
   handleMfaRecoveryCodes,
   handleMfaVerify,
@@ -28,6 +27,7 @@ import {
   type MfaRouteDeps,
 } from './mfa-route'
 import { handlePasskeyDelete } from './passkey-route'
+import { handleAuthRequest } from '../app/api/auth/[...all]/route'
 import {
   can,
   canForCurrentWorkspace,
@@ -299,12 +299,13 @@ describe('cache TTL (S4): the map expires on its own', () => {
   })
 })
 
-describe('existing MFA stays fully manageable while mfa is denied (S2)', () => {
+describe('existing MFA stays fully manageable while mfa is denied (S2/S-D)', () => {
   // Real user, real better-auth session, real MFA factor, real passkey row.
   // The map then DENIES `mfa` for the user's plan; every management path
-  // must still work, and the challenge must still complete. Mutant
-  // coverage: gating the disable/recovery-codes/verify routes or hiding the
-  // enrolled section (pre-fix page) fails this suite while the row denies.
+  // must still work (S-D: behavioural, through the real disable route).
+  // Mutant coverage: gating the disable route (or any management path)
+  // fails this suite while the row denies. Page visibility of the enrolled
+  // section is covered by app/settings/security/page.test.tsx (N1), not here.
   const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
   const PASSWORD = 'correct-horse-battery'
   const NOW = 1_700_000_300_000
@@ -426,13 +427,16 @@ describe('existing MFA stays fully manageable while mfa is denied (S2)', () => {
       const leftover = await db.select().from(passkeys).where(eq(passkeys.id, passkeyId))
       assert.equal(leftover.length, 0)
 
-      // Disable MFA last, still denied.
-      const disabled = await handleMfaDisable(
+      // Disable MFA last, still denied — through the REAL route wrapper
+      // (S-D): an added gate inside the disable route fails here. The route
+      // runs handleMfaDisable with the real clock, so the code is generated
+      // at the actual current time.
+      const { POST: disableRoute } = await import('../app/api/session/mfa/disable/route')
+      const disabled = await disableRoute(
         post('/api/session/mfa/disable', cookie, {
           currentPassword: PASSWORD,
-          code: totpCode(fromBase32(secret), NOW + 4 * STEP_MS),
-        }),
-        handlerDeps(4),
+          code: totpCode(fromBase32(secret), Date.now()),
+        }) as never,
       )
       assert.equal(disabled.status, 200, 'disable must work while denied')
       assert.equal((await getMfaStatus(userId)).enabled, false)
@@ -440,5 +444,118 @@ describe('existing MFA stays fully manageable while mfa is denied (S2)', () => {
       await client.query(`UPDATE tier_entitlements SET min_plan = 'self-hosted' WHERE feature = 'mfa'`)
       invalidateTierEntitlementsCache()
     }
+  })
+})
+
+describe('password sign-in is still held for the MFA challenge while mfa is denied (N2)', () => {
+  // Real better-auth user with MFA enabled, driven through the REAL sign-in
+  // path (catch-all auth route composition + holdPasswordSignInIfMfa).
+  // While the map denies `mfa` for the plan, password sign-in must still
+  // return {mfaRequired:true} + the challenge cookie and NO session.
+  // Mutant G8 (skip the MFA hold when the entitlement denies) fails here:
+  // the raw sign-in response would carry the session, not mfaRequired.
+  const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
+  const PASSWORD = 'correct-horse-battery'
+  const NOW = 1_700_000_600_000
+  const STEP_MS = 30_000
+  const runId = newId('t').slice(-8)
+
+  function post(endpoint: string, cookie: string | undefined, body: unknown): Request {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      origin: APP_URL,
+    }
+    if (cookie) headers.cookie = cookie
+    return new Request(`${APP_URL}${endpoint}`, { method: 'POST', headers, body: JSON.stringify(body) }) as never
+  }
+
+  async function deniedSignInHolds(address: string, mode: 'demote' | 'delete'): Promise<void> {
+    assert.ok(auth, 'live test needs better-auth')
+    const authInstance = auth
+    await authInstance.api.signUpEmail({ body: { email: address, name: 'N2', password: PASSWORD } })
+    const { headers } = await authInstance.api.signInEmail({
+      body: { email: address, password: PASSWORD },
+      returnHeaders: true,
+    })
+    const cookie = headers
+      .getSetCookie()
+      .map((c) => c.split(';')[0])
+      .join('; ')
+
+    // Enrol and confirm for real (MFA becomes active).
+    const deps: MfaRouteDeps = {
+      log: () => {},
+      now: () => NOW,
+      allowReauth: () => true,
+      allowVerify: () => true,
+    }
+    const enrolled = await handleMfaEnrol(
+      post('/api/session/mfa/enrol', cookie, { currentPassword: PASSWORD }),
+      deps,
+    )
+    assert.equal(enrolled.status, 200, await enrolled.clone().text())
+    const { secret } = (await enrolled.json()) as { secret: string }
+    const confirmed = await handleMfaConfirm(
+      post('/api/session/mfa/confirm', cookie, { code: totpCode(fromBase32(secret), NOW) }),
+      deps,
+    )
+    assert.equal(confirmed.status, 200, await confirmed.clone().text())
+
+    // The map now DENIES mfa for the plan, either by demotion or deletion.
+    if (mode === 'demote') {
+      await client.query(`UPDATE tier_entitlements SET min_plan = 'enterprise' WHERE feature = 'mfa'`)
+    } else {
+      await client.query(`DELETE FROM tier_entitlements WHERE feature = 'mfa'`)
+    }
+    invalidateTierEntitlementsCache()
+    try {
+      assert.equal(await can({ plan: 'solo' }, 'mfa'), false, 'precondition: the map denies mfa')
+      const request = new Request(`${APP_URL}/api/auth/sign-in/email`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: APP_URL },
+        body: JSON.stringify({ email: address, password: PASSWORD }),
+      })
+      // Exactly what apps/app/app/api/auth/[...all]/route.ts POST does:
+      // forward through handleAuthRequest, then hold if MFA is enabled.
+      const admitted = await handleAuthRequest(request, async () =>
+        (await authInstance.api.signInEmail({
+          body: { email: address, password: PASSWORD },
+          asResponse: true,
+        } as never)) as unknown as Response,
+      )
+      const { holdPasswordSignInIfMfa } = await import('./mfa-sign-in')
+      const held = await holdPasswordSignInIfMfa(request, admitted)
+      assert.equal(held.status, 200)
+      assert.deepEqual(await held.json(), { mfaRequired: true })
+      const cookies = held.headers.getSetCookie()
+      assert.ok(
+        cookies.some((entry) => entry.startsWith(`${MFA_CHALLENGE_COOKIE}=`)),
+        'challenge cookie must be issued while the entitlement denies',
+      )
+      assert.ok(
+        !cookies.some((entry) => /^better-auth\.session_token=[^;]/.test(entry)),
+        'the held response must not carry a session cookie',
+      )
+      // And the challenge cookie alone must not authenticate.
+      const heldCookie = cookies.map((entry) => entry.split(';')[0]).join('; ')
+      const session = await authInstance.api.getSession({
+        headers: new Headers({ cookie: heldCookie, origin: APP_URL }),
+      })
+      assert.equal(session, null, 'no session may exist while the sign-in is held')
+    } finally {
+      await client.query(
+        `INSERT INTO tier_entitlements (feature, min_plan) VALUES ('mfa', 'self-hosted')
+         ON CONFLICT (feature) DO UPDATE SET min_plan = EXCLUDED.min_plan`,
+      )
+      invalidateTierEntitlementsCache()
+    }
+  }
+
+  it('holds the challenge with the mfa row demoted above the plan', async () => {
+    await deniedSignInHolds(`hg3-n2-demote-${runId}@example.com`, 'demote')
+  })
+
+  it('holds the challenge with the mfa row deleted', async () => {
+    await deniedSignInHolds(`hg3-n2-delete-${runId}@example.com`, 'delete')
   })
 })

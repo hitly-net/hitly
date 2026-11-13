@@ -235,22 +235,21 @@ describe('management of existing MFA is never hidden (S2)', () => {
     assert.equal(shouldShowAuthenticatorSection({ enabled: false }, false), false)
   })
 
-  it('the disable, recovery-code, verify and passkey-remove routes never import the gate', async () => {
+  // S-D: the former 'disable never gated' string check is replaced by the
+  // behavioural live suite (tier-entitlements.live.test.ts): with mfa denied
+  // for the plan, an enrolled user still disables MFA, regenerates recovery
+  // codes and removes a passkey through the real routes on a real database.
+  // Gating the disable route fails that suite.
+
+  it('the MFA sign-in module never imports the tier map (N2 guard)', async () => {
+    // The sign-in challenge must keep firing for enrolled users even when
+    // the map denies `mfa`; importing the gate here is the G8 regression.
     const fs = await import('node:fs')
     const path = await import('node:path')
-    const here = import.meta.dirname
-    const ungated = [
-      '../app/api/session/mfa/disable/route.ts',
-      '../app/api/session/mfa/recovery-codes/route.ts',
-      '../app/api/session/mfa/verify/route.ts',
-      '../app/api/session/passkey/[id]/delete/route.ts',
-      '../app/api/session/passkey/[id]/route.ts',
-    ]
-    for (const rel of ungated) {
-      const source = fs.readFileSync(path.resolve(here, rel), 'utf8')
-      assert.ok(!source.includes('tier-entitlements'), `${rel} must not consult the tier map`)
-      assert.ok(!source.includes('canForCurrentWorkspace'), `${rel} must not gate on entitlements`)
-    }
+    const source = fs.readFileSync(path.resolve(import.meta.dirname, 'mfa-sign-in.ts'), 'utf8')
+    assert.ok(!source.includes('tier-entitlements'), 'mfa-sign-in.ts must never import the tier map')
+    assert.ok(!source.includes('canForCurrentWorkspace'), 'mfa-sign-in.ts must never gate on entitlements')
+    assert.ok(!source.includes('can('), 'mfa-sign-in.ts must never consult can()')
   })
 })
 
@@ -307,5 +306,24 @@ describe('GET /api/v1/workspace/entitlements', () => {
     } finally {
       restore()
     }
+  })
+})
+
+describe('GET /api/v1/workspace/entitlements outage answers (S-A)', () => {
+  // Mutant coverage: removing the try/catch around the session lookup makes
+  // this reject (500 in production) instead of answering 503.
+  it('session/database outage is 503 {"error":"unavailable"} with Retry-After, never 500', async () => {
+    const { GET } = await import('../app/api/v1/workspace/entitlements/route')
+    const res = await GET(undefined, {
+      resolveSession: async () => {
+        throw new Error('database unavailable')
+      },
+      entitlements: async () => {
+        throw new Error('the map must not be evaluated after an outage')
+      },
+    })
+    assert.equal(res.status, 503)
+    assert.deepEqual(await res.json(), { error: 'unavailable' })
+    assert.ok(res.headers.get('retry-after'), '503 must carry Retry-After')
   })
 })

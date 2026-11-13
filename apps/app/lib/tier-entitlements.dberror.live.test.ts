@@ -87,7 +87,25 @@ before(async () => {
 
 after(async () => {
   await client?.end().catch(() => undefined)
-  // Leave MISSING_DB for post-mortem inspection; the next run drops it first.
+  // S-F: always drop the throwaway database, also when the test failed
+  // above (node:test runs after() regardless of test outcome). Close the
+  // helper's shared pool first so the DROP does not force-kill live idle
+  // connections (which would surface as an uncaughtException).
+  try {
+    const { pool } = await import('./db')
+    await pool?.end()
+  } catch {
+    // pool already gone
+  }
+  const admin = new pg.Client({ connectionString: BASE_URL })
+  try {
+    await admin.connect()
+    await admin.query(`DROP DATABASE IF EXISTS ${MISSING_DB} WITH (FORCE)`)
+  } catch {
+    // best-effort cleanup; the next run also drops-if-exists first
+  } finally {
+    await admin.end().catch(() => undefined)
+  }
 })
 
 test('missing tier_entitlements table: every read path denies, logs once, never 500s', async () => {
