@@ -5,6 +5,7 @@ import { cancelApproval, cancelApprovalAsRequester } from '@/lib/approvals'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { withApiTenant } from '@/lib/api-session'
 import { requireDb } from '@/lib/tenant'
+import { applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
 
 async function readReason(request: Request): Promise<string | undefined> {
   const text = await request.text().catch(() => '')
@@ -25,6 +26,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   // (reviewer Bearer session tokens on mobile).
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
   if (apiKey) {
+    const limited = await applyRestLimit('write', apiKeyRestSubject(apiKey))
+    if (limited) return limited
     const result = await cancelApprovalAsRequester({ apiKey, approvalId: id, reason: await readReason(request) })
     if (result.ok) return NextResponse.json({ id, status: result.status, decision: 'cancel', by: 'requester' })
     if (result.status !== 401) {

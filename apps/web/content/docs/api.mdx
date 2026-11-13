@@ -24,6 +24,10 @@ Replay is **per API key** (consistent with key-scoped cancel and the pending lis
 
 The retention period is **10 days** by default and is published in every create response as `createOnce.retentionSeconds`. Self-hosted operators can change it with `HITLY_CREATE_ONCE_RETENTION_DAYS` (whole days, 1–3650). After the period, a repeat POST of the same `Idempotency-Key` may create a new request. Keep your own record of a spent `requestId` at least that long.
 
+## Rate limiting
+
+Every `/api/v1` route counts into the shared Postgres limiter, so budgets hold across replicas; over-budget answers are `429` with a `Retry-After` header in seconds. Limits are per API key (hashed — the key itself is never stored) on the key-authed surface: 120/min for the create POST, 600/min for reads (`GET /api/v1/approvals`, `by-run-id`), 120/min for requester cancel. Session-authed routes count 600/min per signed-in user; unauthenticated `health` and `signup-status` count 600/min per client address; invite lookup/accept count 30/min per invite token. Operators tune every family through `HITLY_RATE_LIMIT_*` env vars — see [Self-host → Rate limiting](/self-host#rate-limiting). Clients should honor `Retry-After` before retrying.
+
 ## Create approval
 
 `POST /api/v1/approvals`

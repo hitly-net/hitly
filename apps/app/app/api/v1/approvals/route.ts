@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { listRequesterPending } from '@/lib/approvals'
 import { handleIngestPost } from '@/lib/ingest-route'
+import { applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
 import { parseCursorParam, parseLimitParam } from '@/lib/list-cursor'
 
 export async function POST(request: Request) {
@@ -17,6 +18,8 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
   if (!apiKey) return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
+  const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey))
+  if (limited) return limited
   const url = new URL(request.url)
   const status = url.searchParams.get('status') ?? 'open'
   // MCP list_pending sends status=pending. Treat it as open; do not widen to other values.

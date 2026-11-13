@@ -185,6 +185,9 @@ function changeRequest(cookie: string | undefined, body: unknown, extraHeaders: 
 function routeMocks(overrides: Partial<EmailChangeRouteDeps> = {}): EmailChangeRouteDeps {
   return {
     log: () => {},
+    // Fresh per-process budget per call: the shipped default now counts in
+    // the shared database, which would couple independent tests and runs.
+    allow: createEmailChangeAttemptLimiter(),
     // Same defaults the route would build, but tracked so tests can drain.
     sendVerification: createSendEmailChangeVerification(APP_URL, sendMail, { track: trackMail }),
     sendChangedNotice: createSendEmailChangedNotice(sendMail, { track: trackMail }),

@@ -2,6 +2,7 @@ import { cookies, headers } from 'next/headers'
 import { NextResponse } from 'next/server'
 import type { WorkspaceRole } from '@hitly/core'
 import { auth } from './auth'
+import { applyRestLimit } from './rest-limit'
 import { WORKSPACE_COOKIE } from './context'
 import { listUserWorkspaces } from './workspace'
 import { withTenant } from './tenant'
@@ -25,6 +26,10 @@ export async function requireApiSession(): Promise<ApiSessionOk | ApiErr> {
   if (!session?.user) {
     return { ok: false, error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   }
+  // Shared-database budget for the session-authed /api/v1 surface, keyed on
+  // the (opaque, non-secret) session user id.
+  const limited = await applyRestLimit('read', session.user.id)
+  if (limited) return { ok: false, error: limited }
   return {
     ok: true,
     session: { user: { id: session.user.id, name: session.user.name, email: session.user.email } },

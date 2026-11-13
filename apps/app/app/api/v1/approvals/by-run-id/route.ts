@@ -4,6 +4,7 @@ import { approvals, decisionRecords } from '@hitly/db/schema'
 import { requireDb, withTenant } from '@/lib/tenant'
 import { decodeTenantJson } from '@/lib/tenant-crypto'
 import { authenticateProjectKey } from '@/lib/approvals'
+import { applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
 import { isDecision, type Decision } from '@hitly/core'
 
 /**
@@ -23,6 +24,8 @@ export async function GET(request: Request) {
     if (!apiKey) {
       return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
     }
+    const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey))
+    if (limited) return limited
 
     const url = new URL(request.url)
     const runId = url.searchParams.get('runId')

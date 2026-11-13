@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { appOwnOrigin } from './cors'
+import { applyRestLimit, hashRestSubject } from './rest-limit'
 import { normaliseEmail } from './invite-signup'
 import {
   acceptInviteAsUser,
@@ -66,6 +67,8 @@ export async function handleInviteLookup(request: Request, deps: InviteRouteDeps
   const blocked = rejectCrossSite(request)
   if (blocked) return blocked
   const { token } = await readToken(request)
+  const limited = await applyRestLimit('invite', hashRestSubject('invite:' + String(token)))
+  if (limited) return limited
   const lookup = await lookupInvite(token)
   if (!lookup.ok) return refusal(lookup.reason)
   const session = await deps.getSessionUser(request)
@@ -99,6 +102,8 @@ export async function handleInviteAccept(request: Request, deps: InviteRouteDeps
   const blocked = rejectCrossSite(request)
   if (blocked) return blocked
   const { token, body } = await readToken(request)
+  const limited = await applyRestLimit('invite', hashRestSubject('invite:' + String(token)))
+  if (limited) return limited
   if (!isWellFormedInviteToken(token)) return refusal('invalid')
 
   const session = await deps.getSessionUser(request)
