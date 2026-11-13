@@ -39,6 +39,7 @@ Inbox at http://localhost:3001. `yarn db:up` starts Postgres 16 via Docker.
 
 - [Documentation](https://hitly.net/docs)
 - [Self-host guide](https://hitly.net/docs/self-host) — local run, Postgres setup, editions
+- [Export your data](./docs/data-export.md) — GDPR data export from Settings → Profile
 - [Integrations](https://hitly.net/integrations) — [Mastra](https://hitly.net/integrations/mastra), [LangGraph](https://hitly.net/integrations/langgraph), [Hermes](https://hitly.net/integrations/hermes), [HTTP / n8n](https://hitly.net/integrations/http), [Temporal](https://hitly.net/integrations/temporal)
 - [AGENT.md](./AGENT.md) — wire an existing agent
 - Examples: `examples/mastra`, `examples/langgraph`, `examples/hermes`, `examples/temporal`, `examples/n8n`, `examples/notion`
