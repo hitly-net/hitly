@@ -1,4 +1,5 @@
 import { AppShell } from '@/components/app-shell'
+import { DataExportButton } from '@/components/data-export-button'
 import { ThemePicker } from '@/components/theme-picker'
 import { UnverifiedEmailNotice } from '@/components/unverified-email-notice'
 import { getAppContext } from '@/lib/context'
@@ -27,6 +28,14 @@ export default async function ProfilePage() {
       <p className="mt-1 text-sm text-zinc-500">Saved in this browser. System follows your OS appearance.</p>
       <div className="mt-3">
         <ThemePicker />
+      </div>
+      <h2 className="mt-10 text-lg font-semibold">Your data</h2>
+      <p className="mt-1 max-w-md text-sm text-zinc-500">
+        Download a copy of your personal data as a JSON archive (one export per hour). Account deletion will be
+        offered from this page.
+      </p>
+      <div className="mt-3">
+        <DataExportButton />
       </div>
     </AppShell>
   )
