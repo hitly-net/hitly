@@ -20,7 +20,7 @@ Yarn 1 + Turbo. Prefer `yarn` over npm. Read [packages.md](packages.md) before a
 Gate by **package presence**, not `HITLY_EDITION` env vars.
 
 - Public `packages/cloud` is a stub: OSS entitlements, no billing nav, Stripe routes 404.
-- `@hitly/core` owns `HitlyEdition`, `Entitlements`, `hasFeature`, `requireFeature`.
+- `@hitly/core` owns `HitlyEdition`, `Entitlements` (numeric per-plan caps only), and the tier-entitlements seed/pure resolver (`TIER_ENTITLEMENT_SEED`, `canFromMap`). Boolean feature checks go through `can()` in `apps/app/lib/tier-entitlements.ts` against the `tier_entitlements` table — never compare `plan` to a plan name.
 - App shell nav comes from `edition.navItems`. Billing pages and `/api/stripe/*` re-export `@hitly/cloud`.
 - Adding a Cloud feature: extend the stub export map here, implement it in `hitly-cloud`.
 

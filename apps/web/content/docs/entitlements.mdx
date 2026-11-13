@@ -1,0 +1,134 @@
+---
+title: Tier entitlements
+description: The DB-backed map that decides which plan unlocks which feature.
+---
+
+# Tier entitlements
+
+Boolean feature gating (MFA, SSO, project lifecycle) is **data, not code**.
+The map lives in the `tier_entitlements` Postgres table, and every check in
+the product goes through one server-side helper:
+
+```ts
+import { can } from '@/lib/tier-entitlements'
+
+if (await can(workspace, 'sso_google')) {
+  // Google/Gmail SSO is on for this workspace's plan
+}
+```
+
+Modules must not compare `workspace.plan` against a plan name — a guard test
+(`apps/app/lib/tier-entitlements.guard.test.ts`) fails CI if any such check
+comes back.
+
+## Seed rules
+
+Migration `0015` seeds the table (mirroring `TIER_ENTITLEMENT_SEED` in
+`@hitly/core`). A minimum plan of `self-hosted` means "every plan":
+
+| Feature             | Unlocked from        | Meaning                                  |
+| ------------------- | -------------------- | ---------------------------------------- |
+| `mfa`               | all plans            | Authenticator-app MFA                    |
+| `sso_google`        | Team and above       | Google / Gmail sign-in                   |
+| `sso_slack`         | Team and above       | Slack sign-in                            |
+| `sso_microsoft`     | Enterprise           | Microsoft / Entra sign-in                |
+| `sso_github`        | Enterprise           | GitHub sign-in                           |
+| `sso_saml`          | Enterprise           | SAML federation                          |
+| `sso`               | Enterprise           | Any other SSO provider                   |
+| `project_lifecycle` | all plans            | Project pause / archive                  |
+
+SSO provider ids map onto these features via `ssoFeatureForProvider()`:
+`google`/`gmail` → `sso_google`, `slack` → `sso_slack`,
+`microsoft`/`azure`/`entra` → `sso_microsoft`, `github` → `sso_github`,
+`saml` → `sso_saml`, anything else → `sso` (so a newly wired provider is
+gated by default, never accidentally free).
+
+Plans rank least → most privileged: `self-hosted < solo < pro < team <
+enterprise`. A feature unlocks when the workspace plan reaches the row's
+`min_plan`.
+
+## Moving a feature between tiers
+
+No code change, no deploy — one statement against the database:
+
+```sql
+-- let Solo use Google sign-in too
+UPDATE tier_entitlements SET min_plan = 'solo' WHERE feature = 'sso_google';
+
+-- charge for MFA on cloud plans
+UPDATE tier_entitlements SET min_plan = 'team' WHERE feature = 'mfa';
+```
+
+Reads refresh within the helper's cache TTL
+(`HITLY_TIER_ENTITLEMENTS_TTL_MS`): unset, empty/blank, or unparseable
+values use the default 10000 ms — never cache-off — `0` disables caching,
+and any valid value clamps to a maximum of 300000 ms, so an `UPDATE` takes
+effect without a restart. The `min_plan` column has a
+CHECK constraint against the known plans, so typos are rejected at write
+time.
+
+`DELETE FROM tier_entitlements WHERE feature = '…'` turns a feature off for
+**every** plan (see fail-closed below). Re-add it with the same `feature`
+name and a valid `min_plan` to restore.
+
+To add a **new gated feature**, a code change is required — once: add the
+name to `ENTITLEMENT_FEATURES` in `packages/core/src/tier-entitlements.ts`,
+seed it in migration-0015 style, and call `can()` at the enforcement site.
+Existing features only ever move by row update.
+
+## Fail-closed
+
+Every deny path returns `false` and writes one value-free log line:
+
+- unknown feature name → `unknown feature "…"; denied`
+- missing row → `no entitlement row for "…"; denied`
+- unknown workspace plan or unknown `min_plan` → denied
+- database unreachable or the table missing → `database unavailable; denied "…"`
+  (the check never throws: guarded routes answer 403/404/200-with-all-denied,
+  never 500)
+- current-workspace lookup failure (e.g. session store down) → `workspace
+  lookup failed; denied "…"`
+
+There is no fail-open default anywhere on this path.
+
+## Gates cover new use only
+
+An entitlement decides **new** use. Whatever a user already has stays fully
+manageable when the feature is denied, so the check never strands account
+security or data:
+
+- With `mfa` denied, an enrolled user still sees the Authenticator-app
+  section on the Security page and can still **disable MFA** and
+  **regenerate recovery codes**; the sign-in **MFA challenge keeps firing**
+  for their logins. Only the enrolment affordance and
+  `POST /api/session/mfa/enrol` are gated.
+- Passkeys are never gated: listing, renaming and **removing** a passkey
+  always work.
+- With `project_lifecycle` denied, pause/archive are off, but existing
+  projects stay fully **viewable and deletable** (the direct-delete path).
+
+The same principle applies to any future gated feature: gate the
+enrolment-style action, never management or removal of existing state.
+
+Order rule: **authentication is checked before the entitlement**. A
+signed-out request to a gated route (e.g. MFA enrolment) is `401
+unauthorized` — it never sees the `403 feature_unavailable` plan answer and
+is never logged as a feature denial.
+
+## Where the map is read
+
+- `apps/app/lib/tier-entitlements.ts` — the helper itself (`can`,
+  `getEntitlementsForWorkspace`, `canForCurrentWorkspace`).
+- `GET /api/v1/workspace/entitlements` — the evaluated map for the current
+  workspace, for clients deciding which MFA/SSO affordances to offer.
+  Enforcement never trusts this response; guarded actions re-check.
+- MFA enrolment (`POST /api/session/mfa/enrol`, after authentication) and
+  the Security settings page gate on `mfa` — enrolment only; see
+  "Gates cover new use only". Disable, recovery-code regeneration and the
+  sign-in challenge are never gated.
+- Project pause/archive and the project config page gate on
+  `project_lifecycle`.
+- Edition nav items with a `feature` are shown per plan.
+
+Numeric quotas (approval volume, member caps, retention days) are a separate
+concern and stay on the edition object.
