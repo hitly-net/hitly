@@ -3,8 +3,10 @@ import { edition } from '@hitly/cloud'
 import { hasFeature } from '@hitly/core'
 import { getAppContext } from '@/lib/context'
 import { listVisibleProjects } from '@/lib/rbac'
+import { requireVerifiedEmailGateEnabled, shouldShowUnverifiedEmailBanner } from '@/lib/verified-gate'
 import { AppSidebar } from './app-sidebar'
 import { AppToolbar } from './app-toolbar'
+import { UnverifiedEmailBanner } from './unverified-email-banner'
 
 export async function AppShell({
   children,
@@ -21,6 +23,11 @@ export async function AppShell({
     userId: user.id,
     workspaceRole: role,
   })
+  // GA gate banner: only when the flag is on and this address is unverified.
+  const showVerifyBanner = shouldShowUnverifiedEmailBanner({
+    flagEnabled: requireVerifiedEmailGateEnabled(),
+    emailVerified: user.emailVerified,
+  })
 
   return (
     <div className="flex h-dvh overflow-hidden">
@@ -36,6 +43,7 @@ export async function AppShell({
             userEmail={user.email}
           />
         </Suspense>
+        {showVerifyBanner ? <UnverifiedEmailBanner /> : null}
         <main className="min-h-0 flex-1 overflow-y-auto p-6">{children}</main>
       </div>
     </div>
