@@ -66,7 +66,34 @@ Session-auth routes outside v1: `/api/auth/[...all]` (Better Auth) and
 Same as the web app host, since it is the same process: `DATABASE_URL`,
 `BETTER_AUTH_URL`, `HITLY_CORS_ALLOWED_ORIGINS`, `HITLY_TRUSTED_PROXIES`,
 `HITLY_CRON_SECRET` (authorizes `POST /housekeeping`), `HITLY_SIGNUP_ENABLED`
-(drives `/signup-status`).
+(drives `/signup-status`), `HITLY_REQUIRE_VERIFIED_EMAIL` (GA gate, below).
+
+## Verified-email gate
+
+While `HITLY_REQUIRE_VERIFIED_EMAIL` is on, creating projects or project API
+keys with an unverified address is refused server-side inside the shared
+create helpers (`apps/app/lib/project-create.ts`) that back every create
+path - web server actions today, and any REST `/api/v1` or MCP create path
+that uses them (the API does not yet expose project/key creation directly;
+when it does it must go through those helpers, enforced by a source-scan
+test). Key regeneration is gated identically through
+`rotateProjectApiKeyRecord` in the same file (the API does not expose a
+regenerate route today either). Project resume-secret regeneration is
+gated identically through `rotateProjectResumeSecret` in
+`apps/app/lib/resume-secret.ts` (again no REST or MCP route exposes it
+today; a future one must use that chokepoint). Workspace invite sends/
+resends and adding an EXISTING account to a workspace are gated in the
+single invite paths (`apps/app/lib/invites.ts`): nothing is written and
+no email goes out. The refusal is HTTP 403 with a stable machine-readable
+code:
+
+```json
+{ "error": "email_not_verified", "message": "Verify your email address to create projects and API keys..." }
+```
+
+Work-item notification dispatch (decision email, push) additionally skips
+unverified recipients while the flag is on; verification and password-reset
+mail is never suppressed. See [web-app.md](web-app.md).
 
 ## Unconfirmed
 

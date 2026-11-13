@@ -8,6 +8,7 @@ import {
 } from './db-pool'
 import { MFA_ENCRYPTION_KEY_ENV, mfaEncryptionKeyProblem } from './mfa-crypto'
 import { TRUSTED_PROXIES_ENV, parseTrustedProxies, trustedProxiesProblem } from './trusted-proxies'
+import { booleanFlagNotices } from './boolean-flag'
 
 /**
  * Server start checks, run from instrumentation register() before anything
@@ -137,4 +138,7 @@ export function logStartupNotices({
   const notices = startupNotices(env)
   notices.info.forEach(info)
   notices.warn.forEach(warn)
+  // One warning per boolean flag set to an unrecognised value; the line
+  // names the variable, never its value.
+  booleanFlagNotices(env).forEach(warn)
 }

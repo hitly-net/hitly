@@ -1,7 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { createProjectApiKey, deleteProjectApiKey, regenerateProjectApiKey } from '@/actions/projects'
+import {
+  createProjectApiKey,
+  deleteProjectApiKey,
+  regenerateProjectApiKey,
+  type ApiKeyActionResult,
+} from '@/actions/projects'
+import { VerifyEmailRequiredNotice } from '@/components/verify-email-required'
+import { isGateBlockedResult } from '@/lib/verified-gate'
 
 export type ProjectApiKeyRow = {
   id: string
@@ -14,18 +21,35 @@ export function ProjectApiKeys({
   projectId,
   keys,
   readOnly,
+  createKey = createProjectApiKey,
+  regenerate = regenerateProjectApiKey,
 }: {
   projectId: string
   keys: ProjectApiKeyRow[]
   readOnly?: boolean
+  createKey?: (projectId: string, formData: FormData) => Promise<ApiKeyActionResult>
+  regenerate?: (projectId: string, keyId: string) => Promise<ApiKeyActionResult>
 }) {
   const [raw, setRaw] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  // A gate-blocked create/regenerate renders the typed state; the action
+  // never throws for the gate, so there is no error page and no error id.
+  const [gateBlocked, setGateBlocked] = useState(false)
+
+  function applyResult(result: ApiKeyActionResult) {
+    if (isGateBlockedResult(result)) {
+      setGateBlocked(true)
+      setRaw(null)
+    } else {
+      setGateBlocked(false)
+      setRaw(result.apiKey)
+    }
+  }
 
   async function onCreate(formData: FormData) {
     setBusyId('create')
     try {
-      setRaw(await createProjectApiKey(projectId, formData))
+      applyResult(await createKey(projectId, formData))
     } finally {
       setBusyId(null)
     }
@@ -35,7 +59,7 @@ export function ProjectApiKeys({
     if (!window.confirm('Regenerate this key? The current secret will stop working immediately.')) return
     setBusyId(keyId)
     try {
-      setRaw(await regenerateProjectApiKey(projectId, keyId))
+      applyResult(await regenerate(projectId, keyId))
     } finally {
       setBusyId(null)
     }
@@ -100,6 +124,7 @@ export function ProjectApiKeys({
             Create key
           </button>
         </div>
+        {gateBlocked ? <VerifyEmailRequiredNotice /> : null}
         {raw ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 p-3 font-mono text-xs break-all dark:border-amber-900 dark:bg-amber-950">
             Copy now — this is shown once: {raw}

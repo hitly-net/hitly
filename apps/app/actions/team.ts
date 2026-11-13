@@ -13,19 +13,18 @@ import { newId } from '@/lib/ids'
 import { canManageWorkspace } from '@/lib/rbac'
 import { requireDb } from '@/lib/require-db'
 import { withTenant } from '@/lib/tenant'
-import { renderAddedToWorkspaceEmail } from '@hitly/mail'
-import { sendMail } from '@/lib/mail'
-import { createAndSendWorkspaceInvite, resendWorkspaceInvite, revokeWorkspaceInvite } from '@/lib/invites'
+import {
+  addExistingUserToWorkspace,
+  createAndSendWorkspaceInvite,
+  resendWorkspaceInvite,
+  revokeWorkspaceInvite,
+} from '@/lib/invites'
+import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
 import { findUserByEmail } from '@/lib/workspace'
 
 const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
-async function sendAddedToWorkspaceMail(args: { to: string; workspaceName: string }) {
-  const rendered = await renderAddedToWorkspaceEmail({ appUrl: APP_URL, workspaceName: args.workspaceName })
-  await sendMail({ to: args.to, ...rendered })
-}
-
-export async function inviteToWorkspace(formData: FormData) {
+export async function inviteToWorkspace(formData: FormData): Promise<GateBlockedResult | void> {
   const { user, workspace, role } = await getAppContext()
   if (!canManageWorkspace(role)) {
     throw new Error('Only workspace admins can invite people')
@@ -39,34 +38,54 @@ export async function inviteToWorkspace(formData: FormData) {
     throw new Error('Invalid role')
   }
 
-  const database = requireDb()
-  const existingUser = await findUserByEmail(email)
-  if (existingUser) {
-    const existing = await database
-      .select({ id: memberships.id })
-      .from(memberships)
-      .where(and(eq(memberships.workspaceId, workspace.id), eq(memberships.userId, existingUser.id)))
-      .limit(1)
-    if (existing.length > 0) throw new Error('That person is already a member')
-    await database.insert(memberships).values({
-      id: newId('mem').slice(0, 36),
-      workspaceId: workspace.id,
-      userId: existingUser.id,
-      role: invitedRole,
+  try {
+    // The DB work runs inside the tenant transaction: a gate error must
+    // THROW OUT of withTenant so anything written before it rolls back
+    // (a normal return would COMMIT). The typed result is produced only
+    // after the transaction has been discarded. requireDb() INSIDE the
+    // callback resolves to the transaction handle.
+    await withTenant(workspace.id, async () => {
+      const database = requireDb()
+      const existingUser = await findUserByEmail(email)
+      if (existingUser) {
+        const existing = await database
+          .select({ id: memberships.id })
+          .from(memberships)
+          .where(and(eq(memberships.workspaceId, workspace.id), eq(memberships.userId, existingUser.id)))
+          .limit(1)
+        if (existing.length > 0) throw new Error('That person is already a member')
+        // Single gated writer (lib/invites.ts): the unverified-email gate
+        // runs before the membership insert and the "added" mail.
+        await addExistingUserToWorkspace({
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+          userId: existingUser.id,
+          email,
+          role: invitedRole,
+          actorUserId: user.id,
+          appUrl: APP_URL,
+          database,
+        })
+      } else {
+        // Emails a one-time accept link (lib/invites.ts); inviting the same
+        // address again replaces the earlier link. The unverified-email gate
+        // is enforced in that single path before any write.
+        await createAndSendWorkspaceInvite({
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+          email,
+          role: invitedRole,
+          invitedByUserId: user.id,
+          actorUserId: user.id,
+          appUrl: APP_URL,
+          database,
+        })
+      }
     })
-    await sendAddedToWorkspaceMail({ to: email, workspaceName: workspace.name })
-  } else {
-    // Emails a one-time accept link (lib/invites.ts); inviting the same
-    // address again replaces the earlier link.
-    await createAndSendWorkspaceInvite({
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      email,
-      role: invitedRole,
-      invitedByUserId: user.id,
-      appUrl: APP_URL,
-      database,
-    })
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
   }
   revalidatePath('/settings/team')
 }
@@ -118,18 +137,30 @@ export async function cancelInvite(inviteId: string) {
 }
 
 /** Emails a fresh accept link for a pending invite; any earlier link stops working. */
-export async function resendInvite(inviteId: string) {
-  const { workspace, role } = await getAppContext()
+export async function resendInvite(inviteId: string): Promise<GateBlockedResult | void> {
+  const { workspace, role, user } = await getAppContext()
   if (!canManageWorkspace(role)) {
     throw new Error('Only workspace admins can resend invites')
   }
-  const result = await resendWorkspaceInvite({
-    workspaceId: workspace.id,
-    workspaceName: workspace.name,
-    inviteId,
-    appUrl: APP_URL,
-    database: requireDb(),
-  })
+  let result: { ok: true; expiresAt: Date } | { ok: false }
+  try {
+    // Tenant transaction: a gate error throws OUT so a write made before it
+    // (e.g. the rotated token of a mutant ordering) rolls back with it.
+    result = await withTenant(workspace.id, () =>
+      resendWorkspaceInvite({
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        inviteId,
+        actorUserId: user.id,
+        appUrl: APP_URL,
+        database: requireDb(),
+      }),
+    )
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
+  }
   if (!result.ok) throw new Error('Invite not found')
   revalidatePath('/settings/team')
 }

@@ -2,21 +2,27 @@
 
 import { useState } from 'react'
 import { regenerateProjectResumeSecret } from '@/actions/projects'
+import { VerifyEmailRequiredNotice } from '@/components/verify-email-required'
+import { isGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
 
 export function ProjectResumeSecret({
   projectId,
   secret,
   readOnly,
+  regenerate = regenerateProjectResumeSecret,
 }: {
   projectId: string
   secret: string
   readOnly?: boolean
+  /** Injectable for tests; defaults to the real gated server action. */
+  regenerate?: (projectId: string) => Promise<GateBlockedResult | string>
 }) {
   const [value, setValue] = useState(secret)
   const [shown, setShown] = useState(false)
   const [copied, setCopied] = useState<'secret' | 'env' | null>(null)
   const [busy, setBusy] = useState(false)
   const [justRotated, setJustRotated] = useState(false)
+  const [gateBlocked, setGateBlocked] = useState(false)
   const prefix = value.slice(0, 16)
 
   async function copy(kind: 'secret' | 'env', text: string) {
@@ -35,7 +41,12 @@ export function ProjectResumeSecret({
     }
     setBusy(true)
     try {
-      const next = await regenerateProjectResumeSecret(projectId)
+      const next = await regenerate(projectId)
+      if (isGateBlockedResult(next)) {
+        setGateBlocked(true)
+        return
+      }
+      setGateBlocked(false)
       setValue(next)
       setShown(true)
       setJustRotated(true)
@@ -90,6 +101,7 @@ export function ProjectResumeSecret({
           Copy now — the previous secret no longer works: {value}
         </p>
       ) : null}
+      {gateBlocked ? <VerifyEmailRequiredNotice /> : null}
     </div>
   )
 }
