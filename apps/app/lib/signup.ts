@@ -1,8 +1,10 @@
+import { isBooleanFlag } from './boolean-flag'
+
 export function isSignupEnabled(): boolean {
-  const value = process.env.HITLY_SIGNUP_ENABLED
-  if (!value || value === '1' || value === 'true') return true
-  if (value === '0' || value === 'false' || value === 'off') return false
-  return true
+  // Shared parser (lib/boolean-flag.ts): 1/true/yes/on => on, 0/false/off => off,
+  // unset or unrecognised => the default (on). An unrecognised value earns one
+  // value-free startup warning; behaviour otherwise matches the old reader.
+  return isBooleanFlag('HITLY_SIGNUP_ENABLED', true)
 }
 
 /**

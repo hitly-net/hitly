@@ -1,11 +1,42 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import { invites, memberships, users, workspaces } from '@hitly/db/schema'
-import { renderInviteEmail, sendMail } from '@hitly/mail'
+import { renderAddedToWorkspaceEmail, renderInviteEmail, sendMail } from '@hitly/mail'
 import { db } from './db'
 import { newId } from './ids'
 import { APIError } from 'better-auth/api'
 import { currentInviteSignup, normaliseEmail, runWithInviteSignup, type InviteSignupContext } from './invite-signup'
+import { assertEmailVerifiedForCreate } from './verified-gate'
+
+/**
+ * Add an EXISTING account to a workspace (the inviteToWorkspace existing-user
+ * path). Single server-side writer for this transition: the unverified-email
+ * gate runs BEFORE any write, so a blocked add creates no membership row and
+ * sends no "added to workspace" mail.
+ */
+export async function addExistingUserToWorkspace(args: {
+  workspaceId: string
+  workspaceName: string
+  userId: string
+  email: string
+  role: 'admin' | 'member'
+  /** Signed-in account performing the add; unverified accounts are refused when the flag is ON. */
+  actorUserId: string
+  appUrl: string
+  database?: Database | Tx
+  send?: typeof sendMail
+}): Promise<void> {
+  const database = args.database ?? requireDatabase()
+  await assertActorEmailVerified(args.actorUserId, database)
+  await database.insert(memberships).values({
+    id: newId('mem').slice(0, 36),
+    workspaceId: args.workspaceId,
+    userId: args.userId,
+    role: args.role,
+  })
+  const rendered = await renderAddedToWorkspaceEmail({ appUrl: args.appUrl, workspaceName: args.workspaceName })
+  await (args.send ?? sendMail)({ to: args.email, ...rendered })
+}
 
 /** How long an invite link stays valid. */
 export const INVITE_TTL_DAYS = 14
@@ -33,6 +64,22 @@ type Tx = Parameters<Parameters<Database['transaction']>[0]>[0]
 function requireDatabase(): Database {
   if (!db) throw new Error('DATABASE_URL is not set')
   return db
+}
+
+/**
+ * Unverified-email gate for invite sends and resends. The acting account's
+ * CURRENT stored state is read live, so verifying unblocks invites at once.
+ * Mail to the invited address itself is account-security-style mail for that
+ * person; only the acting member's state is checked here.
+ */
+async function assertActorEmailVerified(actorUserId: string, database: Database | Tx): Promise<void> {
+  const rows = await database
+    .select({ emailVerified: users.emailVerified })
+    .from(users)
+    .where(eq(users.id, actorUserId))
+    .limit(1)
+  if (!rows[0]) throw new Error('Account not found')
+  assertEmailVerifiedForCreate(rows[0].emailVerified)
 }
 
 /** 256 bits from the OS CSPRNG, base64url (43 characters). */
@@ -79,11 +126,14 @@ export async function createAndSendWorkspaceInvite(args: {
   email: string
   role: 'admin' | 'member'
   invitedByUserId: string | null
+  /** Signed-in account performing the send; unverified accounts are refused when the flag is ON. */
+  actorUserId: string
   appUrl: string
   database?: Database | Tx
   send?: typeof sendMail
 }) {
   const database = args.database ?? requireDatabase()
+  await assertActorEmailVerified(args.actorUserId, database)
   const email = normaliseEmail(args.email)
   const token = generateInviteToken()
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS)
@@ -114,11 +164,16 @@ export async function resendWorkspaceInvite(args: {
   workspaceId: string
   workspaceName: string
   inviteId: string
+  /** Signed-in account performing the resend; unverified accounts are refused when the flag is ON. */
+  actorUserId: string
   appUrl: string
   database?: Database | Tx
   send?: typeof sendMail
 }): Promise<{ ok: true; expiresAt: Date } | { ok: false }> {
   const database = args.database ?? requireDatabase()
+  // Gate before any write: a refused resend leaves the existing token and
+  // expiry untouched and sends nothing.
+  await assertActorEmailVerified(args.actorUserId, database)
   const token = generateInviteToken()
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS)
   const rows = await database

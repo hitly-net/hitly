@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { projects } from '@hitly/db/schema'
 import { generateResumeSecret } from './keys'
+import { assertCreatorVerified } from './project-create'
 import { mutationBlockedForProjectStatus } from './project-lifecycle'
 import { requireDb, requireTenantWorkspaceId } from './tenant'
 import { decodeTenantJson, encodeTenantJson } from './tenant-crypto'
@@ -22,7 +23,12 @@ export async function ensureProjectResumeSecret(project: typeof projects.$inferS
   return { project: { ...project, credentials: next }, resumeSecret }
 }
 
-export async function rotateProjectResumeSecret(projectId: string) {
+export async function rotateProjectResumeSecret(args: {
+  projectId: string
+  /** Signed-in account performing the rotation; unverified accounts are refused when the flag is ON. */
+  actorUserId: string
+}) {
+  const { projectId, actorUserId } = args
   const workspaceId = requireTenantWorkspaceId()
   const database = requireDb()
   const rows = await database
@@ -34,6 +40,10 @@ export async function rotateProjectResumeSecret(projectId: string) {
   if (!project) return { error: 'Project not found' as const }
   const archived = mutationBlockedForProjectStatus(project.status)
   if (archived) return { error: archived.error }
+  // Gated exactly like an API-key regenerate: refuse BEFORE the stored
+  // credentials are rewritten, so a blocked rotation leaves the current
+  // resume secret intact.
+  await assertCreatorVerified(actorUserId)
   const credentials = await decodeTenantJson(workspaceId, project.credentials)
   const resumeSecret = generateResumeSecret()
   const next = { ...credentials, resumeSecret }

@@ -14,10 +14,9 @@ import {
 } from '@hitly/db/schema'
 import { getAppContext, withAppTenant } from '@/lib/context'
 import { parseAnswerField } from '@/lib/answer-form-helpers'
-import { generateApiKey } from '@/lib/keys'
 import { guardProjectAdminChange } from '@/lib/member-guard'
 import { newId } from '@/lib/ids'
-import { insertNewProject } from '@/lib/project-create'
+import { insertNewProject, insertNewProjectApiKey, rotateProjectApiKeyRecord } from '@/lib/project-create'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
 import {
   deleteProject as deleteProjectRecord,
@@ -27,6 +26,9 @@ import {
 import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from '@/lib/rbac'
 import { clientFromHeaders } from '@/lib/request-client'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
+import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
+import { rotateProjectResumeSecret } from '@/lib/resume-secret'
+import { logProjectEvent } from '@/lib/events'
 import { headers } from 'next/headers'
 
 function revalidateWorkItem(approvalId: string, projectId: string) {
@@ -65,20 +67,38 @@ async function requireProjectAdmin(projectId: string) {
   return { ...ctx, access }
 }
 
-export async function createProject(formData: FormData) {
-  return withAppTenant(async ({ user, role }) => {
-    if (!canManageWorkspace(role)) {
-      throw new Error('Only workspace admins can create projects')
-    }
-    const projectId = await insertNewProject({
-      userId: user.id,
-      name: formData.get('name'),
-      description: formData.get('description'),
-      plugin: formData.get('plugin'),
+/**
+ * Result of a key create/regenerate. A gate-blocked action returns the typed
+ * state instead of throwing, so the web UI renders the verify-email state
+ * rather than an error page or a 500.
+ */
+export type ApiKeyActionResult = { apiKey: string } | GateBlockedResult
+
+export async function createProject(formData: FormData): Promise<GateBlockedResult | void> {
+  // The gate error must THROW OUT of withAppTenant: a normal return would
+  // COMMIT the tenant transaction, so anything written before a
+  // write-then-gate ordering (a mutant or a future refactor) would persist.
+  // Throwing out rolls the transaction back; the typed result is produced
+  // only after the transaction has been discarded.
+  try {
+    return await withAppTenant(async ({ user, role }) => {
+      if (!canManageWorkspace(role)) {
+        throw new Error('Only workspace admins can create projects')
+      }
+      const projectId = await insertNewProject({
+        userId: user.id,
+        name: formData.get('name'),
+        description: formData.get('description'),
+        plugin: formData.get('plugin'),
+      })
+      revalidatePath('/projects')
+      redirect(`/projects/${projectId}/config`)
     })
-    revalidatePath('/projects')
-    redirect(`/projects/${projectId}/config`)
-  })
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
+  }
 }
 
 async function formFlag(formData: FormData, name: string): Promise<boolean | undefined> {
@@ -131,24 +151,25 @@ export async function updateProjectConfig(
   })
 }
 
-export async function createProjectApiKey(projectId: string, formData: FormData) {
-  return withAppTenant(async ({ workspace }) => {
-    await requireProjectAdmin(projectId)
-    const name = String(formData.get('name') ?? 'Ingest key').trim() || 'Ingest key'
-    const generated = generateApiKey()
-    const database = requireDb()
-    await database.insert(projectApiKeys).values({
-      id: newId('key').slice(0, 36),
-      workspaceId: workspace.id,
-      projectId,
-      name,
-      hashedKey: generated.hashed,
-      prefix: generated.prefix,
+export async function createProjectApiKey(projectId: string, formData: FormData): Promise<ApiKeyActionResult> {
+  // Gate errors must throw OUT of withAppTenant so the tenant transaction
+  // ROLLS BACK (a normal return commits); typed conversion happens outside.
+  try {
+    return await withAppTenant(async ({ user }) => {
+      await requireProjectAdmin(projectId)
+      const name = String(formData.get('name') ?? 'Ingest key').trim() || 'Ingest key'
+      // Single server-side create path (shared with REST/MCP callers), so the
+      // unverified-email gate is enforced there, not per-callsite.
+      const raw = await insertNewProjectApiKey({ projectId, userId: user.id, name })
+      revalidatePath(`/projects/${projectId}`)
+      revalidatePath(`/projects/${projectId}/config`)
+      return { apiKey: raw }
     })
-    revalidatePath(`/projects/${projectId}`)
-    revalidatePath(`/projects/${projectId}/config`)
-    return generated.raw
-  })
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
+  }
 }
 
 async function requireProjectApiKey(projectId: string, keyId: string) {
@@ -172,41 +193,48 @@ export async function deleteProjectApiKey(projectId: string, keyId: string) {
   })
 }
 
-export async function regenerateProjectApiKey(projectId: string, keyId: string) {
-  return withAppTenant(async () => {
-    await requireProjectAdmin(projectId)
-    const database = await requireProjectApiKey(projectId, keyId)
-    const generated = generateApiKey()
-    await database
-      .update(projectApiKeys)
-      .set({
-        hashedKey: generated.hashed,
-        prefix: generated.prefix,
-        lastUsedAt: null,
-      })
-      .where(and(eq(projectApiKeys.id, keyId), eq(projectApiKeys.workspaceId, requireTenantWorkspaceId())))
-    revalidatePath(`/projects/${projectId}`)
-    revalidatePath(`/projects/${projectId}/config`)
-    return generated.raw
-  })
+export async function regenerateProjectApiKey(projectId: string, keyId: string): Promise<ApiKeyActionResult> {
+  // Gate errors must throw OUT of withAppTenant so the tenant transaction
+  // ROLLS BACK: a refused regenerate can never leave a rotated stored key.
+  try {
+    return await withAppTenant(async ({ user }) => {
+      await requireProjectAdmin(projectId)
+      // Single server-side regenerate path, gated exactly like a create.
+      const raw = await rotateProjectApiKeyRecord({ projectId, keyId, userId: user.id })
+      revalidatePath(`/projects/${projectId}`)
+      revalidatePath(`/projects/${projectId}/config`)
+      return { apiKey: raw }
+    })
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
+  }
 }
 
-export async function regenerateProjectResumeSecret(projectId: string) {
-  return withAppTenant(async () => {
-    await requireProjectAdmin(projectId)
-    const { rotateProjectResumeSecret } = await import('@/lib/resume-secret')
-    const result = await rotateProjectResumeSecret(projectId)
-    if ('error' in result) throw new Error(result.error)
-    const { logProjectEvent } = await import('@/lib/events')
-    await logProjectEvent({
-      projectId,
-      type: 'config',
-      message: 'Rotated resume secret',
+export async function regenerateProjectResumeSecret(projectId: string): Promise<GateBlockedResult | string> {
+  // Same rollback contract as the other gated actions: the gate error throws
+  // OUT of withAppTenant (transaction discarded), and the typed result is
+  // produced only outside it.
+  try {
+    return await withAppTenant(async ({ user }) => {
+      await requireProjectAdmin(projectId)
+      const result = await rotateProjectResumeSecret({ projectId, actorUserId: user.id })
+      if ('error' in result) throw new Error(result.error)
+      await logProjectEvent({
+        projectId,
+        type: 'config',
+        message: 'Rotated resume secret',
+      })
+      revalidatePath(`/projects/${projectId}`)
+      revalidatePath(`/projects/${projectId}/config`)
+      return result.resumeSecret
     })
-    revalidatePath(`/projects/${projectId}`)
-    revalidatePath(`/projects/${projectId}/config`)
-    return result.resumeSecret
-  })
+  } catch (error) {
+    const blocked = toGateBlockedResult(error)
+    if (blocked) return blocked
+    throw error
+  }
 }
 
 export async function addProjectMember(projectId: string, formData: FormData) {

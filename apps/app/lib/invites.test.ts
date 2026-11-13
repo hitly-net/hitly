@@ -86,7 +86,7 @@ function email(local: string) {
 /** Invites `address` through the real create-and-send path and returns the token from the email. */
 async function invite(address: string, role: 'admin' | 'member' = 'member') {
   clearSentMail()
-  await createAndSendWorkspaceInvite({
+  await createAndSendWorkspaceInvite({ actorUserId: adminId,
     workspaceId,
     workspaceName: 'Invite Co',
     email: address,
@@ -494,7 +494,7 @@ describe('revoke and resend', () => {
       expiresAt: new Date(Date.now() + 86_400_000),
     })
     clearSentMail()
-    const result = await resendWorkspaceInvite({ workspaceId, workspaceName: 'Invite Co', inviteId, appUrl: APP_URL })
+    const result = await resendWorkspaceInvite({ workspaceId, workspaceName: 'Invite Co', inviteId, actorUserId: adminId, appUrl: APP_URL })
     assert.equal(result.ok, true)
     assert.equal(sentMail.length, 1)
     assert.equal(sentMail[0].to, address)
@@ -510,7 +510,7 @@ describe('revoke and resend', () => {
     const row = await inviteRow(oldToken)
     await database.update(invites).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(invites.id, row!.id))
     clearSentMail()
-    const result = await resendWorkspaceInvite({ workspaceId, workspaceName: 'Invite Co', inviteId: row!.id, appUrl: APP_URL })
+    const result = await resendWorkspaceInvite({ workspaceId, workspaceName: 'Invite Co', inviteId: row!.id, actorUserId: adminId, appUrl: APP_URL })
     assert.equal(result.ok, true)
     const newToken = sentMail[0].text.match(/\/invite\/([A-Za-z0-9_-]{43})/)?.[1]
     assert.ok(newToken)
@@ -528,10 +528,10 @@ describe('revoke and resend', () => {
     const row = await inviteRow(token)
     assert.equal((await accept({ token, name: 'Used', password: 'a-strong-password' })).status, 200)
     clearSentMail()
-    assert.equal((await resendWorkspaceInvite({ workspaceId, workspaceName: 'Invite Co', inviteId: row!.id, appUrl: APP_URL })).ok, false)
+    assert.equal((await resendWorkspaceInvite({ workspaceId, workspaceName: 'Invite Co', inviteId: row!.id, actorUserId: adminId, appUrl: APP_URL })).ok, false)
     const other = await inviteRow(await invite(email('resend-other')))
     clearSentMail()
-    assert.equal((await resendWorkspaceInvite({ workspaceId: 'ws_other', workspaceName: 'X', inviteId: other!.id, appUrl: APP_URL })).ok, false)
+    assert.equal((await resendWorkspaceInvite({ workspaceId: 'ws_other', workspaceName: 'X', inviteId: other!.id, actorUserId: adminId, appUrl: APP_URL })).ok, false)
     assert.equal(sentMail.length, 0)
   })
 })
