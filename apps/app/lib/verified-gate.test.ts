@@ -188,6 +188,29 @@ describe('source-scan guards', () => {
     )
   })
 
+  it('project-create.ts gates the actor BEFORE every project/key write (M3)', () => {
+    const source = readFileSync(join(APP_ROOT, 'lib', 'project-create.ts'), 'utf8')
+    const cases: Array<[string, string]> = [
+      ['insertNewProject', '.insert(projects)'],
+      ['insertNewProjectApiKey', '.insert(projectApiKeys)'],
+      ['rotateProjectApiKeyRecord', '.update(projectApiKeys)'],
+    ]
+    for (const [fn, writeMarker] of cases) {
+      const fnStart = source.indexOf(`export async function ${fn}(`)
+      assert.notEqual(fnStart, -1, `${fn} exists`)
+      const nextExport = source.indexOf('\nexport ', fnStart + 1)
+      const body = source.slice(fnStart, nextExport === -1 ? source.length : nextExport)
+      const gateIdx = body.indexOf('assertCreatorVerified(')
+      const writeIdx = body.indexOf(writeMarker)
+      assert.notEqual(gateIdx, -1, `${fn} calls the verification gate`)
+      assert.notEqual(writeIdx, -1, `${fn} performs its ${writeMarker} write`)
+      assert.ok(
+        gateIdx < writeIdx,
+        `${fn}: the verification gate must run before the ${writeMarker} write (moving the gate after the write must fail this pin)`,
+      )
+    }
+  })
+
   it('resume-secret rotation gates the acting user BEFORE rewriting stored credentials (S13)', () => {
     const source = readFileSync(join(APP_ROOT, 'lib', 'resume-secret.ts'), 'utf8')
     const rotateIdx = source.indexOf('export async function rotateProjectResumeSecret')

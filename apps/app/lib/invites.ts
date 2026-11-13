@@ -8,7 +8,6 @@ import { APIError } from 'better-auth/api'
 import { currentInviteSignup, normaliseEmail, runWithInviteSignup, type InviteSignupContext } from './invite-signup'
 import { assertEmailVerifiedForCreate } from './verified-gate'
 
-/** How long an invite link stays valid. */
 /**
  * Add an EXISTING account to a workspace (the inviteToWorkspace existing-user
  * path). Single server-side writer for this transition: the unverified-email
@@ -39,6 +38,7 @@ export async function addExistingUserToWorkspace(args: {
   await (args.send ?? sendMail)({ to: args.email, ...rendered })
 }
 
+/** How long an invite link stays valid. */
 export const INVITE_TTL_DAYS = 14
 export const INVITE_TTL_MS = INVITE_TTL_DAYS * 24 * 60 * 60 * 1000
 
