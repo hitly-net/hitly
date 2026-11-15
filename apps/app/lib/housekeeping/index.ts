@@ -12,3 +12,4 @@ export {
   purgeExpiredAuditEvents,
   registerDefaultHousekeepingJobs,
 } from './jobs'
+export { purgeExpiredSecurityEvents, registerSecurityEventsHousekeepingJob } from './security-events'

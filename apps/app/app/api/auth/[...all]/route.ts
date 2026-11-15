@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth'
 import { withNativeAuthOrigin } from '@/lib/cors'
+import { isRawAccountDeletePath } from '@/lib/account-deletion'
 import { holdPasswordSignInIfMfa } from '@/lib/mfa-sign-in'
 import {
   assertionHasUserVerification,
@@ -32,6 +33,13 @@ export async function handleAuthRequest(
   // they can require the current password. The plugin's own management
   // paths would skip that check.
   if (isPasskeyPluginManagementPath(request.url)) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+  // Better Auth's own delete-user endpoint would drop the users row with
+  // none of the account-deletion rules applied (no re-auth, no typed
+  // confirmation, no workspace rulings, no anonymisation, no notice), so it
+  // is not reachable: /api/session/delete-account is the only way in.
+  if (isRawAccountDeletePath(request.url)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
   // The stock plugin hardcodes userVerification: preferred and

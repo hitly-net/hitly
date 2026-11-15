@@ -424,6 +424,101 @@ export async function renderPasswordChangedEmail(args: SecurityNoticeArgs): Prom
 }
 
 // ---------------------------------------------------------------------------
+// Account deleted (permanent) — confirmation to the deleted address
+// ---------------------------------------------------------------------------
+
+export async function renderAccountDeletedEmail(args: SecurityNoticeArgs): Promise<RenderedEmail> {
+  const html = await render(
+    <EmailLayout
+      appUrl={args.appUrl}
+      preview="Your HITLy account has been deleted"
+      footerContext="This is a confirmation about a deleted HITLy account."
+      linksDisabled
+    >
+      <Body>
+        <Text style={{ margin: '0 0 14px' }}>Hi,</Text>
+        <Text style={{ margin: '0 0 16px', fontSize: '17px', lineHeight: '24px', fontWeight: 600 }}>
+          Your HITLy account has been deleted.
+        </Text>
+        <Text style={{ margin: '0 0 12px' }}>
+          This is permanent. There is no grace period and nothing is recoverable: the account, its sign-in
+          credentials, its sessions and the workspaces that belonged to it alone are gone.
+        </Text>
+        <Text style={{ margin: 0 }}>
+          If you did not request this, contact the operator of this HITLy instance immediately. This email
+          carries no link or code.
+        </Text>
+      </Body>
+    </EmailLayout>,
+  )
+  const text = [
+    'Your HITLy account has been deleted.',
+    '',
+    'This is permanent. There is no grace period and nothing is recoverable: the account, its sign-in',
+    'credentials, its sessions and the workspaces that belonged to it alone are gone.',
+    '',
+    'If you did not request this, contact the operator of this HITLy instance immediately.',
+    '',
+  ].join('\n')
+  return {
+    subject: 'HITLy: Your account has been deleted',
+    // Confirmation notice: no links at all, in the text or the HTML.
+    text: text + textFooter('This is a confirmation about a deleted HITLy account.', { noLink: true }),
+    html,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A member deleted their account — API key review notice for workspace admins
+// ---------------------------------------------------------------------------
+
+export type MemberDeletedAccountArgs = { appUrl: string; workspaceName: string }
+
+export async function renderMemberDeletedAccountApiKeyReviewEmail(
+  args: MemberDeletedAccountArgs,
+): Promise<RenderedEmail> {
+  const workspaceName = args.workspaceName.trim() || 'your workspace'
+  const html = await render(
+    <EmailLayout
+      appUrl={args.appUrl}
+      preview={`A member deleted their HITLy account from ${workspaceName}`}
+      footerContext="This notice was sent to the administrators of a HITLy workspace."
+      linksDisabled
+    >
+      <Body>
+        <Text style={{ margin: '0 0 14px' }}>Hi,</Text>
+        <Text style={{ margin: '0 0 16px', fontSize: '17px', lineHeight: '24px', fontWeight: 600 }}>
+          A member deleted their account; review your API keys.
+        </Text>
+        <Text style={{ margin: '0 0 12px' }}>
+          Someone who belonged to {workspaceName} deleted their HITLy account. Their membership is gone, but
+          the project API keys of {workspaceName} were kept, because other members may still depend on them.
+        </Text>
+        <Text style={{ margin: 0 }}>
+          Please review the project API keys and revoke any that only that member created or used. This email
+          carries no link or code.
+        </Text>
+      </Body>
+    </EmailLayout>,
+  )
+  const text = [
+    'A member deleted their account; review your API keys.',
+    '',
+    `Someone who belonged to ${workspaceName} deleted their HITLy account. Their membership is gone, but the`,
+    `project API keys of ${workspaceName} were kept, because other members may still depend on them.`,
+    '',
+    'Please review the project API keys and revoke any that only that member created or used.',
+    '',
+  ].join('\n')
+  return {
+    subject: `HITLy: A member deleted their account — review your API keys (${workspaceName})`,
+    // Security-adjacent notice: no links at all, in the text or the HTML.
+    text: text + textFooter('This notice was sent to the administrators of a HITLy workspace.', { noLink: true }),
+    html,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Passkey-added security notice
 // ---------------------------------------------------------------------------
 
