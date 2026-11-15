@@ -22,8 +22,9 @@ type GetApprovalForOriginFn = typeof getApprovalForOrigin
  * key probing unknown or foreign ids still burns its read budget. An
  * unverified key never reaches the per-key budget; it counts per client
  * address in the failed-auth budget (never per unverified subject). A
- * malformed bearer is likewise counted per address before falling through to
- * the session path.
+ * bearer that is neither a key nor a valid session is likewise counted per
+ * address — but only AFTER the session check fails, so valid bearer session
+ * tokens (mobile reviewers) are never counted.
  */
 export function createApprovalDetailGet(deps: {
   requireApiWorkspace: RequireApiWorkspaceFn
@@ -56,15 +57,21 @@ export function createApprovalDetailGet(deps: {
         const failed = await applyFailedAuthLimit(request, deps.failedAcquire)
         if (failed) return failed
       }
-    } else if (apiKey) {
-      // A bearer that is not a well-formed API key is counted per address too
-      // (M5 shape), then falls through to the session path (mobile reviewers).
-      const failed = await applyFailedAuthLimit(request, deps.failedAcquire)
-      if (failed) return failed
     }
+    // A bearer that is not a well-formed API key may be a Better Auth bearer
+    // SESSION token (mobile reviewers): it must NOT be counted up front. It
+    // counts in failed-auth only if the session check below fails to
+    // authenticate (401).
+    const malformedBearer = apiKey ? !isWellFormedApiKey(apiKey) : false
 
     const ctx = await deps.requireApiWorkspace()
-    if (!ctx.ok) return ctx.error
+    if (!ctx.ok) {
+      if (apiKey && malformedBearer) {
+        const failed = await applyFailedAuthLimit(request, deps.failedAcquire)
+        if (failed) return failed
+      }
+      return ctx.error
+    }
     if (!ctx.workspace || !ctx.role) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const detail = await deps.getApprovalDetail({

@@ -23,15 +23,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const { id } = await context.params
 
   // Requester cancel with the project API key that created the request.
-  // A Bearer value that is not an API key falls through to the session path
-  // (reviewer Bearer session tokens on mobile).
+  // A Bearer value that is not an API key may be a Better Auth bearer
+  // SESSION token (mobile reviewers) — it must not be counted as a failed
+  // login up front. It counts in failed-auth only if the session check
+  // below then fails to authenticate.
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-  if (apiKey && !isWellFormedApiKey(apiKey)) {
-    // A bearer that is not a well-formed API key is counted per client
-    // address (M5 shape) before falling through to the session path.
-    const failed = await applyFailedAuthLimit(request)
-    if (failed) return failed
-  }
+  const malformedBearer = apiKey ? !isWellFormedApiKey(apiKey) : false
   if (apiKey && isWellFormedApiKey(apiKey)) {
     // Count per key (by hash) only once the key has authenticated; a failed
     // attempt counts per client address in the failed-auth budget instead.
@@ -53,7 +50,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
   }
 
-  return withApiTenant(async (ctx) => {
+  const sessionResponse = await withApiTenant(async (ctx) => {
     const database = requireDb()
     const rows = await database
       .select()
@@ -79,4 +76,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     return NextResponse.json({ id, status: result.status, decision: 'cancel' })
   })
+  if (apiKey && malformedBearer && sessionResponse.status === 401) {
+    // The bearer was neither an API key nor a valid session: a failed login,
+    // counted per client address (M5 shape). Valid bearer sessions never get
+    // here with a 401, so mobile reviewers are never counted.
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+  }
+  return sessionResponse
 }

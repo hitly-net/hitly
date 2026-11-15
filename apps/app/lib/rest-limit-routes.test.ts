@@ -356,25 +356,48 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
   it('POST cancel: a well-formed unknown key counts per address, no per-key write call (F3d/F4f)', async () => {
     denySeam()
     fakes.authn = null
+    // No session: without this the request would fall through to a logged-in
+    // reviewer path whose own read budget could answer the 429 instead.
+    fakes.sessionUser = null
     const response = await cancelRoute.POST(
       postJson('/api/v1/approvals/apr_m2/cancel', { reason: 'x' }, { authorization: `Bearer ${KEY}`, 'x-forwarded-for': KEY_A_ADDR }),
       params('apr_m2'),
     )
     assert.equal(response.status, 429)
-    expectLimited('failed-auth')
+    assert.equal(seamCalls.length, 1, 'exactly one limiter call — the failed-auth one')
+    assert.equal(seamCalls[0]!.kind, 'failed-auth')
     assert.match(seamCalls[0]!.subject, /^addr:/)
-    assert.equal(seamCalls.some((c) => c.kind === 'write'), false, 'an unauthenticated key must never reach the per-key budget')
+    fakes.sessionUser = { id: 'usr_m2', name: 'M2', email: 'm2@example.com' }
+    fakes.authn = { project: { id: 'prj_m2', workspaceId: 'ws_m2' } }
   })
 
-  it('POST cancel: a malformed bearer is counted per address before the session fallthrough (soft 1)', async () => {
+  it('POST cancel: a bearer that fails the session check counts per address (F4m)', async () => {
     denySeam()
+    fakes.sessionUser = null
     const response = await cancelRoute.POST(
       postJson('/api/v1/approvals/apr_m2/cancel', {}, { authorization: 'Bearer session-looking-bearer', 'x-forwarded-for': KEY_A_ADDR }),
       params('apr_m2'),
     )
     assert.equal(response.status, 429)
-    expectLimited('failed-auth')
+    assert.equal(seamCalls.length, 1, 'exactly one limiter call — the failed-auth one')
+    assert.equal(seamCalls[0]!.kind, 'failed-auth')
     assert.match(seamCalls[0]!.subject, /^addr:/)
+    fakes.sessionUser = { id: 'usr_m2', name: 'M2', email: 'm2@example.com' }
+  })
+
+  it('POST cancel: a valid bearer session is never counted in failed-auth (MUST-A)', async () => {
+    // Mobile reviewers send `Authorization: Bearer <session token>`; 20 of
+    // them from one address must never mint a failed-auth call nor a 429.
+    fakes.sessionUser = { id: 'usr_m2', name: 'M2', email: 'm2@example.com' }
+    allowUntil(30)
+    for (let i = 0; i < 20; i++) {
+      const response = await cancelRoute.POST(
+        postJson('/api/v1/approvals/apr_m2/cancel', {}, { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        params('apr_m2'),
+      )
+      assert.notEqual(response.status, 429, `request ${String(i)} must never be rate limited`)
+    }
+    assert.equal(seamCalls.some((c) => c.kind === 'failed-auth'), false, 'a valid session must never touch failed-auth')
   })
 
   it('GET [id]: a well-formed unknown key counts per address, never per key (M4a/F4g)', async () => {
@@ -390,7 +413,7 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
     assert.equal(seamCalls.some((c) => c.kind === 'read'), false, 'an unauthenticated key must never reach the per-key budget')
   })
 
-  it('GET [id]: a malformed bearer is counted per address before the session fallthrough (soft 1)', async () => {
+  it('GET [id]: a bearer that fails the session check counts per address (F4l)', async () => {
     denySeam()
     const GET = detailGet({})
     const response = await GET(
@@ -398,8 +421,35 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
       params('apr_other'),
     )
     assert.equal(response.status, 429)
-    expectLimited('failed-auth')
+    assert.equal(seamCalls.length, 1, 'exactly one limiter call — the failed-auth one')
+    assert.equal(seamCalls[0]!.kind, 'failed-auth')
     assert.match(seamCalls[0]!.subject, /^addr:/)
+  })
+
+  it('GET [id]: a valid bearer session is never counted in failed-auth (MUST-A)', async () => {
+    // Mobile reviewers call this endpoint with `Authorization: Bearer
+    // <session token>`; 20 such requests from one address must all succeed
+    // and must never mint a failed-auth limiter call.
+    allowUntil(30)
+    const GET = detailGet({
+      requireApiWorkspace: async () =>
+        ({
+          ok: true,
+          session: { user: { id: 'usr_m2', name: 'M2', email: 'm2@example.com' } },
+          workspace: { id: 'ws_m2' },
+          role: 'admin',
+        }) as never,
+      getApprovalDetail: (async () => ({ ok: true, id: 'apr_m2', status: 'pending' })) as never,
+    })
+    for (let i = 0; i < 20; i++) {
+      const response = await GET(
+        getJson('/api/v1/approvals/apr_m2', { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        params('apr_m2'),
+      )
+      assert.equal(response.status, 200, `request ${String(i)} must never be rate limited`)
+    }
+    assert.equal(seamCalls.length, 0, 'the session path must not consult the limiter at all here')
+    assert.equal(seamCalls.some((c) => c.kind === 'failed-auth'), false)
   })
 
   it('GET [id] (MUST-1): an authenticated key is counted per key even when the id is not its own; over budget it gets 429 and the read is skipped', async () => {
