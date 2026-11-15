@@ -97,4 +97,41 @@ describe('security-event retention sweep', () => {
     const { deleted } = await purgeExpiredSecurityEvents({ now: () => Date.now() - 48 * 60 * 60 * 1000 })
     assert.equal(deleted, 0)
   })
+
+  it('keeps a row whose deadline is exactly the sweep instant (strict boundary)', async () => {
+    // The purge deletes only rows STRICTLY past their deadline. A row whose
+    // retention_expires_at equals the sweep instant has not expired yet and
+    // must survive, while a row one millisecond earlier must go. Pins the
+    // boundary against an off-by-one (lt -> lte) regression.
+    const instant = Math.floor(Date.now() / 1000) * 1000
+    const atDeadline = row({
+      userId: null,
+      userIdHmac: 'a'.repeat(64),
+      emailHmac: 'b'.repeat(64),
+      type: 'account_deleted',
+      retentionExpiresAt: new Date(instant),
+    })
+    const justPast = row({
+      userId: null,
+      userIdHmac: 'c'.repeat(64),
+      emailHmac: 'd'.repeat(64),
+      type: 'account_deleted',
+      retentionExpiresAt: new Date(instant - 1),
+    })
+    await database.insert(accountSecurityEvents).values([
+      atDeadline,
+      justPast,
+    ] as (typeof accountSecurityEvents.$inferInsert)[])
+
+    const { deleted } = await purgeExpiredSecurityEvents({ now: () => instant })
+    assert.ok(deleted >= 1, `the strictly-past row must be swept, deleted ${deleted}`)
+
+    const survivors = await database
+      .select({ id: accountSecurityEvents.id })
+      .from(accountSecurityEvents)
+      .where(inArray(accountSecurityEvents.id, [atDeadline.id, justPast.id]))
+    const ids = survivors.map((item) => item.id)
+    assert.ok(ids.includes(atDeadline.id), 'a row expiring exactly at the sweep instant is NOT yet expired')
+    assert.ok(!ids.includes(justPast.id), 'a row one millisecond past must be swept')
+  })
 })
