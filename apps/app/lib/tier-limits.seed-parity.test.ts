@@ -28,7 +28,7 @@ import {
   type WorkspacePlan,
 } from '@hitly/core'
 
-const SQL_FILE = path.join(__dirname, '../../packages/db/drizzle/0019_curly_white_tiger.sql')
+const SQL_FILE = path.join(__dirname, '../../../packages/db/drizzle/0019_curly_white_tiger.sql')
 
 function parseSqlSeed(): Map<string, number | null> {
   const sql = readFileSync(SQL_FILE, 'utf8')

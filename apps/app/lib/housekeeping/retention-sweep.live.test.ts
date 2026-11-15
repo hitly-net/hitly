@@ -14,13 +14,15 @@
  *      again: old rows deleted (kills "grace never expires").
  *
  * getPlanChangedAt comes from lib/billing, which reads edition.billing at
- * CALL time — so the seam below controls the sweeps precisely.
+ * CALL time — so the seam below controls the sweeps precisely. The
+ * throwaway database keeps the sweeps away from every other suite's rows.
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { after, before, test } from 'node:test'
 import path from 'node:path'
 import pg from 'pg'
+import { edition } from '@hitly/cloud'
 
 const BASE_URL = process.env.DATABASE_URL ?? ['postgres://***:***@localhost:5432/','hitly'].join('')
 const REPO_ROOT = path.join(__dirname, '../../..')
@@ -46,20 +48,23 @@ async function exists(table: string, id: string): Promise<boolean> {
 }
 
 async function seedOldRows(): Promise<void> {
-  // solo: completed retention 10 days, audit retention 30 days.
+  // solo plan: completed retention 10 days (core COMPLETED_RETENTION_DAYS);
+  // audit retention on the OSS edition is 3650 days, so the age-eligible
+  // audit fixture must be older than that. The 10-day row is fresh under
+  // either window.
   await client.query(
     `INSERT INTO approvals (id, workspace_id, project_id, plugin, status, action_name, envelope, origin, created_at, updated_at)
-     VALUES ('apr_old', 'ws_sweep', 'prj_sweep', 'mastra', 'approved', 'sweep.action', '{}'::jsonb, '{}'::jsonb,
+     VALUES ('apr_old', 'ws_sweep', 'prj_sweep', 'mastra', 'decided', 'sweep.action', '{}'::jsonb, '{}'::jsonb,
              now() - interval '40 days', now() - interval '40 days')
-     ON CONFLICT (id) DO UPDATE SET status = 'approved',
+     ON CONFLICT (id) DO UPDATE SET status = 'decided',
        created_at = now() - interval '40 days', updated_at = now() - interval '40 days'`,
   )
   await client.query(
     `INSERT INTO project_events (id, workspace_id, project_id, type, message, payload, created_at)
-     VALUES ('evt_old', 'ws_sweep', 'prj_sweep', 'sweep.old', 'old', '{}'::jsonb, now() - interval '100 days'),
+     VALUES ('evt_old', 'ws_sweep', 'prj_sweep', 'sweep.old', 'old', '{}'::jsonb, now() - interval '4000 days'),
             ('evt_fresh', 'ws_sweep', 'prj_sweep', 'sweep.fresh', 'fresh', '{}'::jsonb, now() - interval '10 days')
      ON CONFLICT (id) DO UPDATE SET created_at = CASE project_events.id
-       WHEN 'evt_old' THEN now() - interval '100 days' ELSE now() - interval '10 days' END`,
+       WHEN 'evt_old' THEN now() - interval '4000 days' ELSE now() - interval '10 days' END`,
   )
 }
 
@@ -78,12 +83,9 @@ before(async () => {
   })
 
   process.env.DATABASE_URL = TARGET_URL
-  // Control the seam BEFORE importing anything that reads it. The billing
-  // wrapper calls edition.billing.* at call time, so this fake governs the
-  // sweeps exactly; the throwaway database keeps the sweeps away from any
-  // other suite's rows.
-  const cloud = await import('@hitly/cloud')
-  ;(cloud.edition as { billing?: unknown }).billing = {
+  // Control the seam BEFORE importing the sweeps: the billing wrapper calls
+  // edition.billing.* at CALL time, so this fake governs the sweeps exactly.
+  ;(edition as { billing?: unknown }).billing = {
     hasActivePaidSubscription: async () => false,
     getPlanChangedAt: async () => fakePlanChangedAt,
   }
@@ -124,7 +126,12 @@ after(async () => {
 })
 
 test('A) recent downgrade: both sweeps delete NOTHING older than the change', async () => {
-  fakePlanChangedAt = new Date(Date.now() - 5 * DAY) // inside the 30-day grace
+  // Guard first: the seam really is under this file's control.
+  fakePlanChangedAt = new Date(Date.now() - 5 * DAY)
+  const { getPlanChangedAt } = await import('../billing')
+  const seen = await getPlanChangedAt('ws_sweep')
+  assert.ok(seen && Math.abs(seen.getTime() - fakePlanChangedAt.getTime()) < 1000, 'the sweep must see the faked plan change instant')
+
   const completed = await purgeCompletedApprovals()
   const audit = await purgeExpiredAuditEvents()
   assert.equal(completed.deleted, 0, `completed sweep must respect the floor, deleted ${completed.deleted}`)
@@ -140,9 +147,9 @@ test('B) no recorded plan change: plain retention cutoff deletes old, keeps fres
   assert.ok(completed.deleted >= 1, 'without a plan change the approval past 10 days is purged')
   assert.ok(!(await exists('approvals', 'apr_old')), 'apr_old must be deleted with no floor in play')
   const audit = await purgeExpiredAuditEvents()
-  assert.ok(audit.deleted >= 1, 'without a plan change the 100-day audit event is purged')
+  assert.ok(audit.deleted >= 1, 'without a plan change the 4000-day audit event is purged')
   assert.ok(!(await exists('project_events', 'evt_old')), 'evt_old must be deleted with no floor in play')
-  assert.ok(await exists('project_events', 'evt_fresh'), '10-day-old event is inside the 30-day audit window')
+  assert.ok(await exists('project_events', 'evt_fresh'), '10-day-old event is inside the audit window')
 })
 
 test('C) plan change older than the export grace: grace expired, old rows purge again', async () => {
