@@ -168,9 +168,9 @@ after(async () => {
 })
 
 describe('project lifecycle contract', () => {
-  it('tier hook returns true for every current plan', () => {
+  it('tier hook returns true for every current plan', async () => {
     for (const plan of ['self-hosted', 'solo', 'pro', 'team', 'enterprise']) {
-      assert.equal(canUseProjectLifecycle({ plan }), true, plan)
+      assert.equal(await canUseProjectLifecycle({ id: workspaceId, plan }), true, plan)
     }
   })
 
@@ -442,7 +442,7 @@ describe('tier hook direct-delete path', () => {
     await withTenant(workspaceId, () => ingest(apiKey))
     setCanUseProjectLifecycleForTests(() => false)
     try {
-      assert.equal(canUseProjectLifecycle(workspace), false)
+      assert.equal(await canUseProjectLifecycle(workspace), false)
 
       const pause = await withTenant(workspaceId, () =>
         setProjectStatus({ projectId, status: 'paused', workspaceRole: 'admin', workspace }),
