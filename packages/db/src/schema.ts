@@ -658,6 +658,41 @@ export const tierEntitlements = pgTable(
   ],
 )
 
+/**
+ * Generic in-app support requests (e.g. "Request my data"). One row per ask:
+ * who requested it (user), which workspace context it was raised from (the
+ * request's active workspace after membership is verified — never a value
+ * trusted from the caller), the request type and whether it is still open.
+ * Fulfilment happens outside this server; the row is the durable record of
+ * the ask (who, when, type) that support works from. The partial unique
+ * index makes "one open request per user and type" a database rule, so
+ * concurrent clicks cannot double-book support.
+ */
+export const supportRequests = pgTable(
+  'support_requests',
+  {
+    id: id().primaryKey(),
+    userId: id('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    workspaceId: id('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    type: varchar('type', { length: 32 }).notNull(),
+    status: varchar('status', { length: 16 }).notNull().default('open'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index('support_requests_user_id_idx').on(table.userId),
+    uniqueIndex('support_requests_open_user_type_idx')
+      .on(table.userId, table.type)
+      .where(sql`${table.status} = 'open'`),
+    check(
+      'support_requests_status_check',
+      sql`${table.status} in ('open', 'fulfilled', 'cancelled')`,
+    ),
+  ],
+)
+
 /** Tables Cloud RLS pins to `app.workspace_id`. Control-plane identity tables are not listed. */
 export const TENANT_TABLES = [
   'projects',

@@ -1,5 +1,5 @@
 import { AppShell } from '@/components/app-shell'
-import { DataExportButton } from '@/components/data-export-button'
+import { DataRequestButton } from '@/components/data-request-button'
 import { ThemePicker } from '@/components/theme-picker'
 import { UnverifiedEmailNotice } from '@/components/unverified-email-notice'
 import { getAppContext } from '@/lib/context'
@@ -31,11 +31,12 @@ export default async function ProfilePage() {
       </div>
       <h2 className="mt-10 text-lg font-semibold">Your data</h2>
       <p className="mt-1 max-w-md text-sm text-zinc-500">
-        Download a copy of your personal data as a JSON archive (one export per hour). Account deletion will be
-        offered from this page.
+        Ask support for a copy of your personal data. Support prepares the export and sends it to your
+        account email; under UK GDPR you will receive it within one month. Account deletion will be offered
+        from this page.
       </p>
       <div className="mt-3">
-        <DataExportButton />
+        <DataRequestButton />
       </div>
     </AppShell>
   )
