@@ -21,13 +21,9 @@ import { encryptUtf8, fromBase32, resolveMfaEncryptionKey, totpCode } from './mf
 import {
   handleMfaConfirm,
   handleMfaEnrol,
-  handleMfaRecoveryCodes,
-  handleMfaVerify,
   hashMfaChallengeToken,
   type MfaRouteDeps,
 } from './mfa-route'
-import { handlePasskeyDelete } from './passkey-route'
-import { handleAuthRequest } from '../app/api/auth/[...all]/route'
 import {
   can,
   canForCurrentWorkspace,
@@ -371,13 +367,16 @@ describe('existing MFA stays fully manageable while mfa is denied (S2/S-D)', () 
       assert.equal(status.enabled, true)
       assert.equal(shouldShowAuthenticatorSection(status, false), true)
 
-      // Regenerate recovery codes while denied.
-      const regen = await handleMfaRecoveryCodes(
+      // Regenerate recovery codes while denied — through the REAL route
+      // (M2): copying the enrol gate onto this route fails here. The route
+      // runs handleMfaRecoveryCodes with the real clock, so the TOTP code is
+      // generated at the actual current time.
+      const { POST: recoveryCodesRoute } = await import('../app/api/session/mfa/recovery-codes/route')
+      const regen = await recoveryCodesRoute(
         post('/api/session/mfa/recovery-codes', cookie, {
           currentPassword: PASSWORD,
-          code: totpCode(fromBase32(secret), NOW + STEP_MS),
-        }),
-        handlerDeps(1),
+          code: totpCode(fromBase32(secret), Date.now()),
+        }) as never,
       )
       assert.equal(regen.status, 200)
       const regenBody = (await regen.json()) as { recoveryCodes?: string[] }
@@ -394,13 +393,18 @@ describe('existing MFA stays fully manageable while mfa is denied (S2/S-D)', () 
         tokenHash: hashMfaChallengeToken(token),
         sessionId: sessionRows[0].id,
         cookiesCiphertext: encryptUtf8(JSON.stringify({ setCookies: ['held=1; Path=/; HttpOnly'] }), key),
-        expiresAt: new Date(NOW + 10 * 60_000),
+        // The verify route runs on the real clock, so the challenge must be
+        // valid at the actual current time.
+        expiresAt: new Date(Date.now() + 10 * 60_000),
       })
-      const verified = await handleMfaVerify(
+      // The REAL verify route (M2): copying the enrol gate onto it fails
+      // here. The code sits one step ahead of real now so it clears the
+      // replay guard set by the regen above.
+      const { POST: verifyRoute } = await import('../app/api/session/mfa/verify/route')
+      const verified = await verifyRoute(
         post('/api/session/mfa/verify', `${MFA_CHALLENGE_COOKIE}=${token}`, {
-          code: totpCode(fromBase32(secret), NOW + 2 * STEP_MS),
-        }),
-        handlerDeps(2),
+          code: totpCode(fromBase32(secret), Date.now() + STEP_MS),
+        }) as never,
       )
       assert.equal(verified.status, 200, 'the challenge must still complete while denied')
       assert.deepEqual((await verified.json()), { ok: true })
@@ -417,10 +421,12 @@ describe('existing MFA stays fully manageable while mfa is denied (S2/S-D)', () 
         deviceType: 'platform',
         backedUp: false,
       })
-      const removed = await handlePasskeyDelete(
-        post(`/api/session/passkey/${passkeyId}/delete`, cookie, { currentPassword: PASSWORD }),
-        passkeyId,
-        { log: () => {}, now: () => NOW + 3 * STEP_MS, allowReauth: () => true },
+      // Removing a passkey works while denied — through the REAL route
+      // (M2): copying the enrol gate onto it fails here.
+      const { POST: passkeyDeleteRoute } = await import('../app/api/session/passkey/[id]/delete/route')
+      const removed = await passkeyDeleteRoute(
+        post(`/api/session/passkey/${passkeyId}/delete`, cookie, { currentPassword: PASSWORD }) as never,
+        { params: Promise.resolve({ id: passkeyId }) },
       )
       assert.equal(removed.status, 200)
       assert.deepEqual((await removed.json()), { ok: true })
@@ -428,14 +434,14 @@ describe('existing MFA stays fully manageable while mfa is denied (S2/S-D)', () 
       assert.equal(leftover.length, 0)
 
       // Disable MFA last, still denied — through the REAL route wrapper
-      // (S-D): an added gate inside the disable route fails here. The route
-      // runs handleMfaDisable with the real clock, so the code is generated
-      // at the actual current time.
+      // (S-D): an added gate inside the disable route fails here. The
+      // current TOTP steps are consumed by the regen and verify above, so
+      // this re-auth presents a freshly generated recovery code instead.
       const { POST: disableRoute } = await import('../app/api/session/mfa/disable/route')
       const disabled = await disableRoute(
         post('/api/session/mfa/disable', cookie, {
           currentPassword: PASSWORD,
-          code: totpCode(fromBase32(secret), Date.now()),
+          code: regenBody.recoveryCodes[0],
         }) as never,
       )
       assert.equal(disabled.status, 200, 'disable must work while denied')
@@ -515,16 +521,11 @@ describe('password sign-in is still held for the MFA challenge while mfa is deni
         headers: { 'content-type': 'application/json', origin: APP_URL },
         body: JSON.stringify({ email: address, password: PASSWORD }),
       })
-      // Exactly what apps/app/app/api/auth/[...all]/route.ts POST does:
-      // forward through handleAuthRequest, then hold if MFA is enabled.
-      const admitted = await handleAuthRequest(request, async () =>
-        (await authInstance.api.signInEmail({
-          body: { email: address, password: PASSWORD },
-          asResponse: true,
-        } as never)) as unknown as Response,
-      )
-      const { holdPasswordSignInIfMfa } = await import('./mfa-sign-in')
-      const held = await holdPasswordSignInIfMfa(request, admitted)
+      // The REAL catch-all route POST (toNextJsHandler + handleAuthRequest +
+      // holdPasswordSignInIfMfa) — a hold-skip inside that POST (mutant G8r)
+      // returns the un-held response and fails the assertions below.
+      const { POST: authRoutePost } = await import('../app/api/auth/[...all]/route')
+      const held = await authRoutePost(request as never)
       assert.equal(held.status, 200)
       assert.deepEqual(await held.json(), { mfaRequired: true })
       const cookies = held.headers.getSetCookie()

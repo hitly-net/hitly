@@ -17,7 +17,11 @@ import { afterEach, describe, it, mock } from 'node:test'
 import type { ReactNode } from 'react'
 import { cleanup, render, screen } from '@testing-library/react'
 
-const state: { enabled: boolean; allowed: boolean } = { enabled: true, allowed: false }
+const state: { enabled: boolean; allowed: boolean; features: string[] } = {
+  enabled: true,
+  allowed: false,
+  features: [],
+}
 
 mock.module(new URL('../../../lib/context.ts', import.meta.url).href, {
   namedExports: {
@@ -42,7 +46,13 @@ mock.module(new URL('../../../lib/passkey-route.ts', import.meta.url).href, {
 })
 mock.module(new URL('../../../lib/tier-entitlements.ts', import.meta.url).href, {
   namedExports: {
-    canForCurrentWorkspace: async () => state.allowed,
+    canForCurrentWorkspace: async (feature: string) => {
+      // M3: record the feature argument — the page must ask for exactly
+      // 'mfa'. A page checking 'sso' (mutant G1d) fails the per-test
+      // deepEqual below.
+      state.features.push(feature)
+      return state.allowed
+    },
   },
 })
 mock.module(new URL('../../../components/app-shell.tsx', import.meta.url).href, {
@@ -79,7 +89,9 @@ describe('Security page — entitlement gate covers new enrolment only (N1)', ()
   it('an enrolled user keeps Disable MFA and Regenerate recovery codes while mfa is denied', async () => {
     state.enabled = true
     state.allowed = false
+    state.features = []
     render(await SecurityPage())
+    assert.deepEqual(state.features, ['mfa'], 'the page must gate on exactly the mfa feature')
     screen.getByRole('heading', { name: 'Authenticator app' })
     screen.getByText(/Authenticator app MFA is on/)
     screen.getByText('Regenerate recovery codes')
@@ -89,7 +101,9 @@ describe('Security page — entitlement gate covers new enrolment only (N1)', ()
   it('a not-enrolled user with mfa denied loses the enrolment affordance', async () => {
     state.enabled = false
     state.allowed = false
+    state.features = []
     render(await SecurityPage())
+    assert.deepEqual(state.features, ['mfa'], 'the page must gate on exactly the mfa feature')
     assert.equal(screen.queryByRole('heading', { name: 'Authenticator app' }), null)
     assert.equal(screen.queryByText('Enable authenticator app'), null)
   })
@@ -97,7 +111,9 @@ describe('Security page — entitlement gate covers new enrolment only (N1)', ()
   it('a not-enrolled user with mfa allowed sees the enrolment affordance', async () => {
     state.enabled = false
     state.allowed = true
+    state.features = []
     render(await SecurityPage())
+    assert.deepEqual(state.features, ['mfa'], 'the page must gate on exactly the mfa feature')
     screen.getByRole('heading', { name: 'Authenticator app' })
     screen.getByText('Enable authenticator app')
   })
