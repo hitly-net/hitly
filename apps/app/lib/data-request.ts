@@ -65,9 +65,15 @@ export function gdprResponseDeadline(from: Date): Date {
 
 function uniqueViolation(error: unknown): boolean {
   // pg reports the raw SQLSTATE (23505 unique_violation); accept the
-  // Prisma-style spelling too so fakes and drivers agree.
-  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
-  return code === '23505' || code === 'P23505'
+  // Prisma-style spelling too so fakes and drivers agree. Drizzle wraps
+  // driver errors (DrizzleQueryError), so walk the cause chain as well.
+  let node: unknown = error
+  for (let depth = 0; node !== null && node !== undefined && depth < 5; depth += 1) {
+    const code = typeof node === 'object' ? (node as { code?: unknown }).code : undefined
+    if (code === '23505' || code === 'P23505') return true
+    node = typeof node === 'object' ? (node as { cause?: unknown; error?: unknown }).cause ?? (node as { error?: unknown }).error : undefined
+  }
+  return false
 }
 
 /** The active-workspace id this request came from (header, then cookie). */

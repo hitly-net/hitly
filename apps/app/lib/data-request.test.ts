@@ -106,7 +106,11 @@ function fakeDatabase(state: FakeState) {
           }
           if (state.raceWinner && !raceConsumed) {
             raceConsumed = true
-            throw Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' })
+            // Drizzle wraps driver errors: the SQLSTATE sits on the cause,
+            // exactly as DrizzleQueryError reports it in production.
+            throw new Error('Failed query: insert into "support_requests"', {
+              cause: Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' }),
+            })
           }
           if (
             state.requests.some(
