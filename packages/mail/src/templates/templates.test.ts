@@ -11,6 +11,8 @@ import {
   renderInviteEmail,
   renderPasswordChangedEmail,
   renderPasswordResetEmail,
+  renderAccountDeletedEmail,
+  renderMemberDeletedAccountApiKeyReviewEmail,
   renderPasskeyAddedEmail,
   safeText,
   type RenderedEmail,
@@ -236,6 +238,41 @@ describe('passkey-added notice', () => {
     assert.ok(mail.text.includes('Settings → Security'))
     assert.ok(!/https?:\/\//.test(mail.text), 'no link in the notice text')
     assert.ok(!/href=/.test(mail.html), 'no link in the notice HTML')
+  })
+})
+
+describe('account-deletion emails', () => {
+  it('confirms the deletion as permanent and carries no link', async () => {
+    const mail = await renderAccountDeletedEmail({ appUrl: APP_URL })
+    expectWellFormed(mail, 'account-deleted')
+    expectBranding(mail.html, 'account-deleted')
+    assert.match(mail.subject, /deleted/i)
+    assert.match(mail.text, /permanent/i)
+    assert.match(mail.text, /no grace period/i)
+    assert.ok(!/https?:\/\//.test(mail.text), 'the confirmation must not carry a link')
+    assert.ok(!/href=/.test(mail.html), 'the confirmation HTML must not carry a link')
+  })
+
+  it('tells workspace admins to review their API keys and names the workspace', async () => {
+    const mail = await renderMemberDeletedAccountApiKeyReviewEmail({ appUrl: APP_URL, workspaceName: 'Growth Team' })
+    expectWellFormed(mail, 'member-deleted-account')
+    expectBranding(mail.html, 'member-deleted-account')
+    assert.match(mail.subject, /review your API keys/i)
+    assert.match(mail.text, /Growth Team/)
+    assert.ok(!/https?:\/\//.test(mail.text), 'the notice must not carry a link')
+
+    const blank = await renderMemberDeletedAccountApiKeyReviewEmail({ appUrl: APP_URL, workspaceName: '   ' })
+    assert.match(blank.text, /your workspace/, 'a blank name falls back to a generic phrase')
+  })
+
+  it('escapes a workspace name instead of injecting markup', async () => {
+    const mail = await renderMemberDeletedAccountApiKeyReviewEmail({
+      appUrl: APP_URL,
+      workspaceName: '<script>alert(1)</script>',
+    })
+    assert.ok(!mail.html.includes('<script>alert(1)</script>'), 'the name must be escaped in the HTML')
+    assert.ok(mail.html.includes('&lt;script&gt;'), 'the escaped form is what renders')
+    assert.ok(!/<script/i.test(mail.html), 'no script element at all in the rendered HTML')
   })
 })
 

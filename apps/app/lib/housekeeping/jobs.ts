@@ -7,6 +7,7 @@ import { getPlanChangedAt } from '../billing'
 import { deliverApprovalLifecycleEvent } from '../lifecycle-delivery'
 import { affectedRows } from './result'
 import { registerHousekeepingJob } from './scheduler'
+import { registerSecurityEventsHousekeepingJob } from './security-events'
 
 const DELETE_CHUNK = 200
 
@@ -210,4 +211,7 @@ export function registerDefaultHousekeepingJobs() {
     schedule: 'weekly',
     run: purgeExpiredAuditEvents,
   })
+  // Anonymised account-security events survive 90 days (configurable) after
+  // the account went away, then this daily sweep removes them.
+  registerSecurityEventsHousekeepingJob()
 }

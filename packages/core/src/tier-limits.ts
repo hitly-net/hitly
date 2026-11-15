@@ -60,8 +60,8 @@ export const TIER_LIMIT_SEED: Record<TierLimitKey, Record<WorkspacePlan, number 
   seats: { 'self-hosted': null, solo: 2, pro: 3, team: null, enterprise: null },
   live_projects: { 'self-hosted': null, solo: 2, pro: 10, team: null, enterprise: null },
   api_keys: { 'self-hosted': null, solo: 2, pro: 10, team: null, enterprise: null },
-  callback_endpoints_per_project: { 'self-hosted': null, solo: 1, pro: 3, team: null, enterprise: null },
-  api_rpm: { 'self-hosted': null, solo: 60, pro: 300, team: null, enterprise: null },
+  callback_endpoints_per_project: { 'self-hosted': null, solo: 1, pro: 3, team: 10, enterprise: null },
+  api_rpm: { 'self-hosted': null, solo: 60, pro: 300, team: 1200, enterprise: 3000 },
   completed_retention_days: { 'self-hosted': null, solo: 10, pro: 30, team: 365, enterprise: 1000 },
   audit_retention_days: { 'self-hosted': null, solo: 30, pro: 365, team: 365, enterprise: 2555 },
 }
@@ -89,7 +89,7 @@ export type LimitRead =
   /** Row found; `value: null` means unlimited. */
   | { status: 'ok'; value: number | null }
   /** Fail-closed deny: unknown key, unknown plan, or missing row. */
-  | { status: 'denied'; reason: 'unknown_key' | 'unknown_plan' | 'missing_row' }
+  | { status: 'denied'; reason: 'unknown_key' | 'unknown_plan' | 'missing_row' | 'database_unavailable' }
 
 /**
  * Pure resolver behind limit(). Denies (with a machine-readable reason) for

@@ -65,7 +65,7 @@ export async function limit(workspace: { plan: string }, key: string): Promise<L
   const map = await loadMap()
   if (!map) {
     log(`${LOG_PREFIX} database unavailable; blocked "${key}"`)
-    return { status: 'denied', reason: 'unknown_plan' }
+    return { status: 'denied', reason: 'database_unavailable' }
   }
   const read = limitFromMap(map, workspace, key)
   if (read.status === 'denied') {
@@ -76,7 +76,7 @@ export async function limit(workspace: { plan: string }, key: string): Promise<L
 
 export type QuotaCheck =
   | { allowed: true; limit: number | null }
-  | { allowed: false; limit: number | null; reason: 'unknown_key' | 'unknown_plan' | 'missing_row' | 'at_limit' }
+  | { allowed: false; limit: number | null; reason: 'unknown_key' | 'unknown_plan' | 'missing_row' | 'at_limit' | 'database_unavailable' }
 
 /**
  * Pure usage gate for NEW use: compares an existing-unit count against the

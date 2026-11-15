@@ -7,10 +7,7 @@ CREATE TABLE "tier_limits" (
 	CONSTRAINT "tier_limits_plan_check" CHECK ("tier_limits"."plan" in ('self-hosted', 'solo', 'pro', 'team', 'enterprise'))
 );
 
--- Seed the tier limits map (mirrors TIER_LIMIT_SEED in @hitly/core).
--- NULL value means unlimited; operators move caps with UPDATE statements;
--- DO NOTHING keeps a re-run from clobbering overrides. A missing row blocks
--- new use of that capability for that plan (fail-closed).
+-- Seed rows (generated from @hitly/core TIER_LIMIT_SEED; keep in sync).
 INSERT INTO "tier_limits" ("plan", "limit_key", "value") VALUES
   ('self-hosted', 'decisions_per_month', NULL),
   ('solo', 'decisions_per_month', 300),
@@ -35,13 +32,13 @@ INSERT INTO "tier_limits" ("plan", "limit_key", "value") VALUES
   ('self-hosted', 'callback_endpoints_per_project', NULL),
   ('solo', 'callback_endpoints_per_project', 1),
   ('pro', 'callback_endpoints_per_project', 3),
-  ('team', 'callback_endpoints_per_project', NULL),
+  ('team', 'callback_endpoints_per_project', 10),
   ('enterprise', 'callback_endpoints_per_project', NULL),
   ('self-hosted', 'api_rpm', NULL),
   ('solo', 'api_rpm', 60),
   ('pro', 'api_rpm', 300),
-  ('team', 'api_rpm', NULL),
-  ('enterprise', 'api_rpm', NULL),
+  ('team', 'api_rpm', 1200),
+  ('enterprise', 'api_rpm', 3000),
   ('self-hosted', 'completed_retention_days', NULL),
   ('solo', 'completed_retention_days', 10),
   ('pro', 'completed_retention_days', 30),
@@ -52,4 +49,4 @@ INSERT INTO "tier_limits" ("plan", "limit_key", "value") VALUES
   ('pro', 'audit_retention_days', 365),
   ('team', 'audit_retention_days', 365),
   ('enterprise', 'audit_retention_days', 2555)
-ON CONFLICT ("plan", "limit_key") DO NOTHING;
+ON CONFLICT DO NOTHING;
