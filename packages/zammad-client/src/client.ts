@@ -1,7 +1,15 @@
-import { buildRequest, enc, type ZammadClientConfig, type ZammadHttpMethod, type ZammadRawRequest } from './request.ts'
+import { ZammadKbWriteGuardError } from './errors.ts'
+import {
+  buildRequest,
+  enc,
+  isKbAnswerWritePath,
+  type ZammadClientConfig,
+  type ZammadHttpMethod,
+  type ZammadRawRequest,
+} from './request.ts'
 import type {
-  PublicEmailReplyParams,
   KbDraftAnswerParams,
+  PublicEmailReplyParams,
   TicketUpdateFields,
   ZammadArticle,
   ZammadKbAnswer,
@@ -16,14 +24,25 @@ export type { ZammadClientConfig, ZammadHttpMethod } from './request.ts'
  * Main (safe) Zammad client. It can read tickets/articles/KB and write
  * replies, notes, ticket attributes and KB DRAFTS.
  *
- * It deliberately has NO publish method and NO method that edits an existing
- * KB answer. Those live in `@hitly/zammad-client/publisher`, which only
- * `execute_approved` may import (see README + entry-guards.test.ts).
+ * It has NO publish method and NO method that edits an existing KB answer,
+ * and it CANNOT reach such a path even via `rawRequest`: writes to
+ * .../knowledge_bases/.../answers... and the publish/internal/archive/
+ * unarchive actions are refused with ZammadKbWriteGuardError before any
+ * network call. Those surfaces live only in `@hitly/zammad-client/publisher`
+ * (execute_approved only; README + entry-guards.test.ts).
+ *
+ * The API token is taken ONLY from the constructor config (per-instance
+ * tokens: triage, accounts, security, finance, general, librarian,
+ * kb-publisher). The client never reads any global env var.
  */
 export interface ZammadClient {
   /**
-   * Escape hatch for admin/API surfaces the typed methods do not cover yet
-   * (e.g. Object Manager). Prefer adding a typed method for support flows.
+   * Escape hatch for admin/API surfaces the typed methods do not cover (e.g.
+   * Object Manager reads/writes on Ticket attributes). CONFINED: any write
+   * (POST/PUT/PATCH/DELETE) targeting a KB answer path or a KB publish/
+   * internal/archive/unarchive action is refused with
+   * ZammadKbWriteGuardError — no fetch is made. Non-idempotent raw POSTs
+   * retry on 429 only (never on 5xx).
    */
   rawRequest<T>(method: ZammadHttpMethod, path: string, body?: unknown): Promise<T>
 
@@ -41,8 +60,19 @@ export interface ZammadClient {
 export function createZammadClient(config: ZammadClientConfig): ZammadClient {
   const request = buildRequest(config)
 
+  const guardedRawRequest: ZammadRawRequest = <T>(
+    method: ZammadHttpMethod,
+    path: string,
+    body?: unknown,
+  ): Promise<T> => {
+    if (isKbAnswerWritePath(method, path)) {
+      return Promise.reject(new ZammadKbWriteGuardError({ method, path }))
+    }
+    return request<T>(method, path, body)
+  }
+
   return {
-    rawRequest: request,
+    rawRequest: guardedRawRequest,
 
     async getTicket(id) {
       return request<ZammadTicket>('GET', `/api/v1/tickets/${enc(id)}`)
@@ -53,6 +83,8 @@ export function createZammadClient(config: ZammadClientConfig): ZammadClient {
     },
 
     async addPublicEmailReply(ticketId, reply) {
+      // Non-idempotent POST: retried on 429 only (never 5xx) — an article
+      // that Zammad already stored must not be sent to the customer twice.
       return request<ZammadArticle>('POST', `/api/v1/tickets/${enc(ticketId)}/articles`, {
         type: 'email',
         internal: false,
@@ -102,7 +134,8 @@ export function createZammadClient(config: ZammadClientConfig): ZammadClient {
       }
       if (params.kbLocaleId !== undefined) translation.kb_locale_id = params.kbLocaleId
       // Creating an answer does NOT publish it: published_at stays null until
-      // POST .../publish, which only the publisher entry point exposes.
+      // the publish action, which only the publisher entry point exposes.
+      // Non-idempotent POST: 429-only retry.
       // // VERIFY against Zammad 7.2 when TEST exists (draft semantics)
       return request<ZammadKbAnswer>('POST', `/api/v1/knowledge_bases/${enc(kbId)}/answers`, {
         category_id: params.categoryId,

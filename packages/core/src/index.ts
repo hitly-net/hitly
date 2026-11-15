@@ -17,28 +17,6 @@ export const DECISIONS = ['accept', 'reject', 'edit', 'respond', 'ignore', 'canc
 
 export type Decision = (typeof DECISIONS)[number]
 
-/**
- * Support ticket types for HITLy support → Zammad. The Zammad Object Manager
- * select attribute `hitly_type` is derived from this list by
- * @hitly/zammad-client/scripts/setup-hitly-type-field.ts.
- * Adding a type is ONE line here (value = stable API id, label = display).
- */
-export const SUPPORT_TICKET_TYPES = [
-  { value: 'billing', label: 'Billing' },
-  { value: 'account', label: 'Account' },
-  { value: 'data', label: 'Data' },
-  { value: 'general', label: 'General' },
-  { value: 'feature', label: 'Feature request' },
-  { value: 'bug', label: 'Bug' },
-  { value: 'security', label: 'Security/Abuse' },
-] as const
-
-export type SupportTicketType = (typeof SUPPORT_TICKET_TYPES)[number]['value']
-
-export function isSupportTicketType(value: string): value is SupportTicketType {
-  return SUPPORT_TICKET_TYPES.some((type) => type.value === value)
-}
-
 export type ApprovalStatus = 'pending' | 'decided' | 'expired' | 'failed_resume' | 'cancelled'
 
 export const OPEN_APPROVAL_STATUSES = ['pending', 'failed_resume'] as const
