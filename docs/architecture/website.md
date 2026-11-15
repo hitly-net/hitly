@@ -25,7 +25,9 @@ product and to serve machine-readable surfaces for agents.
 
 - Static/marketing pages rendered by Next.js.
 - Documentation content as MDX under `content/docs`.
-- `POST` waitlist submissions forwarded to `WAITLIST_WEBHOOK_URL`.
+- `POST` waitlist submissions accepted locally; forwarded to
+  `WAITLIST_WEBHOOK_URL` only when that variable is set to a non-blank URL
+  (opt-in, no default — unset means no outbound request).
 
 ## How it talks to the others
 
