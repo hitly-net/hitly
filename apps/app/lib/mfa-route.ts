@@ -149,7 +149,9 @@ function expireChallengeCookie(response: NextResponse, secure: boolean) {
   response.headers.append('set-cookie', parts.join('; '))
 }
 
-async function defaultGetSessionUser(headers: Headers): Promise<MfaSessionUser | null> {
+export async function defaultGetSessionUser(
+  headers: Headers,
+): Promise<MfaSessionUser | null> {
   if (!auth) return null
   const session = await auth.api.getSession({ headers })
   return session?.user ? { id: session.user.id, email: session.user.email } : null

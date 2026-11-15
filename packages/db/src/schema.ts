@@ -1,6 +1,8 @@
-import { CHANNEL_TYPES, DECISIONS, PLUGIN_IDS, PROJECT_ROLES, PROJECT_STATUSES, WORKSPACE_ROLES } from '@hitly/core'
+import { CHANNEL_TYPES, DECISIONS, PLUGIN_IDS, PROJECT_ROLES, PROJECT_STATUSES, WORKSPACE_PLANS, WORKSPACE_ROLES } from '@hitly/core'
+import { sql } from 'drizzle-orm'
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -626,6 +628,34 @@ export const workspaceOtelEndpoints = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [index('workspace_otel_endpoints_workspace_idx').on(table.workspaceId)],
+)
+
+/**
+ * Tier entitlements map: the minimum workspace plan that unlocks each
+ * boolean feature. Seeded by migration 0015 (mirrors TIER_ENTITLEMENT_SEED
+ * in @hitly/core). The application never hard-codes a tier check: every
+ * feature gate reads this table through the single helper
+ * `can(workspace, feature)` (apps/app/lib/tier-entitlements.ts).
+ *
+ * Moving a feature between tiers is one statement, no code change:
+ *   UPDATE tier_entitlements SET min_plan = 'pro' WHERE feature = 'sso_google';
+ * The row cache in the helper refreshes within its TTL (default 10s).
+ * Missing rows deny (fail-closed), so DELETE removes a feature entirely.
+ */
+export const tierEntitlements = pgTable(
+  'tier_entitlements',
+  {
+    feature: varchar('feature', { length: 64 }).primaryKey(),
+    minPlan: varchar('min_plan', { length: 32 }).notNull(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    check(
+      'tier_entitlements_min_plan_check',
+      // Plan names come from WORKSPACE_PLANS (a compile-time constant).
+      sql`${table.minPlan} in (${sql.raw(WORKSPACE_PLANS.map((plan) => `'${plan}'`).join(', '))})`,
+    ),
+  ],
 )
 
 /** Tables Cloud RLS pins to `app.workspace_id`. Control-plane identity tables are not listed. */
