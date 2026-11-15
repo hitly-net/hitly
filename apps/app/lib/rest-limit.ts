@@ -3,10 +3,18 @@
  * (everything not already covered by a dedicated family such as `ingest`).
  *
  * Families and defaults (env overrides follow the usual pattern
- * HITLY_RATE_LIMIT_REST_READ_LIMIT / _WINDOW_MS etc., whole numbers):
- *   rest-read  600/min — GETs and session-authed requests
- *   rest-write 120/min — key/token-authed mutations
- *   invite      30/min — invite lookup/accept attempts
+ * HITLY_RATE_LIMIT_REST_READ_LIMIT / _WINDOW_MS etc.; an unusable or
+ * zero-valued override warns at startup and the default is kept):
+ *   rest-read     600/min — GETs and session-authed requests
+ *   rest-write    120/min — key/token-authed mutations
+ *   invite         30/min — invite lookup/accept attempts
+ *   failed-auth    60/min — unauthenticated or invalid key/token attempts,
+ *                            counted per client ADDRESS only (never per
+ *                            unverified subject, so guesses cannot mint
+ *                            per-subject buckets)
+ *
+ * The unauthenticated /api/v1/health probe is deliberately NOT limited at
+ * all (monitoring must never be throttled and must not write to the DB).
  *
  * Subjects never carry raw secrets: API keys go in as SHA-256 via
  * hashApiKey(), invite/housekeeping capabilities as SHA-256 of the token,
@@ -30,17 +38,35 @@ export const REST_WRITE_LIMIT = 120
 export const REST_WRITE_WINDOW_MS = 60_000
 export const INVITE_LIMIT = 30
 export const INVITE_WINDOW_MS = 60_000
+export const FAILED_AUTH_LIMIT = 60
+export const FAILED_AUTH_WINDOW_MS = 60_000
 
 export function restLimitedLog(kind: RestLimitKind): string {
   return `[hitly rest] Request refused: too many requests (${kind}).`
 }
 
-export type RestLimitKind = 'read' | 'write' | 'invite'
+export type RestLimitKind = 'read' | 'write' | 'invite' | 'failed-auth'
 
 const acquirers: Record<RestLimitKind, (subject: string) => Promise<RateLimitDecision>> = {
   read: createRateAcquire('rest-read', { limit: REST_READ_LIMIT, windowMs: REST_READ_WINDOW_MS }),
   write: createRateAcquire('rest-write', { limit: REST_WRITE_LIMIT, windowMs: REST_WRITE_WINDOW_MS }),
   invite: createRateAcquire('invite', { limit: INVITE_LIMIT, windowMs: INVITE_WINDOW_MS }),
+  'failed-auth': createRateAcquire('failed-auth', { limit: FAILED_AUTH_LIMIT, windowMs: FAILED_AUTH_WINDOW_MS }),
+}
+
+export type RestLimitAcquire = (subject: string) => Promise<RateLimitDecision> | RateLimitDecision
+
+let acquireOverride: ((kind: RestLimitKind, subject: string) => Promise<RateLimitDecision> | RateLimitDecision) | null = null
+
+/**
+ * Test seam: force every family's decision (e.g. always DENY) so a route-level
+ * test proves the route actually consults the limiter before doing work.
+ * Passing null restores the real limiters.
+ */
+export function setRestLimitAcquireOverrideForTests(
+  fn: ((kind: RestLimitKind, subject: string) => Promise<RateLimitDecision> | RateLimitDecision) | null,
+): void {
+  acquireOverride = fn
 }
 
 /** SHA-256 hex — for capability-shaped values (invite tokens, cron tokens). */
@@ -61,15 +87,25 @@ export function clientAddressRestSubject(headers: Headers): string {
 /**
  * Count one request against the family budget. Returns null when allowed, or
  * a ready-to-send 429 with `Retry-After` seconds when the budget is spent.
- * `acquire` is injectable for tests.
+ * `acquire` is injectable for tests (as is the global seam above).
  */
 export async function applyRestLimit(
   kind: RestLimitKind,
   subject: string,
-  acquire: (subject: string) => Promise<RateLimitDecision> | RateLimitDecision = acquirers[kind],
+  acquire?: RestLimitAcquire,
 ): Promise<NextResponse | null> {
-  const decision = await acquire(subject)
+  const decision = await (acquire ?? acquireOverride?.bind(null, kind) ?? acquirers[kind])(subject)
   if (decision.allowed) return null
   console.warn(restLimitedLog(kind))
   return withRetryAfter(NextResponse.json({ error: 'too_many_requests' }, { status: 429 }), decision.retryAfterMs)
+}
+
+/**
+ * Count an unauthenticated / invalid-credential attempt against the shared
+ * per-CLIENT-ADDRESS failed-auth budget. Never keyed by the presented (and
+ * therefore unverified) key or token. Returns null when allowed, or a 429
+ * with `Retry-After` when that address has spent its budget.
+ */
+export function applyFailedAuthLimit(request: Request, acquire?: RestLimitAcquire): Promise<NextResponse | null> {
+  return applyRestLimit('failed-auth', clientAddressRestSubject(request.headers), acquire)
 }

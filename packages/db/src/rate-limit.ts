@@ -202,24 +202,37 @@ export function createSharedRateLimiter(options: SharedRateLimiterOptions): Shar
 /**
  * One rule's env override: HITLY_RATE_LIMIT_<NAME>_LIMIT and
  * HITLY_RATE_LIMIT_<NAME>_WINDOW_MS, where NAME is the limiter name upper-cased
- * with '-' replaced by '_'. Anything that is not a whole number (or is below
- * `min`) is a startup error naming the variable — never a silent surprise.
+ * with '-' replaced by '_'. An unusable value (not a whole number, or below
+ * the minimum — which includes a LIMIT of 0) is never fatal: it warns once
+ * per variable, without echoing the value, and the default is used. A
+ * misconfigured limiter variable can therefore never 500 the app.
  */
+const warnedVariables = new Set<string>()
+
+/** Only for tests: reset the once-per-variable warning memory. */
+export function resetRateLimitEnvWarningsForTests(): void {
+  warnedVariables.clear()
+}
+
 export function rateLimitRuleFromEnv(
   name: string,
   defaults: RateLimitRule,
   env: Record<string, string | undefined> = process.env,
+  warn: (line: string) => void = (line) => console.warn(line),
 ): RateLimitRule {
   const prefix = `HITLY_RATE_LIMIT_${name.toUpperCase().replace(/-/g, '_')}`
   const parse = (variable: string, raw: string | undefined, fallback: number, min: number): number => {
     if (raw === undefined || raw.trim() === '') return fallback
-    if (!/^\d+$/.test(raw.trim())) throw new Error(`${variable} must be a whole number of at least ${min}`)
-    const value = Number(raw.trim())
-    if (value < min) throw new Error(`${variable} must be a whole number of at least ${min}`)
-    return value
+    const trimmed = raw.trim()
+    if (/^\d+$/.test(trimmed) && Number(trimmed) >= min) return Number(trimmed)
+    if (!warnedVariables.has(variable)) {
+      warnedVariables.add(variable)
+      warn(`[hitly rate-limit] ${variable} is not a whole number of at least ${min}; using the default`)
+    }
+    return fallback
   }
   return {
-    limit: parse(`${prefix}_LIMIT`, env[`${prefix}_LIMIT`], defaults.limit, 0),
+    limit: parse(`${prefix}_LIMIT`, env[`${prefix}_LIMIT`], defaults.limit, 1),
     windowMs: parse(`${prefix}_WINDOW_MS`, env[`${prefix}_WINDOW_MS`], defaults.windowMs, 1),
   }
 }

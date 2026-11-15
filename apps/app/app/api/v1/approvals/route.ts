@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
-import { listRequesterPending } from '@/lib/approvals'
+import { listRequesterPending, authenticateProjectKey } from '@/lib/approvals'
 import { handleIngestPost } from '@/lib/ingest-route'
-import { applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
+import { applyFailedAuthLimit, applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
+import { isWellFormedApiKey } from '@/lib/keys'
 import { parseCursorParam, parseLimitParam } from '@/lib/list-cursor'
 
 export async function POST(request: Request) {
@@ -18,8 +19,23 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
   if (!apiKey) return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
-  const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey))
-  if (limited) return limited
+  // The per-key budget is only touched AFTER the key authenticates; junk or
+  // unknown keys are counted per client address in the failed-auth budget,
+  // so guesses can never mint per-key rows. The unauthenticated reply below
+  // is produced by listRequesterPending itself, unchanged.
+  if (isWellFormedApiKey(apiKey)) {
+    const authn = await authenticateProjectKey(apiKey)
+    if (authn) {
+      const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey))
+      if (limited) return limited
+    } else {
+      const failed = await applyFailedAuthLimit(request)
+      if (failed) return failed
+    }
+  } else {
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+  }
   const url = new URL(request.url)
   const status = url.searchParams.get('status') ?? 'open'
   // MCP list_pending sends status=pending. Treat it as open; do not widen to other values.

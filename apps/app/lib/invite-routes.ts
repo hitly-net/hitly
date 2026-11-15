@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { appOwnOrigin } from './cors'
-import { applyRestLimit, hashRestSubject } from './rest-limit'
+import { applyFailedAuthLimit, applyRestLimit, hashRestSubject } from './rest-limit'
 import { normaliseEmail } from './invite-signup'
 import {
   acceptInviteAsUser,
@@ -67,10 +67,22 @@ export async function handleInviteLookup(request: Request, deps: InviteRouteDeps
   const blocked = rejectCrossSite(request)
   if (blocked) return blocked
   const { token } = await readToken(request)
+  // A malformed or unknown token is unverified: it counts per client address
+  // (failed-auth), never per token, so guesses cannot mint per-token rows.
+  // Only a verified token is counted in the invite budget (by hash).
+  if (!isWellFormedInviteToken(token)) {
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+    return refusal('invalid')
+  }
+  const lookup = await lookupInvite(token)
+  if (!lookup.ok) {
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+    return refusal(lookup.reason)
+  }
   const limited = await applyRestLimit('invite', hashRestSubject('invite:' + String(token)))
   if (limited) return limited
-  const lookup = await lookupInvite(token)
-  if (!lookup.ok) return refusal(lookup.reason)
   const session = await deps.getSessionUser(request)
   const invitedEmail = normaliseEmail(lookup.invite.email)
   return json({
@@ -102,9 +114,21 @@ export async function handleInviteAccept(request: Request, deps: InviteRouteDeps
   const blocked = rejectCrossSite(request)
   if (blocked) return blocked
   const { token, body } = await readToken(request)
+  // Verified-token counting only: malformed or unknown tokens count per
+  // client address (failed-auth) and answer exactly as before.
+  if (!isWellFormedInviteToken(token)) {
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+    return refusal('invalid')
+  }
+  const preflight = await lookupInvite(token)
+  if (!preflight.ok) {
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+    return refusal(preflight.reason)
+  }
   const limited = await applyRestLimit('invite', hashRestSubject('invite:' + String(token)))
   if (limited) return limited
-  if (!isWellFormedInviteToken(token)) return refusal('invalid')
 
   const session = await deps.getSessionUser(request)
   if (session) {

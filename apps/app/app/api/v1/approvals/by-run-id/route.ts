@@ -4,7 +4,8 @@ import { approvals, decisionRecords } from '@hitly/db/schema'
 import { requireDb, withTenant } from '@/lib/tenant'
 import { decodeTenantJson } from '@/lib/tenant-crypto'
 import { authenticateProjectKey } from '@/lib/approvals'
-import { applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
+import { applyFailedAuthLimit, applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
+import { isWellFormedApiKey } from '@/lib/keys'
 import { isDecision, type Decision } from '@hitly/core'
 
 /**
@@ -24,8 +25,13 @@ export async function GET(request: Request) {
     if (!apiKey) {
       return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
     }
-    const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey))
-    if (limited) return limited
+    // Per-key counting happens only after the key authenticates; junk or
+    // unknown keys count per client address (failed-auth), never per subject.
+    if (!isWellFormedApiKey(apiKey)) {
+      const failed = await applyFailedAuthLimit(request)
+      if (failed) return failed
+      return NextResponse.json({ error: 'Invalid API key' }, { status: 401 })
+    }
 
     const url = new URL(request.url)
     const runId = url.searchParams.get('runId')
@@ -37,8 +43,13 @@ export async function GET(request: Request) {
 
     const authn = await authenticateProjectKey(apiKey)
     if (!authn) {
+      const failed = await applyFailedAuthLimit(request)
+      if (failed) return failed
       return NextResponse.json({ error: 'Invalid API key' }, { status: 401 })
     }
+
+    const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey))
+    if (limited) return limited
 
     const { project } = authn
 

@@ -13,9 +13,11 @@
 
 import { NextResponse } from 'next/server'
 import { argsHash } from '@hitly/core'
-import { ingestApproval } from './approvals'
+import { ingestApproval, authenticateProjectKey } from './approvals'
 import { createOncePolicy } from './create-once'
 import { createRateAcquire, hashIngestSubject, resolveDecision, withRetryAfter, type RateAcquire } from './rate-limit'
+import { applyFailedAuthLimit, type RestLimitAcquire } from './rest-limit'
+import { isWellFormedApiKey } from './keys'
 
 /** Per-API-key ingest budget before the shared-database limiter answers 429. */
 export const INGEST_LIMIT = 120
@@ -25,24 +27,52 @@ export const INGEST_LIMITED_LOG = '[hitly ingest] Request refused: too many requ
 const ingestAcquire = createRateAcquire('ingest', { limit: INGEST_LIMIT, windowMs: INGEST_WINDOW_MS })
 
 export interface IngestRouteDeps {
-  /** Overrides the limiter for tests: consumes one slot for the hashed key. */
+  /** Overrides the per-key limiter for tests: consumes one slot for the hashed key. */
   acquire?: RateAcquire
+  /** Overrides the per-address failed-auth limiter for tests. */
+  failedAcquire?: RestLimitAcquire
+  /** Overrides key authentication for tests; defaults to the real authenticateProjectKey. */
+  authenticate?: (apiKey: string) => Promise<unknown | null>
   log?: (line: string) => void
 }
+
+export const INGEST_FAILED_AUTH_LOG = '[hitly ingest] Request refused: too many failed attempts from this client.'
 
 export async function handleIngestPost(request: Request, deps: IngestRouteDeps = {}): Promise<NextResponse> {
   const log = deps.log ?? ((line: string) => console.warn(line))
   const acquire = deps.acquire ?? ingestAcquire
+  const authenticate = deps.authenticate ?? authenticateProjectKey
   try {
     const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
     if (!apiKey) {
       return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
     }
 
-    const budget = await resolveDecision(acquire, hashIngestSubject(apiKey), INGEST_WINDOW_MS)
-    if (!budget.allowed) {
-      log(INGEST_LIMITED_LOG)
-      return withRetryAfter(NextResponse.json({ error: 'too_many_requests' }, { status: 429 }), budget.retryAfterMs)
+    // A malformed key is junk and an unknown key is unverified: neither may
+    // create a per-key row. Both count against the per-client-address
+    // failed-auth budget; the standard 401 then comes from ingestApproval
+    // below, unchanged. Only an authenticated key is counted per key (hash).
+    if (isWellFormedApiKey(apiKey)) {
+      const authn = await authenticate(apiKey)
+      if (authn) {
+        const budget = await resolveDecision(acquire, hashIngestSubject(apiKey), INGEST_WINDOW_MS)
+        if (!budget.allowed) {
+          log(INGEST_LIMITED_LOG)
+          return withRetryAfter(NextResponse.json({ error: 'too_many_requests' }, { status: 429 }), budget.retryAfterMs)
+        }
+      } else {
+        const failed = await applyFailedAuthLimit(request, deps.failedAcquire)
+        if (failed) {
+          log(INGEST_FAILED_AUTH_LOG)
+          return failed
+        }
+      }
+    } else {
+      const failed = await applyFailedAuthLimit(request, deps.failedAcquire)
+      if (failed) {
+        log(INGEST_FAILED_AUTH_LOG)
+        return failed
+      }
     }
 
     const raw = await request.text()

@@ -114,3 +114,22 @@ test(
     }
   },
 )
+
+test('config: HITLY_MCP_DATABASE_URL selects the shared-table limiter (M2 wiring)', async () => {
+  const { loadConfig } = await import('./config.ts')
+  const base = { HITLY_API_URL: 'http://127.0.0.1:3001', HITLY_API_KEY: 'hitly_' + 'd'.repeat(32) }
+  assert.equal(loadConfig({ ...base }).rateDatabaseUrl, undefined)
+  assert.equal(
+    loadConfig({ ...base, HITLY_MCP_DATABASE_URL: '  postgres://user:pass@localhost:5432/hitly  ' }).rateDatabaseUrl,
+    'postgres://user:pass@localhost:5432/hitly',
+  )
+  assert.equal(loadConfig({ ...base, HITLY_MCP_DATABASE_URL: '   ' }).rateDatabaseUrl, undefined)
+})
+
+test('main.ts wires the DB-backed limiter when a database URL is configured (M2 wiring)', async () => {
+  const fs = await import('node:fs')
+  const src = fs.readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.match(src, /await createDbBackedRateLimiter\(\{/, 'main must construct the shared limiter')
+  assert.match(src, /if \(config\.rateDatabaseUrl && config\.rateLimit > 0\) \{/, 'main gates the shared limiter on the configured URL')
+  assert.match(src, /databaseUrl: config\.rateDatabaseUrl,/, 'main passes the configured URL to the shared limiter')
+})

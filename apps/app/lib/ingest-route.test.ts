@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { handleIngestPost, INGEST_LIMITED_LOG } from './ingest-route'
+import { handleIngestPost, INGEST_LIMITED_LOG, INGEST_FAILED_AUTH_LOG } from './ingest-route'
 import { hashApiKey } from './keys'
 
 const KEY = 'hitly_' + 'a'.repeat(32)
@@ -31,6 +31,7 @@ describe('POST /api/v1/approvals ingest limiter', () => {
     const lines: string[] = []
     const subjects: string[] = []
     const response = await handleIngestPost(post({ plugin: 'x' }), {
+      authenticate: async () => ({ project: { id: 'prj_x' } }),
       acquire: (subject) => {
         subjects.push(subject)
         return { allowed: false, retryAfterMs: 45_000, count: 121 }
@@ -48,6 +49,7 @@ describe('POST /api/v1/approvals ingest limiter', () => {
   it('an allowed request reaches the handler body checks (gate order)', async () => {
     const subjects: string[] = []
     const response = await handleIngestPost(post(undefined), {
+      authenticate: async () => ({ project: { id: 'prj_x' } }),
       acquire: (subject) => {
         subjects.push(subject)
         return { allowed: true, retryAfterMs: 0, count: 1 }
@@ -58,5 +60,79 @@ describe('POST /api/v1/approvals ingest limiter', () => {
     assert.equal(response.status, 400, 'empty body is the next check after the budget')
     const body = (await response.json()) as { error: string }
     assert.match(body.error, /JSON body required/)
+  })
+
+  it('a malformed key never reaches the per-key limiter; it counts per address (M5)', async () => {
+    const keySubjects: string[] = []
+    const failedSubjects: string[] = []
+    const lines: string[] = []
+    let authenticated = false
+    await handleIngestPost(post({ plugin: 'x' }, `Bearer not-a-hitly-key`), {
+      authenticate: async () => {
+        authenticated = true
+        return { project: { id: 'prj_x' } }
+      },
+      acquire: (subject) => {
+        keySubjects.push(subject)
+        return { allowed: true, retryAfterMs: 0, count: 1 }
+      },
+      failedAcquire: (subject) => {
+        failedSubjects.push(subject)
+        return { allowed: true, retryAfterMs: 0, count: 1 }
+      },
+      log: (line) => lines.push(line),
+    })
+    assert.equal(keySubjects.length, 0, 'a junk key must never mint a per-key bucket')
+    assert.equal(authenticated, false, 'a junk key is not even looked up')
+    assert.equal(failedSubjects.length, 1)
+    assert.match(failedSubjects[0]!, /^addr:/, 'junk attempts count per client address')
+  })
+
+  it('a well-formed but unknown key counts per address only, never per key (M5)', async () => {
+    const keySubjects: string[] = []
+    const failedSubjects: string[] = []
+    await handleIngestPost(post({ plugin: 'x' }), {
+      authenticate: async () => null,
+      acquire: (subject) => {
+        keySubjects.push(subject)
+        return { allowed: true, retryAfterMs: 0, count: 1 }
+      },
+      failedAcquire: (subject) => {
+        failedSubjects.push(subject)
+        return { allowed: true, retryAfterMs: 0, count: 1 }
+      },
+      log: () => {},
+    })
+    assert.equal(keySubjects.length, 0, 'an unverified key must never mint a per-key bucket')
+    assert.deepEqual(failedSubjects, [failedSubjects[0]])
+    assert.match(failedSubjects[0]!, /^addr:/)
+  })
+
+  it('the failed-auth budget answers 429 with Retry-After (M5)', async () => {
+    const lines: string[] = []
+    const response = await handleIngestPost(post({ plugin: 'x' }, `Bearer junk_key`), {
+      failedAcquire: () => ({ allowed: false, retryAfterMs: 30_000, count: 61 }),
+      log: (line) => lines.push(line),
+    })
+    assert.equal(response.status, 429)
+    assert.equal(response.headers.get('retry-after'), '30')
+    assert.deepEqual(lines, [INGEST_FAILED_AUTH_LOG])
+  })
+
+  it('a valid key is counted per hash only after it authenticates (M5)', async () => {
+    const order: string[] = []
+    const response = await handleIngestPost(post(undefined), {
+      authenticate: async () => {
+        order.push('authenticate')
+        return { project: { id: 'prj_x' } }
+      },
+      acquire: () => {
+        order.push('count')
+        return { allowed: true, retryAfterMs: 0, count: 1 }
+      },
+      log: () => {},
+    })
+    assert.deepEqual(order, ['authenticate', 'count'])
+    assert.equal(response.status, 400)
   })
 })
