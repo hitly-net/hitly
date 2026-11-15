@@ -230,7 +230,9 @@ describe('shared budget across two separate pools (M2)', () => {
 describe('fixed-window anchoring (M2)', () => {
   it('the window is anchored at the first request and refusals never slide it', async () => {
     let t = Date.parse('2026-01-01T00:00:00Z')
-    const limiter = createSharedRateLimiter({ pool, now: () => t, sweepIntervalMs: 0 })
+    // An effectively-never interval keeps the opportunistic sweep (which
+    // compares against real DB time) from racing these fake-clock rows.
+    const limiter = createSharedRateLimiter({ pool, now: () => t, sweepIntervalMs: 1e15 })
     const route = 'm2-fixed-window'
     const subject = 'fw-' + newId('rl')
     const rule = { limit: 2, windowMs: 1000 }

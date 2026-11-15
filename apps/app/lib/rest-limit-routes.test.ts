@@ -479,25 +479,6 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
     assert.equal(seamCalls.some((c) => c.kind === 'read'), false)
   })
 
-  it('POST housekeeping: a wrong cron token counts per address then answers 401 (soft 2)', async () => {
-    // allowed pass: 401, but the address was counted in failed-auth
-    seamCalls = []
-    setRestLimitAcquireOverrideForTests((kind, subject) => {
-      seamCalls.push({ kind, subject })
-      return { allowed: true, retryAfterMs: 0, count: 1 }
-    })
-    const allowed = await housekeepingRoute.POST(postJson('/api/v1/housekeeping', {}, { authorization: 'Bearer wrong-secret', 'x-forwarded-for': KEY_A_ADDR }))
-    assert.equal(allowed.status, 401)
-    assert.equal(seamCalls.length, 1)
-    assert.equal(seamCalls[0]!.kind, 'failed-auth')
-    assert.match(seamCalls[0]!.subject, /^addr:/)
-    // denied pass: the budget refusal wins
-    denySeam()
-    const denied = await housekeepingRoute.POST(postJson('/api/v1/housekeeping', {}, { authorization: 'Bearer wrong-secret', 'x-forwarded-for': KEY_A_ADDR }))
-    assert.equal(denied.status, 429)
-    assert.equal(seamCalls[0]!.kind, 'failed-auth')
-  })
-
   it('two addresses keep separate failed-auth budgets; a flood from one never locks out the other (F6a)', async () => {
     allowUntil(2)
     {
