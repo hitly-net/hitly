@@ -34,6 +34,11 @@ describe('pure resolver', () => {
   const map = buildLimitsMap([
     { plan: 'solo', limitKey: 'api_rpm', value: 60 },
     { plan: 'pro', limitKey: 'api_rpm', value: null },
+    // self-hosted present with NULL caps (like the real seed): an unknown
+    // plan must still deny — silently falling back to self-hosted (all
+    // unlimited) is the worst possible bug here, so it must be observable.
+    { plan: 'self-hosted', limitKey: 'api_rpm', value: null },
+    { plan: 'self-hosted', limitKey: 'seats', value: null },
   ])
 
   it('returns the configured cap', () => {
