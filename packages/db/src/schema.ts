@@ -249,18 +249,34 @@ export const passkeys = pgTable(
   ],
 )
 
-/** Account-security audit trail (MFA enrol, disable, recovery, lockout). */
+/**
+ * Account-security audit trail (MFA enrol, disable, recovery, lockout).
+ *
+ * `user_id` is nullable because an entry outlives the account it belongs to:
+ * account deletion anonymises the user's rows instead of deleting them
+ * (`user_id` NULL plus the HMAC columns), and housekeeping purges them once
+ * `retention_expires_at` passes. See lib/account-deletion.ts.
+ */
 export const accountSecurityEvents = pgTable(
   'account_security_events',
   {
     id: id().primaryKey(),
-    userId: id('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+    userId: id('user_id').references(() => users.id, { onDelete: 'cascade' }),
     type: varchar('type', { length: 64 }).notNull(),
+    /** HMAC-SHA256 of the user id; set when the row is anonymised at deletion. */
+    userIdHmac: varchar('user_id_hmac', { length: 64 }),
+    /** HMAC-SHA256 of the account email; set when the row is anonymised. */
+    emailHmac: varchar('email_hmac', { length: 64 }),
+    /** Client address truncated to its /24 (v4) or /64 (v6) block. */
+    ipTruncated: varchar('ip_truncated', { length: 45 }),
+    /** When the anonymised row may be purged; null for live (non-anonymised) rows. */
+    retentionExpiresAt: timestamp('retention_expires_at', { precision: 3, withTimezone: true }),
     createdAt: createdAt(),
   },
-  (table) => [index('account_security_events_user_id_idx').on(table.userId)],
+  (table) => [
+    index('account_security_events_user_id_idx').on(table.userId),
+    index('account_security_events_retention_idx').on(table.retentionExpiresAt),
+  ],
 )
 
 export const workspaces = pgTable('workspaces', {
@@ -581,6 +597,7 @@ export const decisionRecords = pgTable(
   (table) => [
     index('decision_records_approval_idx').on(table.approvalId),
     index('decision_records_workspace_idx').on(table.workspaceId),
+    index('decision_records_actor_user_idx').on(table.actorUserId),
   ],
 )
 
