@@ -49,6 +49,29 @@ export interface EditionNavItem {
   feature?: EntitlementFeature
 }
 
+/**
+ * Billing seam. The OSS edition ships a stub (never a paid plan, no plan
+ * history); the Cloud overlay implements it against its own billing tables.
+ * The app-side wrapper fails closed against DESTRUCTIVE use: a throw from
+ * the hook is treated like "subscription exists" (workspace deletion is
+ * refused) and "plan just changed" (retention sweeps keep data longer).
+ */
+export interface EditionBilling {
+  /**
+   * True while the workspace has a live paid subscription (statuses active,
+   * trialing, past_due or unpaid — including cancel-at-period-end, which is
+   * still live until the period ends). Used by destructive flows (e.g.
+   * workspace deletion) to answer 409 `active_subscription`.
+   */
+  hasActivePaidSubscription(workspaceId: string): Promise<boolean>
+  /**
+   * When the effective plan last changed (e.g. a downgrade), or null when
+   * unknown. Retention sweeps never delete items closed after this instant,
+   * so a downgrade cannot immediately destroy data kept by the richer plan.
+   */
+  getPlanChangedAt(workspaceId: string): Promise<Date | null>
+}
+
 export type TenantDocument = Record<string, unknown>
 
 export type ResolvedProjectApiKey = {
@@ -86,6 +109,8 @@ export interface HitlyEdition {
    * When a tenant pays for isolation, Cloud returns that workspace's connection string.
    */
   resolveDatabaseUrl?(workspace: { id: string; plan: string }): string | null
+  /** Billing seam. OSS provides a never-paid stub; Cloud overrides it. */
+  billing?: EditionBilling
 }
 
 export type EditionId = 'oss' | 'cloud'

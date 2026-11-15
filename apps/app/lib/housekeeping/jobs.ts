@@ -1,13 +1,45 @@
-import { and, eq, inArray, isNotNull, lt } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNotNull, lt } from 'drizzle-orm'
 import { edition } from '@hitly/cloud'
 import { CLOSED_APPROVAL_STATUSES } from '@hitly/core'
 import { approvals, projectEvents, projects, workspaces } from '@hitly/db/schema'
 import { requireDb, withTenant } from '../tenant'
+import { getPlanChangedAt } from '../billing'
 import { deliverApprovalLifecycleEvent } from '../lifecycle-delivery'
 import { affectedRows } from './result'
 import { registerHousekeepingJob } from './scheduler'
 
 const DELETE_CHUNK = 200
+
+/**
+ * Export grace, in days, applied at a plan downgrade: for this window after
+ * the change, the sweep may only delete items CLOSED AFTER the downgrade —
+ * data the richer plan was keeping stays readable/exportable (billing plan
+ * §4). Once the grace has passed the new, shorter retention applies
+ * normally to everything.
+ */
+export const DOWNGRADE_EXPORT_GRACE_DAYS = 30
+
+export type RetentionWindow = {
+  /** Rows with updatedAt < cutoff are age-eligible for deletion. */
+  cutoff: Date
+  /** During a downgrade's export grace, rows need updatedAt >= floor too;
+   * null means no floor (plain retention). */
+  floor: Date | null
+}
+
+/**
+ * Downgrade-safe retention window: during the export grace following a plan
+ * change, only items closed after the change can be deleted; after the
+ * grace the plain retention cutoff applies to everything. With no recorded
+ * plan change this is exactly the plain retention cutoff, so OSS behavior
+ * is unchanged.
+ */
+export function retentionWindow(now: Date, days: number, planChangedAt: Date | null): RetentionWindow {
+  const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+  if (!planChangedAt) return { cutoff, floor: null }
+  const graceExpired = now.getTime() >= planChangedAt.getTime() + DOWNGRADE_EXPORT_GRACE_DAYS * 24 * 60 * 60 * 1000
+  return { cutoff, floor: graceExpired ? null : planChangedAt }
+}
 
 /** Row shape the expiry sweep carries from its SELECT to the callback step. */
 export type ExpireSweepRow = {
@@ -98,21 +130,21 @@ export async function purgeCompletedApprovals() {
   for (const space of spaces) {
     const days = edition.entitlementsFor(space).completedRetentionDays
     if (days == null) continue
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    const retention = retentionWindow(new Date(), days, await getPlanChangedAt(space.id))
     let removed = 0
     await withTenant(space.id, async () => {
       const tenantDb = requireDb()
       for (;;) {
+        const conditions = [
+          eq(approvals.workspaceId, space.id),
+          inArray(approvals.status, [...CLOSED_APPROVAL_STATUSES]),
+          lt(approvals.updatedAt, retention.cutoff),
+        ]
+        if (retention.floor) conditions.push(gte(approvals.updatedAt, retention.floor))
         const stale = await tenantDb
           .select({ id: approvals.id })
           .from(approvals)
-          .where(
-            and(
-              eq(approvals.workspaceId, space.id),
-              inArray(approvals.status, [...CLOSED_APPROVAL_STATUSES]),
-              lt(approvals.updatedAt, cutoff),
-            ),
-          )
+          .where(and(...conditions))
           .limit(DELETE_CHUNK)
         if (stale.length === 0) break
         const ids = stale.map((row) => row.id)
@@ -137,7 +169,7 @@ export async function purgeExpiredAuditEvents() {
 
   for (const space of spaces) {
     const days = edition.entitlementsFor(space).auditRetentionDays
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    const retention = retentionWindow(new Date(), days, await getPlanChangedAt(space.id))
     deleted += await withTenant(space.id, async () => {
       const tenantDb = requireDb()
       const projectIds = await tenantDb
@@ -145,16 +177,16 @@ export async function purgeExpiredAuditEvents() {
         .from(projects)
         .where(eq(projects.workspaceId, space.id))
       if (projectIds.length === 0) return 0
-      const result = await tenantDb.delete(projectEvents).where(
-        and(
-          eq(projectEvents.workspaceId, space.id),
-          inArray(
-            projectEvents.projectId,
-            projectIds.map((row) => row.id),
-          ),
-          lt(projectEvents.createdAt, cutoff),
+      const conditions = [
+        eq(projectEvents.workspaceId, space.id),
+        inArray(
+          projectEvents.projectId,
+          projectIds.map((row) => row.id),
         ),
-      )
+        lt(projectEvents.createdAt, retention.cutoff),
+      ]
+      if (retention.floor) conditions.push(gte(projectEvents.createdAt, retention.floor))
+      const result = await tenantDb.delete(projectEvents).where(and(...conditions))
       return affectedRows(result)
     })
   }
