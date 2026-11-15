@@ -108,6 +108,24 @@ describe('POST /api/v1/approvals ingest limiter', () => {
     assert.match(failedSubjects[0]!, /^addr:/)
   })
 
+  it('a well-formed but unknown key that trips the budget gets 429 (F4c)', async () => {
+    const lines: string[] = []
+    const keySubjects: string[] = []
+    const response = await handleIngestPost(post({ plugin: 'x' }), {
+      authenticate: async () => null,
+      acquire: (subject) => {
+        keySubjects.push(subject)
+        return { allowed: true, retryAfterMs: 0, count: 1 }
+      },
+      failedAcquire: () => ({ allowed: false, retryAfterMs: 30_000, count: 61 }),
+      log: (line) => lines.push(line),
+    })
+    assert.equal(response.status, 429, 'the unknown-key branch must consult the failed-auth budget')
+    assert.equal(response.headers.get('retry-after'), '30')
+    assert.deepEqual(lines, [INGEST_FAILED_AUTH_LOG])
+    assert.equal(keySubjects.length, 0)
+  })
+
   it('the failed-auth budget answers 429 with Retry-After (M5)', async () => {
     const lines: string[] = []
     const response = await handleIngestPost(post({ plugin: 'x' }, `Bearer junk_key`), {

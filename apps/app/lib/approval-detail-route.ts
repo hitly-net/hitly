@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import type { requireApiWorkspace } from './api-session'
 import type { getApprovalDetail } from './approval-detail'
 import type { getApprovalForOrigin } from './approvals'
+import { authenticateProjectKey } from './approvals'
 import { applyFailedAuthLimit, applyRestLimit, apiKeyRestSubject, type RestLimitAcquire } from './rest-limit'
 import { isWellFormedApiKey } from './keys'
 
@@ -15,15 +16,20 @@ type GetApprovalForOriginFn = typeof getApprovalForOrigin
  * getApprovalDetail after a 401 fallthrough. Deps are injectable so tests can
  * drive the session path without booting Next auth.
  *
- * Rate limiting (rest-read, subject = SHA-256 of the key): the key is first
- * authenticated via getApprovalForOrigin, and only an authenticated key is
- * counted per key; a failed key attempt counts per client address in the
- * failed-auth budget (never per unverified subject).
+ * Rate limiting (rest-read, subject = SHA-256 of the key): authentication is
+ * separate from the lookup, and an authenticated key is counted per key
+ * IMMEDIATELY after it authenticates — whatever the lookup then returns, so a
+ * key probing unknown or foreign ids still burns its read budget. An
+ * unverified key never reaches the per-key budget; it counts per client
+ * address in the failed-auth budget (never per unverified subject). A
+ * malformed bearer is likewise counted per address before falling through to
+ * the session path.
  */
 export function createApprovalDetailGet(deps: {
   requireApiWorkspace: RequireApiWorkspaceFn
   getApprovalDetail: GetApprovalDetailFn
   getApprovalForOrigin: GetApprovalForOriginFn
+  authenticate?: (apiKey: string) => Promise<unknown | null>
   restAcquire?: RestLimitAcquire
   failedAcquire?: RestLimitAcquire
 }) {
@@ -31,17 +37,28 @@ export function createApprovalDetailGet(deps: {
     const { id } = await context.params
     const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
     if (apiKey && isWellFormedApiKey(apiKey)) {
-      const origin = await deps.getApprovalForOrigin({ apiKey, approvalId: id })
-      if (origin.ok) {
+      const authn = deps.authenticate ? await deps.authenticate(apiKey) : await authenticateProjectKey(apiKey)
+      if (authn) {
+        // Count per key as soon as the key authenticates, BEFORE the read,
+        // whatever the lookup below returns (own id, foreign id, unknown id).
         const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey), deps.restAcquire)
         if (limited) return limited
-        const { ok: _ok, ...body } = origin
-        void _ok
-        return NextResponse.json(body)
+        const origin = await deps.getApprovalForOrigin({ apiKey, approvalId: id })
+        if (origin.ok) {
+          const { ok: _ok, ...body } = origin
+          void _ok
+          return NextResponse.json(body)
+        }
+        if (origin.status !== 401) {
+          return NextResponse.json({ error: origin.error }, { status: origin.status })
+        }
+      } else {
+        const failed = await applyFailedAuthLimit(request, deps.failedAcquire)
+        if (failed) return failed
       }
-      if (origin.status !== 401) {
-        return NextResponse.json({ error: origin.error }, { status: origin.status })
-      }
+    } else if (apiKey) {
+      // A bearer that is not a well-formed API key is counted per address too
+      // (M5 shape), then falls through to the session path (mobile reviewers).
       const failed = await applyFailedAuthLimit(request, deps.failedAcquire)
       if (failed) return failed
     }

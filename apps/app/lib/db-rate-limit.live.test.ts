@@ -342,3 +342,38 @@ describe('failed-auth before counting (M5, live)', () => {
     }
   })
 })
+
+describe('opportunistic sweep runs from acquire, not only when called (SW3)', () => {
+  it('an acquire past the sweep interval deletes expired buckets of other routes', async () => {
+    const r = route('sweep-trig')
+    const other = route('sweep-victim')
+    const nowMs = Date.now()
+    // Seed one expired bucket under a DIFFERENT route name than the acquirer uses.
+    await pool.query(
+      'INSERT INTO rate_limit_buckets (bucket_key, route, count, window_start, expires_at) VALUES ($1,$2,1,$3,$4)',
+      [rateLimitBucketKey(other, 'victim-' + run), other, new Date(nowMs - 120_000), new Date(nowMs - 60_000)],
+    )
+    const seed = await rowsFor(other)
+    assert.equal(seed.length, 1, 'the expired row exists before the acquire')
+
+    const clock = nowMs
+    const limiter = createSharedRateLimiter({
+      pool,
+      now: () => clock,
+      sweepIntervalMs: 1_000,
+      log: () => {},
+    })
+    await limiter.acquire(r, 'trigger-' + run, { limit: 10, windowMs: 60_000 })
+
+    // The sweep is fire-and-forget: poll briefly for the expired row to vanish.
+    let gone = false
+    for (let i = 0; i < 40; i++) {
+      if ((await rowsFor(other)).length === 0) {
+        gone = true
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    assert.ok(gone, 'acquire must trigger the throttled expiry sweep (SW3)')
+  })
+})

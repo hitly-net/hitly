@@ -26,6 +26,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   // A Bearer value that is not an API key falls through to the session path
   // (reviewer Bearer session tokens on mobile).
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+  if (apiKey && !isWellFormedApiKey(apiKey)) {
+    // A bearer that is not a well-formed API key is counted per client
+    // address (M5 shape) before falling through to the session path.
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+  }
   if (apiKey && isWellFormedApiKey(apiKey)) {
     // Count per key (by hash) only once the key has authenticated; a failed
     // attempt counts per client address in the failed-auth budget instead.

@@ -57,7 +57,7 @@ Buckets are keyed by `SHA-256(route + NUL + subject)` — raw IPs, emails and AP
 
 When the database is unavailable the limiter logs one line per process and transparently falls back to per-process counting — endpoints stay protected, limits just become per-node until Postgres returns. Set `HITLY_RATE_LIMIT_DB=0` to force per-process counting everywhere (e.g. to run without migration `0016`).
 
-Per-family limits and windows come from env (whole numbers). An unusable value — not a whole number, or `0` for a limit — is never fatal: it logs one startup warning naming only the variable (never the value) and keeps the shipped default, so a typo cannot disable a limiter or take the app down. The defaults shipped with each route are:
+Per-family limits and windows come from env (whole numbers). An unusable value — not a whole number, or `0` for a limit — is never fatal: it logs one warning per affected variable, the first time that family is used (never the value), and keeps the shipped default, so a typo cannot disable a limiter or take the app down. The defaults shipped with each route are:
 
 | Variable | Default | Covers |
 | --- | --- | --- |
@@ -77,6 +77,8 @@ Per-family limits and windows come from env (whole numbers). An unusable value �
 | `HITLY_RATE_LIMIT_FAILED_AUTH_LIMIT` / `_WINDOW_MS` | 60 / 60 s | Unauthenticated / invalid key-and-token attempts per hashed client address (never per unverified subject) |
 
 `HITLY_TRUSTED_PROXIES` is a comma-separated list of the reverse-proxy addresses (IPs/CIDRs) allowed to speak for a client via `X-Forwarded-For` — list your reverse proxy there, and firewall the app ports so only that proxy can reach them; otherwise any client could spoof its address and dodge the per-address budgets.
+
+Note on direct access: when no trusted proxy supplies `X-Forwarded-For`, all such clients share one per-address bucket (`addr:unknown`) for the failed-auth and address-keyed budgets. Behind the recommended reverse-proxy setup every request carries the header, so this only bites when clients reach the app ports directly — another reason to firewall them.
 
 `HITLY_RATE_LIMIT_AUTH_ENABLED=1|0` forces Better Auth's own limiter on or off; the default keeps its production-only behaviour. The MCP server limits per API key in-process by default; set `HITLY_MCP_DATABASE_URL` to count through the same shared table (tune with `HITLY_MCP_RATE_LIMIT` / `HITLY_MCP_RATE_LIMIT_WINDOW_MS`).
 

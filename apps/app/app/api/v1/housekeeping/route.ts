@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { registerDefaultHousekeepingJobs } from '@/lib/housekeeping/jobs'
 import { listHousekeepingJobs, runDueHousekeeping } from '@/lib/housekeeping/scheduler'
-import { applyRestLimit, hashRestSubject } from '@/lib/rest-limit'
+import { applyFailedAuthLimit, applyRestLimit, hashRestSubject } from '@/lib/rest-limit'
 
 function authorize(request: Request) {
   const secret = process.env.HITLY_CRON_SECRET
@@ -18,6 +18,10 @@ function requestToken(request: Request): string {
 
 export async function POST(request: Request) {
   if (!authorize(request)) {
+    // A wrong cron token is a credential failure: count it per client
+    // address in the failed-auth budget, then answer 401 as before.
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const limited = await applyRestLimit('write', hashRestSubject('housekeeping:' + requestToken(request)))
