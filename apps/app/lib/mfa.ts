@@ -14,6 +14,21 @@ import { RESET_REQUEST_NETWORK_MESSAGE } from './password-reset'
 
 export const MFA_STATUS_ENDPOINT = '/api/session/mfa'
 export const MFA_ENROL_ENDPOINT = '/api/session/mfa/enrol'
+
+/**
+ * Product rule (entitlements): a tier gate covers NEW use only. Someone
+ * already enrolled always keeps management of what they have — disable,
+ * regenerate recovery codes, and the sign-in challenge keep working even
+ * when the `mfa` feature is denied; only the enrolment affordance (and the
+ * enrol route) answer to the gate. So the Security page shows the
+ * Authenticator-app section when MFA is enabled OR the feature is allowed.
+ */
+export function shouldShowAuthenticatorSection(
+  status: { enabled: boolean },
+  featureAllowed: boolean,
+): boolean {
+  return status.enabled || featureAllowed
+}
 export const MFA_CONFIRM_ENDPOINT = '/api/session/mfa/confirm'
 export const MFA_DISABLE_ENDPOINT = '/api/session/mfa/disable'
 export const MFA_RECOVERY_CODES_ENDPOINT = '/api/session/mfa/recovery-codes'

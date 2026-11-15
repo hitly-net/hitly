@@ -115,7 +115,7 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
           projectId={id}
           projectName={project.name}
           status={project.status}
-          lifecycleAvailable={canUseProjectLifecycle(workspace)}
+          lifecycleAvailable={await canUseProjectLifecycle(workspace)}
         />
       ) : null}
 

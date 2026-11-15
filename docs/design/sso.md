@@ -6,7 +6,7 @@ This note proposes social SSO for HITLy via Better Auth social providers (Google
 
 It is not part of the public docs site (`apps/web/content/docs`). Keep it out of that navigation.
 
-SSO is a **Cloud** entitlement (`FEATURES` includes `'sso'`; OSS `entitlementsForPlan` leaves it `false`). Provider config and buttons already sit behind the `@hitly/cloud` stub. Do not put proprietary IdP logic in this public repo; fill the private overlay. Account-linking, MFA, and workspace-enforcement **rules** in this note still apply wherever SSO is turned on.
+SSO is gated by the **tier entitlements map** (the `tier_entitlements` DB table, read only through `can(workspace, feature)` in `apps/app/lib/tier-entitlements.ts`; seeded by migration 0015): `sso_google` and `sso_slack` require Team and above, `sso_microsoft`, `sso_github`, `sso_saml` and the catch-all `sso` (other SSO) require Enterprise. Moving a provider between tiers is an `UPDATE tier_entitlements SET min_plan = ...`, not a code change. Provider config and buttons already sit behind the `@hitly/cloud` stub. Do not put proprietary IdP logic in this public repo; fill the private overlay. Account-linking, MFA, and workspace-enforcement **rules** in this note still apply wherever SSO is turned on.
 
 ---
 
@@ -207,7 +207,7 @@ Auth is **user-level**. Policy is **workspace-level**. A person can be `owner` o
 
 ### 3.1 Setting
 
-Workspace admins (`owner` / `admin`, `canManageWorkspace`) get a Cloud-only setting, gated by `hasFeature(entitlements, 'sso')`:
+Workspace admins (`owner` / `admin`, `canManageWorkspace`) get a Cloud-only setting, gated by the tier map (`can(workspace, 'sso')` for the enterprise catch-all; the per-provider features above gate each button):
 
 - `requireSso: boolean` (default false)
 - Optional `allowedProviders: ('google' | 'github' | 'microsoft')[]` (empty = any enabled host provider)
@@ -273,7 +273,7 @@ Out of the first social cut. Sketch only:
 - **Domain verification** before a workspace may capture `example.com` (DNS TXT or equivalent). JIT provisioning of users on first successful assertion, still respecting invite-only hosts (`HITLY_SIGNUP_ENABLED`).
 - **SCIM** later (provision / deprovision memberships). Not required to ship SAML.
 - **Per-workspace IdP** config (ACS URL, entity ID, client id/secret, metadata) lives in the private Cloud overlay. ACS / redirect URLs still derive from `BETTER_AUTH_URL`.
-- **Pricing:** keep `sso` on `Entitlements.features`. Likely split: social SSO on a paid Cloud plan; SAML/OIDC + SCIM on `enterprise`. Exact mapping is a PM question. OSS stays `sso: false`.
+- **Pricing:** SSO gating lives in the `tier_entitlements` map, not in code: the seed puts `sso_google`/`sso_slack` at Team and `sso_microsoft`/`sso_github`/`sso_saml`/`sso` at Enterprise. Re-tier with an `UPDATE` (see `apps/web/content/docs/entitlements.mdx`). OSS runs the same table — seed rows decide, there is no compiled-in `sso: false`.
 
 Social linking rules (`disableImplicitLinking: true`, HITLy `getUserInfo`, last-method unlink, MFA) apply to enterprise connections unless a workspace explicitly trusts that IdP for MFA.
 
