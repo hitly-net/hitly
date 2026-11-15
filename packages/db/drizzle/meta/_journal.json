@@ -108,7 +108,7 @@
       "breakpoints": true
     },
     {
-      "idx": 15,
+"idx": 15,
       "version": "7",
       "when": 1794506868778,
       "tag": "0015_smiling_richard_fisk",
@@ -126,13 +126,6 @@
       "version": "7",
       "when": 1794715509587,
       "tag": "0017_blushing_mentallo",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "7",
-      "when": 1794726446051,
-      "tag": "0018_past_the_watchers",
       "breakpoints": true
     }
   ]
