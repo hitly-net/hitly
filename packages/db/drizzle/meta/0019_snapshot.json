@@ -1,5 +1,5 @@
 {
-  "id": "f62e1fa6-6494-479b-b7ae-674606ae8887",
+  "id": "4603f47b-f7ea-48ab-8ce6-8bf27a6e6016",
   "prevId": "a38804ad-e2d9-496c-95fb-4b1ec25e3b2e",
   "version": "7",
   "dialect": "postgresql",
@@ -18,13 +18,37 @@
           "name": "user_id",
           "type": "varchar(36)",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "type": {
           "name": "type",
           "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true
+        },
+        "user_id_hmac": {
+          "name": "user_id_hmac",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email_hmac": {
+          "name": "email_hmac",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ip_truncated": {
+          "name": "ip_truncated",
+          "type": "varchar(45)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "retention_expires_at": {
+          "name": "retention_expires_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -40,6 +64,21 @@
           "columns": [
             {
               "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "account_security_events_retention_idx": {
+          "name": "account_security_events_retention_idx",
+          "columns": [
+            {
+              "expression": "retention_expires_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -617,6 +656,21 @@
           "columns": [
             {
               "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "decision_records_actor_user_idx": {
+          "name": "decision_records_actor_user_idx",
+          "columns": [
+            {
+              "expression": "actor_user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
