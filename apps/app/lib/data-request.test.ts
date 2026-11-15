@@ -106,7 +106,7 @@ function fakeDatabase(state: FakeState) {
           }
           if (state.raceWinner && !raceConsumed) {
             raceConsumed = true
-            throw Object.assign(new Error('duplicate key value violates unique constraint'), { code: 'P23505' })
+            throw Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' })
           }
           if (
             state.requests.some(
@@ -114,7 +114,7 @@ function fakeDatabase(state: FakeState) {
                 existing.userId === row.userId && existing.type === row.type && existing.status === 'open',
             )
           ) {
-            throw Object.assign(new Error('duplicate key value violates unique constraint'), { code: 'P23505' })
+            throw Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' })
           }
           inserts.push({ ...row })
         },

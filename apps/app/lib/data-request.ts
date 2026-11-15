@@ -64,9 +64,10 @@ export function gdprResponseDeadline(from: Date): Date {
 }
 
 function uniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P23505'
-  )
+  // pg reports the raw SQLSTATE (23505 unique_violation); accept the
+  // Prisma-style spelling too so fakes and drivers agree.
+  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
+  return code === '23505' || code === 'P23505'
 }
 
 /** The active-workspace id this request came from (header, then cookie). */

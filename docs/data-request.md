@@ -37,6 +37,11 @@ The row stores only ids and timestamps — no personal data, no export content.
 
 Fulfilment is manual and deliberately not part of this repository: the
 support side reads open `support_requests` rows, generates the export out of
-band and sends it, then marks the row `fulfilled`. The account-deletion
-preview reads the same table so a pending data request can be surfaced before
-an account is removed.
+band and sends it, then marks the row `fulfilled`.
+
+## Alongside account deletion
+
+The account-deletion preview reads the same table: an open data request is
+flagged on the deletion confirmation so deleting the account does not strand
+the ask. The deletion flow itself offers no download — anyone who wants a
+copy of their data before the delete raises a request here instead.
