@@ -1,8 +1,8 @@
 import { Suspense, type ReactNode } from 'react'
 import { edition } from '@hitly/cloud'
-import { hasFeature } from '@hitly/core'
 import { getAppContext } from '@/lib/context'
 import { listVisibleProjects } from '@/lib/rbac'
+import { can } from '@/lib/tier-entitlements'
 import { requireVerifiedEmailGateEnabled, shouldShowUnverifiedEmailBanner } from '@/lib/verified-gate'
 import { AppSidebar } from './app-sidebar'
 import { AppToolbar } from './app-toolbar'
@@ -16,8 +16,12 @@ export async function AppShell({
   project?: { id: string; name: string } | null
 }) {
   const { user, workspaces, workspace, role } = await getAppContext()
-  const entitlements = edition.entitlementsFor({ plan: workspace.plan })
-  const nav = edition.navItems.filter((item) => !item.feature || hasFeature(entitlements, item.feature))
+  // Nav gating reads the tier entitlements map (single helper; no plan
+  // comparisons here or in the edition).
+  const nav: typeof edition.navItems = []
+  for (const item of edition.navItems) {
+    if (!item.feature || (await can(workspace, item.feature))) nav.push(item)
+  }
   const projects = await listVisibleProjects({
     workspaceId: workspace.id,
     userId: user.id,

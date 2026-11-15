@@ -29,8 +29,11 @@ variable.
   `unavailable.ts` makes them inert, so in the OSS edition the billing pages
   render nothing useful and the Stripe routes 404.
 
-`@hitly/core` owns the shared shapes: `HitlyEdition`, `Entitlements`,
-`hasFeature`, `requireFeature`, and the plan tables.
+`@hitly/core` owns the shared shapes: `HitlyEdition`, `Entitlements` (numeric
+per-plan caps only), the plan tables, and the tier-entitlements seed/pure
+resolver (`TIER_ENTITLEMENT_SEED`, `canFromMap`). Boolean feature gating is
+the `tier_entitlements` DB table read through `can()` in
+`apps/app/lib/tier-entitlements.ts` — no compiled-in feature flags.
 
 ## How `apps/app` consumes it
 
