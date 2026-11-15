@@ -73,7 +73,7 @@ export const SESSION_ROUTE_POLICY = {
   'GET /delete-user/callback': {
     action: 'not-sign-in',
     mounted: true,
-    mfa: 'Not a sign-in. Deletes the user.',
+    mfa: 'Not a sign-in. Unreachable over HTTP: the catch-all 404s it so account deletion goes through /api/session/delete-account.',
   },
   'GET /error': {
     action: 'not-sign-in',
@@ -148,7 +148,7 @@ export const SESSION_ROUTE_POLICY = {
   'POST /delete-user': {
     action: 'not-sign-in',
     mounted: true,
-    mfa: 'Not a sign-in. Deletes the user and clears the session cookie.',
+    mfa: 'Not a sign-in. Unreachable over HTTP (404 in the catch-all): account deletion runs on /api/session/delete-account, which re-auths, requires the typed confirmation and applies the workspace and anonymisation rulings.',
   },
   'POST /get-access-token': {
     action: 'not-sign-in',

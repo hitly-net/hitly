@@ -64,6 +64,14 @@ export function UserMenu({ userName, userEmail }: { userName: string; userEmail?
           >
             Profile
           </Link>
+          <Link
+            href="/settings/account"
+            role="menuitem"
+            className="block rounded-md px-2 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-900"
+            onClick={() => setOpen(false)}
+          >
+            Account
+          </Link>
           <p className="mt-2 px-2 text-xs font-medium text-zinc-500">Theme</p>
           <div className="mt-1 px-1">
             <ThemePicker compact />
