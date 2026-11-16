@@ -52,7 +52,13 @@ export type WorkItemPageDto = {
   origin: OriginRef
   originFields: OriginField[]
   originalArgs: Record<string, unknown>
-  jsonDisclosure: unknown
+  /**
+   * Fields the redacted detail carries that the create-once original-request
+   * payload does NOT contain (the stored envelope covers everything else).
+   * Rendered in the collapsed "Raw stored view" inside the original-request
+   * panel; redacted the same way (redactApprovalForReviewer + UI re-redact).
+   */
+  rawStoredView: Record<string, unknown>
   decisions: WorkItemDecisionView[]
   latestDecision: WorkItemDecisionView | undefined
   editedArgs: Record<string, unknown> | null
@@ -114,8 +120,8 @@ export function workItemClientFlightProps(page: WorkItemPageDto) {
 
 /**
  * Serialised inbox-detail payload: redacted DTO + client flight props + the
- * HTML surfaces (Origin, args, full JSON, origin response). Grep this string
- * for canaries; dropping redactApprovalForReviewer in loadWorkItemPage must go red.
+ * HTML surfaces (Origin, args, raw stored view, origin response). Grep this
+ * string for canaries; dropping redactApprovalForReviewer in loadWorkItemPage must go red.
  */
 export function serializeWorkItemPage(page: WorkItemPageDto): string {
   return JSON.stringify({
@@ -123,7 +129,7 @@ export function serializeWorkItemPage(page: WorkItemPageDto): string {
     clientFlight: workItemClientFlightProps(page),
     originHtml: page.originFields.map((row) => `<dt>${row.label}</dt><dd>${row.value}</dd>`).join(''),
     argsHtml: JSON.stringify(page.originalArgs, null, 2),
-    disclosureHtml: JSON.stringify(page.jsonDisclosure, null, 2),
+    rawStoredViewHtml: JSON.stringify(page.rawStoredView, null, 2),
     decisionHtml: page.originResponseJson == null ? '' : JSON.stringify(page.originResponseJson, null, 2),
   })
 }
@@ -219,20 +225,15 @@ export async function loadWorkItemPage(args: {
     const latestDecision = redacted.decisions[0]
     const editedArgs = latestDecision ? editedArgsFromPayload(latestDecision.payload) : null
     const originalArgs = asArgs(redacted.envelope.action?.args)
-    const jsonDisclosure = {
-      action: redacted.envelope.action,
-      allowedActions: redacted.envelope.allowedActions,
-      contextMarkdown: redacted.envelope.contextMarkdown,
-      reasonRequired: redacted.envelope.reasonRequired,
-      metadata: redacted.envelope.metadata,
-      externalUrls: redacted.envelope.externalUrls,
-      attachments: redacted.envelope.attachments,
-      resumeSchema: redacted.envelope.resumeSchema,
-      expiresAt: redacted.envelope.expiresAt,
-      prompt: redacted.envelope.prompt,
-      answerSchema: redacted.envelope.answerSchema,
+    // Everything the old "Full JSON" panel showed that the create-once
+    // original-request payload does not: the redacted origin reference (a
+    // separate stored column, so never in the envelope record) and the
+    // effective metadata bag (envelope.metadata, or the resumeHandle metadata
+    // fallback for items ingested before metadata was first-class — the
+    // resumeHandle itself is redacted in the original-request view).
+    const rawStoredView: Record<string, unknown> = {
       origin: redacted.origin,
-      _meta: (redacted.envelope as ApprovalEnvelope & { _meta?: unknown })._meta,
+      metadata: redacted.envelope.metadata,
     }
 
     const evidenceReceipt = await loadEvidenceReceiptForDisplay(approvalRow.id, args.workspaceId)
@@ -289,7 +290,7 @@ export async function loadWorkItemPage(args: {
       origin: redacted.origin,
       originFields: redacted.originFields,
       originalArgs,
-      jsonDisclosure,
+      rawStoredView,
       decisions: redacted.decisions,
       latestDecision,
       editedArgs,
