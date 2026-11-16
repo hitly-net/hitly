@@ -61,12 +61,14 @@ export function createApprovalDetailGet(deps: {
     // A bearer that is not a well-formed API key may be a Better Auth bearer
     // SESSION token (mobile reviewers): it must NOT be counted up front. It
     // counts in failed-auth only if the session check below fails to
-    // authenticate (401).
+    // authenticate (401) — a 429 from the session's own read budget or a 503
+    // (auth not configured) is not a failed login. Same shape as cancel's
+    // `sessionResponse.status === 401` gate.
     const malformedBearer = apiKey ? !isWellFormedApiKey(apiKey) : false
 
     const ctx = await deps.requireApiWorkspace()
     if (!ctx.ok) {
-      if (apiKey && malformedBearer) {
+      if (apiKey && malformedBearer && ctx.error.status === 401) {
         const failed = await applyFailedAuthLimit(request, deps.failedAcquire)
         if (failed) return failed
       }

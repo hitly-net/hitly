@@ -452,6 +452,89 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
     assert.equal(seamCalls.some((c) => c.kind === 'failed-auth'), false)
   })
 
+  it('GET [id]: a bearer whose session check answers 429/503 is NOT a failed login (MUST-C1)', async () => {
+    // requireApiSession returns !ok with 429 when a VALID session hits its
+    // own read budget (api-session.ts), and 503 when auth is not configured.
+    // Neither is a failed login: the address's failed-auth budget must stay
+    // untouched (cancel/route.ts already gates on === 401; [id] must too).
+    // Allow-mode so a stray count would be recorded, not short-circuited.
+    for (const status of [429, 503]) {
+      allowUntil(30)
+      const GET = detailGet({
+        requireApiWorkspace: async () => ({ ok: false as const, error: new Response(null, { status }) }) as never,
+      })
+      const response = await GET(
+        getJson('/api/v1/approvals/apr_m2', { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        params('apr_m2'),
+      )
+      assert.equal(response.status, status, `the ${String(status)} from the session check must pass through unchanged`)
+      assert.equal(seamCalls.length, 0, `a ${String(status)} session-check answer must not mint a failed-auth count`)
+    }
+  })
+
+  it('POST cancel: well-formed unknown key with no session counts EXACTLY once (MA6/MA9)', async () => {
+    // Allow-mode: a SECOND count after the session 401 (the MA6/MA9 mutants)
+    // would be recorded instead of hidden behind an early 429.
+    fakes.authn = null
+    fakes.sessionUser = null
+    allowUntil(100)
+    const response = await cancelRoute.POST(
+      postJson('/api/v1/approvals/apr_m2/cancel', { reason: 'x' }, { authorization: `Bearer ${KEY}`, 'x-forwarded-for': KEY_A_ADDR }),
+      params('apr_m2'),
+    )
+    assert.equal(response.status, 401, 'the unknown key falls through to the session check, which 401s')
+    const failed = seamCalls.filter((c) => c.kind === 'failed-auth')
+    assert.equal(failed.length, 1, 'exactly one failed-auth count — the unverified key branch only, never a second after the session 401')
+    assert.match(failed[0]!.subject, /^addr:/)
+    assert.equal(seamCalls.some((c) => c.kind === 'write'), false, 'an unauthenticated key must never reach the per-key write budget')
+    fakes.sessionUser = { id: 'usr_m2', name: 'M2', email: 'm2@example.com' }
+    fakes.authn = { project: { id: 'prj_m2', workspaceId: 'ws_m2' } }
+  })
+
+  it('POST cancel: no Authorization header counts NOTHING (MA9)', async () => {
+    // MA9 (drop the apiKey/malformedBearer guard before the session-401
+    // count) would count this anonymous 401 as a failed login.
+    fakes.sessionUser = null
+    allowUntil(100)
+    const response = await cancelRoute.POST(
+      postJson('/api/v1/approvals/apr_m2/cancel', {}, { 'x-forwarded-for': KEY_A_ADDR }),
+      params('apr_m2'),
+    )
+    assert.equal(response.status, 401, 'an anonymous cancel 401s via the session check')
+    assert.equal(seamCalls.length, 0, 'an absent Authorization header is not a failed login')
+    fakes.sessionUser = { id: 'usr_m2', name: 'M2', email: 'm2@example.com' }
+  })
+
+  it('GET [id]: well-formed unknown key with a session 401 counts EXACTLY once (MA7/MA8)', async () => {
+    // MA7 (malformedBearer = !!apiKey) and MA8 (always count after !ctx.ok)
+    // both double-count this request: once in the key branch, once again
+    // after the session 401. Allow-mode makes the second count visible.
+    allowUntil(100)
+    const GET = detailGet({ authenticate: async () => null })
+    const response = await GET(
+      getJson('/api/v1/approvals/apr_m2', { authorization: `Bearer ${KEY}`, 'x-forwarded-for': KEY_A_ADDR }),
+      params('apr_m2'),
+    )
+    assert.equal(response.status, 401, 'the unknown key falls through to the session check, which 401s')
+    const failed = seamCalls.filter((c) => c.kind === 'failed-auth')
+    assert.equal(failed.length, 1, 'exactly one failed-auth count — the unverified key branch only, never a second after the session 401')
+    assert.match(failed[0]!.subject, /^addr:/)
+    assert.equal(seamCalls.some((c) => c.kind === 'read'), false, 'an unauthenticated key must never reach the per-key budget')
+  })
+
+  it('GET [id]: no Authorization header with a session 401 counts NOTHING (MA8)', async () => {
+    // MA8 (drop the apiKey/malformedBearer guard after !ctx.ok) would count
+    // this cookie-less 401 — e.g. an expired-cookie user — as a failed login.
+    allowUntil(100)
+    const GET = detailGet({})
+    const response = await GET(
+      getJson('/api/v1/approvals/apr_m2', { 'x-forwarded-for': KEY_A_ADDR }),
+      params('apr_m2'),
+    )
+    assert.equal(response.status, 401)
+    assert.equal(seamCalls.length, 0, 'an absent Authorization header is not a failed login')
+  })
+
   it('GET [id] (MUST-1): an authenticated key is counted per key even when the id is not its own; over budget it gets 429 and the read is skipped', async () => {
     fakes.authn = { project: { id: 'prj_m2', workspaceId: 'ws_m2' } }
     const calls = allowUntil(2)
