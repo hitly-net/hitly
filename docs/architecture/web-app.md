@@ -73,7 +73,8 @@ Mail/push (delegated, listed on their pages): `HITLY_MAIL_TRANSPORT`,
 `HITLY_MAIL_FROM`, `EXPO_ACCESS_TOKEN`, `HITLY_EXPO_ORIGIN`.
 Deep links: `HITLY_MOBILE_APP_ID`, `HITLY_IOS_TEAM_ID`,
 `HITLY_ANDROID_SHA256`.
-Marketing funnel: `WAITLIST_WEBHOOK_URL`.
+Marketing funnel: `WAITLIST_WEBHOOK_URL` (opt-in, no default — unset or
+blank means the waitlist signup is accepted with no outbound request).
 
 ## Verified-email gate (`HITLY_REQUIRE_VERIFIED_EMAIL`)
 

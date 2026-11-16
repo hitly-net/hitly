@@ -44,6 +44,21 @@ async function withEnv(value: string | undefined, run: () => Promise<void>): Pro
   }
 }
 
+// Opt-in must hold in production too: a production-only default destination
+// (the pre-fix shape) has to fail these tests, not just the unset NODE_ENV.
+async function withNodeEnv(value: string, run: () => Promise<void>): Promise<void> {
+  const env = process.env as Record<string, string | undefined>
+  const had = Object.hasOwn(env, 'NODE_ENV')
+  const previous = env.NODE_ENV
+  env.NODE_ENV = value
+  try {
+    await run()
+  } finally {
+    if (had) env.NODE_ENV = previous
+    else delete env.NODE_ENV
+  }
+}
+
 function signupRequest(): Request {
   return new Request('http://localhost:3000/api/waitlist', {
     method: 'POST',
@@ -57,6 +72,15 @@ test('waitlistWebhookUrl has no default and treats blank values as unset', async
     await withEnv(value, async () => {
       assert.equal(waitlistWebhookUrl(), null, `no destination when env is ${JSON.stringify(value)}`)
     })
+    await withNodeEnv('production', () =>
+      withEnv(value, async () => {
+        assert.equal(
+          waitlistWebhookUrl(),
+          null,
+          `no destination in production when env is ${JSON.stringify(value)}`,
+        )
+      }),
+    )
   }
   await withEnv(`  ${OPT_IN_URL}  `, async () => {
     assert.equal(waitlistWebhookUrl(), OPT_IN_URL, 'a set value is trimmed, not defaulted')
@@ -77,6 +101,19 @@ for (const [label, value] of [
         assert.deepEqual(await response.json(), { ok: true })
         assert.equal(calls.length, 0, 'no outbound fetch when the webhook is not configured')
       }),
+    )
+  })
+
+  test(`POST /api/waitlist with ${label} and NODE_ENV=production: signup succeeds with zero outbound fetches`, async () => {
+    await withNodeEnv('production', () =>
+      withEnv(value, () =>
+        withFetchSpy(async (calls) => {
+          const response = await POST(signupRequest())
+          assert.equal(response.status, 200)
+          assert.deepEqual(await response.json(), { ok: true })
+          assert.equal(calls.length, 0, 'no outbound fetch in production when the webhook is not configured')
+        }),
+      ),
     )
   })
 }
