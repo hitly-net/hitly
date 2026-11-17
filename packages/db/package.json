@@ -8,7 +8,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema.ts"
+    "./schema": "./src/schema.ts",
+    "./rate-limit": "./src/rate-limit.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",

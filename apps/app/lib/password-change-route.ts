@@ -13,7 +13,8 @@
 
 import { NextResponse } from 'next/server'
 import { auth } from './auth'
-import { CHANGE_PASSWORD_LIMITED_LOG, changePasswordAttemptLimiter } from './change-password-limit'
+import { CHANGE_PASSWORD_ATTEMPT_WINDOW_MS, CHANGE_PASSWORD_LIMITED_LOG, changePasswordAttemptAcquire } from './change-password-limit'
+import { resolveDecision, withRetryAfter, type RateAcquire } from './rate-limit'
 import { createSendPasswordChangedNotification } from './password-change-emails'
 import { sendMail } from './mail'
 import { MIN_PASSWORD_LENGTH } from './password-reset'
@@ -29,7 +30,7 @@ export interface ChangePasswordRouteDeps {
   /** The per-client limiter key (client address, or the shared bucket). */
   clientKey?: (headers: Headers) => string
   /** Consumes one attempt from the client's budget; false when it is spent. */
-  allow?: (key: string) => boolean
+  allow?: RateAcquire
   /** Sends the password-changed notification email. */
   notify?: (user: { email: string }) => Promise<void>
   log?: (line: string) => void
@@ -83,7 +84,7 @@ export async function handlePasswordChange(
         asResponse: true,
       }) as unknown as Promise<Response>
     })
-  const allow = deps.allow ?? changePasswordAttemptLimiter
+  const allow = deps.allow ?? changePasswordAttemptAcquire
   const clientKey = deps.clientKey ?? resetCheckClientKey
   const notify = deps.notify ?? createSendPasswordChangedNotification(sendMail)
 
@@ -104,9 +105,10 @@ export async function handlePasswordChange(
     return json({ code: 'MISSING_FIELDS', minLength: MIN_PASSWORD_LENGTH }, 400)
   }
 
-  if (!allow(clientKey(request.headers))) {
+  const budget = await resolveDecision(allow, clientKey(request.headers), CHANGE_PASSWORD_ATTEMPT_WINDOW_MS)
+  if (!budget.allowed) {
     log(CHANGE_PASSWORD_LIMITED_LOG)
-    return json({ error: 'too_many_attempts' }, 429)
+    return withRetryAfter(json({ error: 'too_many_attempts' }, 429), budget.retryAfterMs)
   }
 
   let result: Response
