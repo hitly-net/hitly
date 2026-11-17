@@ -9,10 +9,19 @@ export type WaitlistPayload = {
   other: string
 }
 
-const LIVE_WEBHOOK = 'https://flow.interweb-it.com/webhook/hitly-waitlist'
+export const WAITLIST_WEBHOOK_URL_ENV = 'WAITLIST_WEBHOOK_URL'
 
-export function waitlistWebhookUrl() {
-  return process.env.WAITLIST_WEBHOOK_URL ?? LIVE_WEBHOOK
+/**
+ * The waitlist webhook is opt-in. With the variable unset, empty or
+ * whitespace-only there is no outbound destination and the route posts
+ * nothing externally — the signup is still accepted. Only a trimmed
+ * non-empty value enables the POST; there is no built-in default URL.
+ */
+export function waitlistWebhookUrl(): string | null {
+  const raw = process.env[WAITLIST_WEBHOOK_URL_ENV]
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
