@@ -21,6 +21,29 @@ function request() {
   return new Request('http://localhost:3001/api/auth/unknown-path', { method: 'POST' })
 }
 
+describe('auth catch-all 429 handling', () => {
+  it('mirrors the shared-database limiter X-Retry-After into the standard Retry-After header', async () => {
+    const { handleAuthRequest } = await loadRoute()
+    const limited = new Response(JSON.stringify({ message: 'Too many requests. Please try again later.' }), {
+      status: 429,
+      headers: { 'X-Retry-After': '42' },
+    })
+    const response = await handleAuthRequest(
+      new Request('http://localhost:3001/api/auth/sign-in/email', { method: 'POST' }),
+      async () => limited,
+    )
+    assert.equal(response.status, 429)
+    assert.equal(response.headers.get('retry-after'), '42', 'clients see the standard header')
+    // An answer without the limiter header is passed through untouched.
+    const plain = new Response('{}', { status: 429 })
+    const passthrough = await handleAuthRequest(
+      new Request('http://localhost:3001/api/auth/sign-in/email', { method: 'POST' }),
+      async () => plain,
+    )
+    assert.equal(passthrough.headers.get('retry-after'), null)
+  })
+})
+
 describe('auth catch-all 404 handling', () => {
   it('applies withNativeAuthOrigin before calling the auth handler', async () => {
     const { handleAuthRequest } = await loadRoute()

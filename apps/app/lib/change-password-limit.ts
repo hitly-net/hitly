@@ -1,4 +1,5 @@
 import { createRateLimiter, type RateLimiter } from './reset-check-limit'
+import { createRateAcquire } from './rate-limit'
 
 /**
  * A per-client limit on signed-in password-change attempts, on top of
@@ -6,10 +7,13 @@ import { createRateLimiter, type RateLimiter } from './reset-check-limit'
  * route calls Better Auth in process, which skips Better Auth's request
  * limiter (see lib/reset-check-limit.ts for the same reasoning on the reset
  * link check), so attempts are counted here with the shared limiter factory:
- * past the limit the route answers 429 without checking the password again.
+ * past the limit the route answers 429 (with Retry-After) without checking
+ * the password again.
  *
- * The limit is per server process. It never stores or logs a password, and
- * the key is the client address, not the account.
+ * Attempts count into the shared database (lib/rate-limit.ts) so the limit
+ * holds across server processes; the per-process factory above is the
+ * fallback while the database is unavailable. It never stores or logs a
+ * password, and the key is the client address, not the account.
  */
 
 export const CHANGE_PASSWORD_ATTEMPT_LIMIT = 10
@@ -25,4 +29,7 @@ export function createChangePasswordAttemptLimiter(options: { now?: () => number
   })
 }
 
-export const changePasswordAttemptLimiter = createChangePasswordAttemptLimiter()
+export const changePasswordAttemptAcquire = createRateAcquire('password-change', {
+  limit: CHANGE_PASSWORD_ATTEMPT_LIMIT,
+  windowMs: CHANGE_PASSWORD_ATTEMPT_WINDOW_MS,
+})

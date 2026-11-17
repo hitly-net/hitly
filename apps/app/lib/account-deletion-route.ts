@@ -1,6 +1,6 @@
 /**
  * The server half of account deletion: the handlers behind
- * /api/session/delete-account* and /api/session/export.
+ * /api/session/delete-account*.
  *
  * Rules (PM rulings for HG-5 PR B) and where they are enforced:
  * - WHAT goes and WHAT is anonymised is decided by lib/account-deletion-plan.ts;
@@ -81,6 +81,7 @@ import {
   DELETION_TICKET_TTL_MS,
   type DeletionPreview,
 } from './account-deletion'
+import { DATA_REQUEST_TYPE, findOpenSupportRequests } from './data-request'
 import {
   DELETION_CONFIRM_LIMITED_LOG,
   DELETION_REAUTH_LIMITED_LOG,
@@ -368,7 +369,7 @@ export async function buildDeletionPreview(database: Database, userId: string): 
       message: blockedWorkspaceMessage(blocked.reason),
     })),
     hasBlocker: plan.hasBlocker,
-    exportAvailable: plan.deletableWorkspaces.length > 0,
+    pendingDataRequest: (await findOpenSupportRequests(database, userId, DATA_REQUEST_TYPE)).length > 0,
   }
 }
 
@@ -393,177 +394,6 @@ export async function handleDeletionPreview(
   } catch (error) {
     log(`[hitly account-deletion] Could not build the preview: ${error instanceof Error ? error.name : 'error'}`)
     return json({ error: 'deletion_failed' }, 500)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// GET /api/session/export  ("export first")
-// ---------------------------------------------------------------------------
-
-function redactSecrets(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  const redacted: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    redacted[key] = typeof entry === 'string' ? '[redacted]' : entry !== null && typeof entry === 'object' ? '[redacted]' : entry
-  }
-  return redacted
-}
-
-/**
- * JSON export of everything the account takes with it.
- *
- * Scoped to what belongs to THIS user alone: their profile and the contents of
- * the sole-member workspaces that the deletion destroys. Data in a shared
- * workspace belongs to the remaining members and is deliberately not exported
- * (only the membership itself is listed). Tenant-encrypted columns are decoded
- * with the workspace key, and project credentials — which hold third-party
- * secrets — are redacted to key names. API keys export their metadata only;
- * a hash is never a usable secret but it is still not exported.
- */
-export async function handleAccountExport(
-  request: RequestLike,
-  deps: DeletionRouteDeps = {},
-): Promise<NextResponse> {
-  const log = deps.log ?? ((line: string) => console.warn(line))
-  const prepared = await requireSession(request, deps)
-  if (prepared instanceof NextResponse) return prepared
-  const { user, database } = prepared
-
-  try {
-    const profileRows = await database
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        emailVerified: users.emailVerified,
-        createdAt: users.createdAt,
-      })
-      .from(users)
-      .where(eq(users.id, user.id))
-      .limit(1)
-    const profile = profileRows[0]
-    if (!profile) return json({ error: 'unauthorized' }, 401)
-
-    const inputs = await collectWorkspaceInputs(database, user.id)
-    const plan = planAccountDeletion(inputs)
-    const soleMemberIds = plan.deletableWorkspaces.map((workspace) => workspace.id)
-
-    const exportedWorkspaces: Array<Record<string, unknown>> = []
-    for (const workspaceId of soleMemberIds) {
-      const workspaceRows = await database
-        .select()
-        .from(workspaces)
-        .where(eq(workspaces.id, workspaceId))
-        .limit(1)
-      const workspaceRow = workspaceRows[0]
-      if (!workspaceRow) continue
-
-      const projectRows = await database.select().from(projects).where(eq(projects.workspaceId, workspaceId))
-      const decodedProjects = []
-      for (const project of projectRows) {
-        decodedProjects.push({
-          id: project.id,
-          name: project.name,
-          description: project.description,
-          plugin: project.plugin,
-          status: project.status,
-          defaultSlaMinutes: project.defaultSlaMinutes,
-          evidenceSinkType: project.evidenceSinkType,
-          credentials: redactSecrets(await decodeTenantJson(workspaceId, project.credentials as never)),
-          createdAt: project.createdAt.toISOString(),
-        })
-      }
-
-      const ruleRows = await database.select().from(projectRules).where(eq(projectRules.workspaceId, workspaceId))
-      const channelRows = await database
-        .select()
-        .from(projectChannels)
-        .where(eq(projectChannels.workspaceId, workspaceId))
-      const approvalRows = await database.select().from(approvals).where(eq(approvals.workspaceId, workspaceId))
-      const decisionRows = await database
-        .select()
-        .from(decisionRecords)
-        .where(eq(decisionRecords.workspaceId, workspaceId))
-      const keyRows = await database.select().from(projectApiKeys).where(eq(projectApiKeys.workspaceId, workspaceId))
-
-      exportedWorkspaces.push({
-        id: workspaceRow.id,
-        name: workspaceRow.name,
-        slug: workspaceRow.slug,
-        timezone: workspaceRow.timezone,
-        plan: workspaceRow.plan,
-        projects: decodedProjects,
-        rules: ruleRows.map((rule) => ({
-          id: rule.id,
-          projectId: rule.projectId,
-          name: rule.name,
-          priority: rule.priority,
-          enabled: rule.enabled,
-          match: rule.match,
-          actions: rule.actions,
-        })),
-        channels: await Promise.all(
-          channelRows.map(async (channel) => ({
-            id: channel.id,
-            projectId: channel.projectId,
-            type: channel.type,
-            enabled: channel.enabled,
-            config: redactSecrets(await decodeTenantJson(workspaceId, channel.config as never)),
-          })),
-        ),
-        approvals: await Promise.all(
-          approvalRows.map(async (approval) => ({
-            id: approval.id,
-            projectId: approval.projectId,
-            plugin: approval.plugin,
-            status: approval.status,
-            actionName: approval.actionName,
-            envelope: await decodeTenantJson(workspaceId, approval.envelope as never),
-            createdAt: approval.createdAt.toISOString(),
-          })),
-        ),
-        decisionRecords: await Promise.all(
-          decisionRows.map(async (record) => ({
-            id: record.id,
-            approvalId: record.approvalId,
-            decision: record.decision,
-            payload: await decodeTenantJson(workspaceId, record.payload as never),
-            createdAt: record.createdAt.toISOString(),
-          })),
-        ),
-        apiKeys: keyRows.map((key) => ({
-          id: key.id,
-          projectId: key.projectId,
-          name: key.name,
-          prefix: key.prefix,
-          lastUsedAt: key.lastUsedAt?.toISOString() ?? null,
-          createdAt: key.createdAt.toISOString(),
-        })),
-      })
-    }
-
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      profile,
-      // Workspaces the user shared with others survive; only the membership goes.
-      memberships: plan.keptWorkspaces.map((workspace) => ({
-        id: workspace.id,
-        name: workspace.name,
-        role: workspace.role,
-        dataExported: false,
-      })),
-      workspaces: exportedWorkspaces,
-      blockers: plan.blockedWorkspaces,
-    }
-    const response = new NextResponse(JSON.stringify(payload, null, 2), { status: 200 })
-    response.headers.set('content-type', 'application/json; charset=utf-8')
-    response.headers.set('content-disposition', 'attachment; filename="hitly-account-export.json"')
-    response.headers.set('cache-control', 'no-store')
-    response.headers.set('referrer-policy', 'no-referrer')
-    return response
-  } catch (error) {
-    log(`[hitly account-deletion] Could not build the export: ${error instanceof Error ? error.name : 'error'}`)
-    return json({ error: 'export_failed' }, 500)
   }
 }
 

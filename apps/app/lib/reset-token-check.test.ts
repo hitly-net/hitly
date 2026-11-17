@@ -1,3 +1,4 @@
+import { newId } from './ids'
 import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -10,6 +11,7 @@ import { RESET_LINK_INVALID_MESSAGE, requestPasswordReset, submitNewPassword } f
 import { clientAddress, trustedProxyCount } from './client-address'
 import { createRateLimiter, resetCheckClientKey } from './reset-check-limit'
 import {
+
   checkResetToken,
   isWellFormedResetToken,
   loadResetPageState,
@@ -27,7 +29,16 @@ import {
  * Run with: yarn workspace @hitly/app test
  */
 
+// These suites exercise the reset FLOW, not the limiter (the limiter is pinned
+// in lib/reset-request-limit.test.ts). Raise the shared-database budget so many
+// reset requests in one run never hit it; the rule is read on first acquire.
+process.env.HITLY_RATE_LIMIT_RESET_EMAIL_LIMIT = '1000'
+
 const APP_URL = 'http://localhost:3001'
+
+const RUN_TAG = newId('rl').slice(-10)
+const EMAIL = 'alex-' + RUN_TAG + '@example.com'
+const NOBODY = 'nobody-' + RUN_TAG + '@example.com'
 
 type Sent = { to: string; subject: string; text: string }
 let outbox: Sent[] = []
@@ -101,7 +112,7 @@ const appFetch: typeof fetch = async (input, init) => {
 }
 
 async function tokenFromEmail() {
-  await requestPasswordReset('alex@example.com', appFetch)
+  await requestPasswordReset(EMAIL, appFetch)
   await drainMail()
   const match = outbox.at(-1)?.text.match(/https?:\/\/\S+/)
   assert.ok(match, 'reset email must contain a link')
@@ -135,7 +146,7 @@ beforeEach(async () => {
   auth = makeAuth()
   outbox = []
   logLines = []
-  await auth.api.signUpEmail({ body: { email: 'alex@example.com', password: 'old-password-1', name: 'Alex' } })
+  await auth.api.signUpEmail({ body: { email: EMAIL, password: 'old-password-1', name: 'Alex' } })
 })
 
 describe('checking a reset token on page load', () => {

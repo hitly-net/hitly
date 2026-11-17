@@ -14,7 +14,7 @@ process.env.HITLY_SECURITY_EVENT_HMAC_KEY ??= 'hg5b-test-hmac-key-0123456789abcd
 
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import {
   accountSecurityEvents,
   approvals,
@@ -28,6 +28,7 @@ import {
   projectEvents,
   projects,
   sessions,
+  supportRequests,
   users,
   verifications,
   workspaces,
@@ -39,7 +40,6 @@ import { newId } from './ids'
 import {
   ACCOUNT_DELETION_SECURITY_EVENT,
   handleAccountDeletion,
-  handleAccountExport,
   handleDeletionPreview,
   handleDeletionReauth,
   handleDeletionReauthOptions,
@@ -48,6 +48,7 @@ import { DELETION_CHALLENGE_COOKIE } from './account-deletion'
 import { resolveSecurityEventHmacKey, securityEventHmac } from './account-deletion-plan'
 import { POST as deleteRoutePOST } from '../app/api/session/delete-account/route'
 import { POST as reauthRoutePOST } from '../app/api/session/delete-account/reauth/route'
+import { GET as previewRouteGET } from '../app/api/session/delete-account/preview/route'
 
 if (!db || !auth) throw new Error('DATABASE_URL and BETTER_AUTH_SECRET required for tests')
 const database = db
@@ -291,6 +292,38 @@ describe('deletion preview', () => {
     assert.equal(wrongType.status, 415)
   })
 
+  it('refuses a missing Origin on every deletion route (fail-closed same-origin)', async () => {
+    // Same-origin fails closed: a request with NO Origin header is refused
+    // just like a foreign one — the client always sends it, so its absence
+    // cannot be trusted. Pins the guard beyond the JSON content-type backstop.
+    const deleteNoOrigin = await deleteRoutePOST(
+      new Request(`${APP_URL}/api/session/delete-account`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }) as never,
+    )
+    assert.equal(deleteNoOrigin.status, 403, 'the irreversible POST must refuse a missing Origin')
+
+    const reauthNoOrigin = await reauthRoutePOST(
+      new Request(`${APP_URL}/api/session/delete-account/reauth`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }) as never,
+    )
+    assert.equal(reauthNoOrigin.status, 403, 'the re-auth POST must refuse a missing Origin')
+
+    const previewNoOrigin = await previewRouteGET(
+      new Request(`${APP_URL}/api/session/delete-account/preview`, { method: 'GET' }) as never,
+    )
+    assert.equal(previewNoOrigin.status, 403, 'the preview GET must refuse a missing Origin')
+
+    const { isSameOrigin } = await import('../app/api/session/sign-out/route')
+    assert.equal(isSameOrigin(null), false, 'isSameOrigin must reject a missing Origin')
+    assert.equal(isSameOrigin(''), false, 'isSameOrigin must reject an empty Origin')
+  })
+
   it('separates delete-with-account, kept, and blocked workspaces with counts', async () => {
     const owner = await signUp('preview-owner')
     const colleague = await signUp('preview-colleague')
@@ -319,7 +352,7 @@ describe('deletion preview', () => {
       deletableWorkspaces: Array<{ id: string; projects: number; apiKeys: number; decisions: number }>
       keptWorkspaces: Array<{ id: string; apiKeys: number }>
       hasBlocker: boolean
-      exportAvailable: boolean
+      pendingDataRequest: boolean
     }
     const solo = preview.deletableWorkspaces.find((item) => item.id === soloId)
     assert.ok(solo, 'the sole-member workspace must be listed as deletable')
@@ -331,54 +364,22 @@ describe('deletion preview', () => {
     assert.ok(kept, 'the shared workspace must be listed as kept')
     assert.equal(kept.apiKeys, 1)
     assert.equal(preview.hasBlocker, false)
-    assert.equal(preview.exportAvailable, true)
+    assert.equal(preview.pendingDataRequest, false)
+
+    // An open data request must surface in the preview (the #168 capture).
+    await database.insert(supportRequests).values({
+      id: newId('srq'),
+      userId: owner.id,
+      workspaceId: null,
+      type: 'data',
+      status: 'open',
+    })
+    const again = await handleDeletionPreview(get('/preview', owner.cookie), { log: () => undefined })
+    const preview2 = (await again.json()) as { pendingDataRequest: boolean }
+    assert.equal(preview2.pendingDataRequest, true)
   })
 })
 
-describe('export', () => {
-  it('exports only the sole-member workspaces, redacting secrets', async () => {
-    const owner = await signUp('export-owner')
-    const colleague = await signUp('export-colleague')
-    created.users.push(owner.id, colleague.id)
-
-    const soloRows = await database
-      .select({ workspaceId: memberships.workspaceId })
-      .from(memberships)
-      .where(eq(memberships.userId, owner.id))
-    const soloId = soloRows[0]!.workspaceId
-    created.workspaces.push(soloId)
-    const soloProject = await makeProject(soloId, 'Exportable Project')
-    await makeApiKey(soloId, soloProject, 'export key')
-    const sharedId = await makeWorkspace(colleague.id, 'Private Shared Team')
-    await addMember(sharedId, owner.id, 'member')
-    created.workspaces.push(sharedId)
-    const sharedProject = await makeProject(sharedId, 'Private Shared Project')
-    await makeApiKey(sharedId, sharedProject, 'private key')
-
-    const response = await handleAccountExport(get('/export', owner.cookie), { log: () => undefined })
-    assert.equal(response.status, 200)
-    assert.match(response.headers.get('content-disposition') ?? '', /attachment/)
-    const text = await response.text()
-    const payload = JSON.parse(text) as {
-      profile: { email: string }
-      workspaces: Array<{ id: string; projects: Array<{ name: string; credentials: Record<string, unknown> }>; apiKeys: Array<Record<string, unknown> > }>
-      memberships: Array<{ id: string }>
-    }
-    assert.equal(payload.profile.email, owner.email)
-    assert.deepEqual(
-      payload.workspaces.map((workspace) => workspace.id),
-      [soloId],
-      'shared-workspace contents must not be exported',
-    )
-    assert.equal(payload.workspaces[0]!.projects[0]!.name, 'Exportable Project')
-    assert.deepEqual(payload.workspaces[0]!.projects[0]!.credentials, { baseUrl: '[redacted]', token: '[redacted]' })
-    assert.ok(!text.includes('super-secret-token'), 'third-party credentials must be redacted')
-    assert.ok(!text.includes('hashed-'), 'API key hashes must never be exported')
-    assert.ok(!text.includes('Private Shared Project'))
-    assert.deepEqual(payload.memberships.map((item) => item.id), [sharedId])
-    void sharedProject
-  })
-})
 
 describe('re-auth', () => {
   it('refuses a missing field, a wrong password, and a spent limiter', async () => {
@@ -504,6 +505,75 @@ describe('re-auth', () => {
       },
     )
     assert.equal(failing.status, 400)
+  })
+
+  it('hands the verifier requireUserVerification:true', async () => {
+    // R11 insurance: the handler already fails closed on a UV-less assertion,
+    // but the verifier call itself must also demand user verification so the
+    // redundancy cannot silently rot.
+    const owner = await signUp('passkey-uv-pin')
+    created.users.push(owner.id)
+    const credentialId = `cred-uvpin-${run}`
+    await database.insert(passkeys).values({
+      id: newId('pk').slice(0, 36),
+      name: 'UV pin key',
+      publicKey: 'AAA',
+      userId: owner.id,
+      credentialID: credentialId,
+      counter: 0,
+      deviceType: 'platform',
+      backedUp: false,
+      transports: null,
+      aaguid: null,
+    })
+    const authenticatorData = new Uint8Array(37)
+    authenticatorData[32] = 0x05
+    const toBase64Url = (bytes: Uint8Array) =>
+      Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    const assertion = {
+      id: credentialId,
+      rawId: credentialId,
+      type: 'public-key' as const,
+      response: {
+        clientDataJSON: 'eyJ0eX...0In0',
+        authenticatorData: toBase64Url(authenticatorData),
+        signature: 'AAA',
+      },
+    }
+    const options = await handleDeletionReauthOptions(post('/reauth/options', {}, owner.cookie), {
+      log: () => undefined,
+      generateAuthenticationOptions: stubGenerateOptions('chal-uvpin', credentialId),
+    })
+    const challengeCookie = (options.headers.getSetCookie() ?? [])
+      .find((value) => value.startsWith(`${DELETION_CHALLENGE_COOKIE}=`))!
+      .split(';')[0]!
+
+    const seen: { options?: Record<string, unknown> } = {}
+    const response = await handleDeletionReauth(
+      post('/reauth', { method: 'passkey', response: assertion }, `${owner.cookie}; ${challengeCookie}`),
+      {
+        log: () => undefined,
+        verifyAuthenticationResponse: (async (opts: unknown) => {
+          seen.options = opts as Record<string, unknown>
+          return {
+            verified: true,
+            authenticationInfo: {
+              credentialID: credentialId,
+              newCounter: 1,
+              userVerified: true,
+              credentialDeviceType: 'singleDevice' as const,
+              credentialBackedUp: false,
+              origin: APP_URL,
+              rpID: 'localhost',
+            },
+          }
+        }) as never,
+      },
+    )
+    assert.equal(response.status, 200)
+    assert.ok(seen.options, 'the verifier must have been called')
+    assert.equal(seen.options.requireUserVerification, true, 'the verifier call must demand user verification')
+    assert.equal(seen.options.expectedChallenge, 'chal-uvpin')
   })
 
   it('refuses an assertion for a credential the user does not own', async () => {
@@ -900,5 +970,181 @@ describe('deletion cascade and anonymisation', () => {
     assert.ok(review, 'the workspace admin is emailed')
     assert.match(review!.subject, /review your API keys/i)
     assert.match(review!.text, /Mail Team/)
+  })
+})
+
+describe('deletion atomicity', () => {
+  it('rolls the whole sequence back when a late step fails mid-deletion', async () => {
+    const owner = await signUp('atomic-owner')
+    const colleague = await signUp('atomic-colleague')
+    created.users.push(owner.id, colleague.id)
+
+    // The account's sole-member workspace, with contents the sequence deletes
+    // before the user row goes.
+    const soloRows = await database
+      .select({ workspaceId: memberships.workspaceId })
+      .from(memberships)
+      .where(eq(memberships.userId, owner.id))
+    const soloId = soloRows[0]!.workspaceId
+    created.workspaces.push(soloId)
+    const soloProject = await makeProject(soloId, 'Atomic Solo Project')
+    const soloKey = await makeApiKey(soloId, soloProject, 'atomic key')
+
+    // A shared workspace that stays, whose decision record the sequence
+    // anonymises before the user row goes.
+    const sharedId = await makeWorkspace(colleague.id, 'Atomic Shared Team')
+    await addMember(sharedId, owner.id, 'member')
+    created.workspaces.push(sharedId)
+    const sharedProject = await makeProject(sharedId, 'Atomic Shared Project')
+    const sharedDecision = await makeDecision({
+      workspaceId: sharedId,
+      projectId: sharedProject,
+      actorUserId: owner.id,
+      comment: 'KEEP ME VERBATIM under rollback too.',
+      client: {
+        actor: { kind: 'human', id: owner.id, display: owner.email },
+        client: { channel: 'web', userAgent: 'Mozilla/5.0 (Macintosh)', appVersion: '9.9.9' },
+      },
+    })
+
+    await database.insert(pendingEmailChanges).values({
+      id: newId('eml').slice(0, 36),
+      userId: owner.id,
+      pendingEmail: `pending-atomic-${run}@${emailDomain}`,
+      tokenHash: 'e'.repeat(64),
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+    await database.insert(invites).values({
+      id: newId('inv').slice(0, 36),
+      workspaceId: sharedId,
+      email: owner.email,
+      role: 'member',
+      invitedByUserId: colleague.id,
+      tokenHash: 'f'.repeat(64),
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+    await database.insert(accountSecurityEvents).values({
+      id: newId('sec').slice(0, 36),
+      userId: owner.id,
+      type: 'mfa_enabled',
+    })
+
+    // Fault injection, DB-side and scoped to this one row: the FINAL step of
+    // the sequence (delete the user row, which runs after the memberships are
+    // gone and after the anonymisation) is made to raise. With the route's
+    // db.transaction wrapper every earlier statement rolls back; without it
+    // they commit and these assertions see half a deletion.
+    const tag = run.toLowerCase().replace(/[^a-z0-9_]/g, '')
+    const fn = `hitly_fail_user_delete_${tag}`
+    const trigger = `hitly_fail_user_delete_${tag}`
+    const quotedId = owner.id.replace(/'/g, "''")
+    await database.execute(
+      sql.raw(
+        `CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected mid-deletion failure'; END; $$`,
+      ),
+    )
+    await database.execute(
+      sql.raw(
+        `CREATE TRIGGER ${trigger} BEFORE DELETE ON users FOR EACH ROW WHEN (OLD.id = '${quotedId}') EXECUTE FUNCTION ${fn}()`,
+      ),
+    )
+
+    const deletedNotices: string[] = []
+    const reviewNotices: string[] = []
+    try {
+      const ticket = await mintTicket(owner.id, owner.cookie)
+      const response = await handleAccountDeletion(post('/delete', { confirmation: 'DELETE', ticket }, owner.cookie), {
+        log: () => undefined,
+        notifyDeleted: async ({ to }) => {
+          deletedNotices.push(to)
+        },
+        notifyApiKeyReview: async ({ to }) => {
+          reviewNotices.push(to)
+        },
+      })
+      assert.equal(response.status, 500, 'the injected failure must surface as 500')
+      assert.equal(((await response.json()) as { error?: string }).error, 'deletion_failed')
+
+      // Nothing committed: the account is intact.
+      const survivor = await userRow(owner.id)
+      assert.ok(survivor, 'the user row must survive the rolled-back deletion')
+      assert.equal(survivor!.email, owner.email)
+
+      // Both memberships are intact (sole-member workspace + shared workspace).
+      assert.equal(
+        (await database.select().from(memberships).where(eq(memberships.userId, owner.id))).length,
+        2,
+        'membership rows must roll back',
+      )
+
+      // The sole-member workspace and everything inside it are intact.
+      assert.equal((await database.select().from(workspaces).where(eq(workspaces.id, soloId))).length, 1)
+      assert.equal((await database.select().from(projects).where(eq(projects.id, soloProject))).length, 1)
+      assert.equal((await database.select().from(projectApiKeys).where(eq(projectApiKeys.id, soloKey))).length, 1)
+      assert.ok(
+        (await database.select().from(sessions).where(eq(sessions.userId, owner.id))).length >= 1,
+        'the session must still exist — the cascade never committed',
+      )
+      assert.equal(
+        (await database.select().from(pendingEmailChanges).where(eq(pendingEmailChanges.userId, owner.id))).length,
+        1,
+        'the pending email change must roll back',
+      )
+      assert.equal(
+        (await database.select().from(invites).where(eq(invites.email, owner.email))).length,
+        1,
+        'the invite addressed to the account must roll back',
+      )
+
+      // The decision record was NOT anonymised: reviewer identity and device
+      // are still in place.
+      const [record] = await database.select().from(decisionRecords).where(eq(decisionRecords.id, sharedDecision.id))
+      assert.ok(record)
+      assert.equal(record.actorUserId, owner.id, 'the actor id must roll back')
+      const rawClient = JSON.stringify(record.client)
+      assert.ok(rawClient.includes(owner.id), 'the reviewer id must still be present')
+      assert.ok(rawClient.includes(owner.email), 'the reviewer email must still be present')
+      assert.ok(rawClient.includes('Mozilla'), 'the device user agent must still be present')
+
+      // The security event was NOT anonymised and the account_deleted event
+      // was never written.
+      const ownEvents = await database
+        .select()
+        .from(accountSecurityEvents)
+        .where(eq(accountSecurityEvents.userId, owner.id))
+      assert.equal(ownEvents.length, 1)
+      assert.equal(ownEvents[0]!.type, 'mfa_enabled')
+      assert.equal(ownEvents[0]!.userIdHmac, null)
+      assert.equal(ownEvents[0]!.emailHmac, null)
+      const ownHmac = securityEventHmac(resolveSecurityEventHmacKey(process.env), owner.email)
+      assert.equal(
+        (
+          await database
+            .select()
+            .from(accountSecurityEvents)
+            .where(and(isNull(accountSecurityEvents.userId), eq(accountSecurityEvents.emailHmac, ownHmac)))
+        ).length,
+        0,
+        'no anonymised event and no account_deleted event may be committed',
+      )
+
+      // Post-commit notices never fire for a deletion that never committed.
+      assert.deepEqual(deletedNotices, [], 'no confirmation email for a rolled-back deletion')
+      assert.deepEqual(reviewNotices, [], 'no API-key review notice for a rolled-back deletion')
+    } finally {
+      await database.execute(sql.raw(`DROP TRIGGER IF EXISTS ${trigger} ON users`))
+      await database.execute(sql.raw(`DROP FUNCTION IF EXISTS ${fn}() CASCADE`))
+    }
+
+    // With the injection removed, the same account deletes cleanly: the 500
+    // came from the injected failure, not from the fixture.
+    const ticket = await mintTicket(owner.id, owner.cookie)
+    const ok = await handleAccountDeletion(post('/delete', { confirmation: 'DELETE', ticket }, owner.cookie), {
+      log: () => undefined,
+      notifyDeleted: async () => undefined,
+      notifyApiKeyReview: async () => undefined,
+    })
+    assert.equal(ok.status, 200)
+    assert.equal(await userRow(owner.id), null)
   })
 })
