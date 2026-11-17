@@ -72,6 +72,7 @@ const CANARY = {
   cookieRequired: ['page', 'canary', 'cookie-required'].join('-'),
   decisionPayload: ['page', 'canary', 'decision-payload'].join('-'),
   resumeResponse: ['page', 'canary', 'resume-response'].join('-'),
+  fallbackApiKey: ['page', 'canary', 'fallback-apikey'].join('-'),
 }
 
 /** False-positive keys from the #115 matcher: must stay visible (not redacted). */
@@ -79,9 +80,14 @@ const VISIBLE = {
   secretly: ['page', 'visible', 'secretly'].join('-'),
   tokenType: 'Bearer',
   tokenCount: 9,
+  metaNote: ['page', 'visible', 'meta-note'].join('-'),
+  fallbackNote: ['page', 'visible', 'fallback-note'].join('-'),
 }
 
 const ALL_CANARIES = Object.values(CANARY)
+
+/** Secret-like metadata key for the fallback bag, built from fragments. */
+const fallbackMetaKey = ['api', 'Key'].join('')
 
 function buildPayload(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -221,7 +227,12 @@ async function plantCanaries(approvalId: string) {
       secret_count: CANARY.secretCount,
       cookie_required: CANARY.cookieRequired,
     },
-    metadata: { resumeToken: CANARY.resume, cb_auth_token: CANARY.cbAuth, authTokenType: CANARY.authTokenType },
+    metadata: {
+      note: VISIBLE.metaNote,
+      resumeToken: CANARY.resume,
+      cb_auth_token: CANARY.cbAuth,
+      authTokenType: CANARY.authTokenType,
+    },
     origin: {
       ...envelopeOrigin,
       resumeHandle: { ...envelopeHandle, reviewToken: CANARY.resume, cb_auth_token: CANARY.cbAuth },
@@ -490,6 +501,131 @@ test('loadWorkItemPage redacts origin/args/_meta/decisions/resumeResponse; seria
 })
 
 type ApprovalEnvelopeLike = { _meta?: { secretKey?: unknown } }
+
+/**
+ * The "Raw stored view" (hitly#173) is the only surviving surface for the
+ * fields the old Full JSON panel showed beyond the create-once record: the
+ * redacted origin reference and the effective metadata bag (envelope.metadata
+ * or the resumeHandle-metadata fallback). The loader, not the UI, must carry
+ * them — dropping either, hiding the curated-Origin keys, or skipping
+ * redaction on the fallback path must go red here.
+ */
+test('loadWorkItemPage rawStoredView carries the redacted origin incl. curated-hidden keys and the effective metadata (dropping origin/metadata must go red)', async () => {
+  const approval = await ingest()
+  await plantCanaries(approval.id)
+
+  // Plant non-secret keys the curated Origin section hides (both in origin.ts HIDDEN).
+  const [row] = await db.select().from(approvals).where(eq(approvals.id, approval.id)).limit(1)
+  assert.ok(row)
+  const origin = asRecord(row.origin)
+  origin.mastraBaseUrl = 'http://localhost:4111'
+  origin.idempotencyKey = 'idem-visible-1'
+  await db
+    .update(approvals)
+    .set({ origin: await encodeTenantJson(workspaceA.id, origin) })
+    .where(eq(approvals.id, approval.id))
+
+  const stored = await client.query<{ origin: string }>(
+    'select origin::text as origin from approvals where id = $1',
+    [approval.id],
+  )
+  const storedOrigin = JSON.parse(stored.rows[0]!.origin) as Record<string, unknown>
+  assert.equal(storedOrigin.mastraBaseUrl, 'http://localhost:4111', 'fixture must carry a curated-Origin-hidden key')
+
+  const page = await loadWorkItemPage({
+    approvalId: approval.id,
+    userId: userReviewerA.id,
+    workspaceId: workspaceA.id,
+    workspaceRole: 'admin',
+  })
+  assert.ok(page.ok, `expected ok, got ${JSON.stringify(page)}`)
+
+  const rawView = asRecord(page.rawStoredView)
+  const rawOrigin = asRecord(rawView.origin)
+  const rawMeta = asRecord(rawView.metadata)
+
+  // Visible (non-secret) origin value survives in the raw stored view.
+  assert.equal(rawOrigin.runId, storedOrigin.runId, 'raw stored view must keep the visible origin runId')
+  // Keys the curated Origin section deliberately HIDES are still reachable in the raw stored view.
+  assert.equal(
+    page.originFields.some((row2) => row2.key === 'mastraBaseUrl' || row2.key === 'idempotencyKey'),
+    false,
+    'curated Origin section must hide mastraBaseUrl/idempotencyKey',
+  )
+  assert.equal(
+    rawOrigin.mastraBaseUrl,
+    'http://localhost:4111',
+    'raw stored view must keep curated-Origin-hidden keys (dropping them must go red)',
+  )
+  assert.equal(
+    rawOrigin.idempotencyKey,
+    'idem-visible-1',
+    'raw stored view must keep curated-Origin-hidden keys (dropping them must go red)',
+  )
+  // Effective metadata bag (envelope.metadata path) with a visible value.
+  assert.equal(rawMeta.note, VISIBLE.metaNote, 'raw stored view must keep the effective metadata bag')
+  // Credential keys from the metadata bag are stripped, secrets redacted.
+  assert.equal('cb_auth_token' in rawMeta, false, 'credential keys must be stripped from the metadata bag')
+  assert.equal(rawMeta.authTokenType, REDACTED, 'metadata bag must be redacted')
+  assertNoCanary('rawStoredView page (envelope-metadata path)', serializeWorkItemPage(page))
+})
+
+test('loadWorkItemPage rawStoredView falls back to REDACTED resumeHandle metadata when the envelope has no metadata (dropping the fallback or skipping its redaction must go red)', async () => {
+  const approval = await ingest()
+
+  const [row] = await db.select().from(approvals).where(eq(approvals.id, approval.id)).limit(1)
+  assert.ok(row)
+  const envelope = asRecord(row.envelope)
+  delete envelope.metadata
+  const origin = asRecord(row.origin)
+  const handle = asRecord(origin.resumeHandle)
+  origin.resumeHandle = {
+    ...handle,
+    metadata: {
+      note: VISIBLE.fallbackNote,
+      cb_auth_token: CANARY.cbAuth,
+      [fallbackMetaKey]: CANARY.fallbackApiKey,
+    },
+  }
+  await db
+    .update(approvals)
+    .set({
+      envelope: await encodeTenantJson(workspaceA.id, envelope),
+      origin: await encodeTenantJson(workspaceA.id, origin),
+    })
+    .where(eq(approvals.id, approval.id))
+
+  // Prove the fallback is the only metadata source: stored envelope carries none.
+  const stored = await client.query<{ envelope: string; origin: string }>(
+    'select envelope::text as envelope, origin::text as origin from approvals where id = $1',
+    [approval.id],
+  )
+  const storedEnvelope = JSON.parse(stored.rows[0]!.envelope) as Record<string, unknown>
+  assert.equal('metadata' in storedEnvelope, false, 'fixture envelope must have no metadata')
+  assert.ok(
+    stored.rows[0]!.origin.includes(CANARY.fallbackApiKey),
+    'fixture resumeHandle metadata must carry the secret canary',
+  )
+
+  const page = await loadWorkItemPage({
+    approvalId: approval.id,
+    userId: userReviewerA.id,
+    workspaceId: workspaceA.id,
+    workspaceRole: 'admin',
+  })
+  assert.ok(page.ok, `expected ok, got ${JSON.stringify(page)}`)
+
+  const rawMeta = asRecord(asRecord(page.rawStoredView).metadata)
+  assert.equal(
+    rawMeta.note,
+    VISIBLE.fallbackNote,
+    'raw stored view must fall back to origin.resumeHandle.metadata (dropping the fallback must go red)',
+  )
+  // The fallback bag is redacted the same way as every other reviewer surface.
+  assert.equal(rawMeta.apiKey, REDACTED, 'fallback metadata must be redacted (unredacted fallback must go red)')
+  assert.equal('cb_auth_token' in rawMeta, false, 'credential keys must be stripped from the fallback bag')
+  assertNoCanary('rawStoredView page (resumeHandle fallback path)', serializeWorkItemPage(page))
+})
 
 test('inbox list and audit/history loaders omit planted secrets from serialised props', async () => {
   const approval = await ingest()

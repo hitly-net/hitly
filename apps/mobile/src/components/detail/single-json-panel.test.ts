@@ -35,5 +35,8 @@ test('mobile: no "Full JSON" panel anywhere in the app', () => {
 test('mobile: detail screen keeps its single JSON block (args only)', () => {
   const screenSrc = fs.readFileSync(path.join(mobileRoot, 'app', 'inbox', '[id].tsx'), 'utf8')
   assert.match(screenSrc, /<ArgsBlock args=\{detail\.envelope\.action\.args\} \/>/, 'args block is the single JSON view')
+  // Exactly ONE JSON block: a second <ArgsBlock> (a second JSON disclosure) must go red.
+  const jsonBlocks = screenSrc.match(/<ArgsBlock\b/g) ?? []
+  assert.equal(jsonBlocks.length, 1, 'detail screen must render exactly one JSON block (ArgsBlock)')
   assert.doesNotMatch(screenSrc, /payloadHash|argsHash|original-request|OriginalRequest/, 'detail screen carries no original-request panel')
 })

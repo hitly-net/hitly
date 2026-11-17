@@ -207,6 +207,27 @@ describe('OriginalRequestPanel', () => {
     assert.equal(await blob.text(), DISPLAY)
   })
 
+  it('resets the Raw stored view toggle to collapsed when the outer panel closes', async () => {
+    await openPanel({
+      origin: { plugin: 'http', runId: 'run_9' },
+      metadata: { note: 'meta-visible' },
+    })
+    // Expand the raw stored view inside the open panel.
+    fireEvent.click(screen.getByRole('button', { name: 'Raw stored view' }))
+    assert.ok(screen.getByTestId('raw-stored-view-json'))
+
+    // Close the outer "View original request" panel.
+    fireEvent.click(screen.getByRole('button', { name: 'View original request' }))
+    assert.equal(screen.queryByTestId('raw-stored-view-json'), null)
+
+    // Reopen: the raw stored view must be collapsed again, not remembered open.
+    fireEvent.click(screen.getByRole('button', { name: 'View original request' }))
+    await waitFor(() => assert.ok(screen.getByTestId('original-request-json')))
+    const toggle = screen.getByRole('button', { name: 'Raw stored view' })
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false', 'raw view must reset to collapsed on panel close')
+    assert.equal(screen.queryByTestId('raw-stored-view-json'), null)
+  })
+
   it('shows no Raw stored view toggle when there are no extra stored fields', async () => {
     await openPanel(undefined)
     assert.equal(screen.queryByRole('button', { name: 'Raw stored view' }), null)
