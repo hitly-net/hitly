@@ -17,6 +17,7 @@ import { test } from 'node:test'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
+  PRICING_CONTACT_EMAIL,
   PRICING_CURRENCIES,
   PRICING_INTERVALS,
   PRICING_TIERS,
@@ -25,10 +26,11 @@ import {
   priceDisplay,
   priceNoteFor,
   priceSuffixFor,
-  retentionLabel,
+  retentionDisplayFor,
   seatsLabel,
 } from '@hitly/core'
-import { PricingCards, PricingTable } from './pricing'
+import { APP_URL } from '@/lib/layout.shared'
+import { PricingCard, PricingCards, PricingTable } from './pricing'
 
 // Components under @hitly/core consumers are compiled outside this app's
 // tsconfig when run under tsx, with the classic JSX runtime.
@@ -38,6 +40,20 @@ function renderCards(currency: 'gbp' | 'usd', interval: 'monthly' | 'annual') {
   return renderToStaticMarkup(
     React.createElement(PricingCards, { currency, interval }),
   )
+}
+
+function renderCard(
+  tier: (typeof PRICING_TIERS)[number],
+  currency: 'gbp' | 'usd',
+  interval: 'monthly' | 'annual',
+) {
+  return renderToStaticMarkup(
+    React.createElement(PricingCard, { tier, currency, interval }),
+  )
+}
+
+function reEscape(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 for (const currency of PRICING_CURRENCIES) {
@@ -56,7 +72,7 @@ for (const currency of PRICING_CURRENCIES) {
           tier.tagline,
           decisionsLabel(tier.limits),
           seatsLabel(tier.limits),
-          retentionLabel(tier.limits),
+          retentionDisplayFor(tier),
           tier.ssoLabel,
           tier.cta,
         ]
@@ -70,6 +86,70 @@ for (const currency of PRICING_CURRENCIES) {
     })
   }
 }
+
+test('each card pins its labelled Seats, Decisions and Retention cells (per card)', () => {
+  // Cell-level pins scoped to a single card: a wrong field, a constant, a
+  // missing cell, or another tier's value in a cell fails the regex for
+  // that card (a whole-page includes() of "10"/"3"/etc. matches elsewhere).
+  for (const currency of PRICING_CURRENCIES) {
+    for (const interval of PRICING_INTERVALS) {
+      for (const tier of PRICING_TIERS) {
+        const card = renderCard(tier, currency, interval)
+        const cells: Array<[string, string]> = [
+          ['Decisions / month', decisionsLabel(tier.limits)],
+          ['Seats', seatsLabel(tier.limits)],
+          ['Retention', retentionDisplayFor(tier)],
+        ]
+        for (const [label, value] of cells) {
+          const pattern = new RegExp(
+            `>${reEscape(label)}</dt><dd[^>]*>${reEscape(value)}</dd>`,
+          )
+          assert.ok(
+            pattern.test(card),
+            `${tier.id} card (${currency}/${interval}) must render <dt>${label}</dt><dd>${value}</dd>`,
+          )
+        }
+      }
+    }
+  }
+})
+
+test('CTA destinations: Free/Pro go to signup, Team/Enterprise go to the contact mailto', () => {
+  for (const tier of PRICING_TIERS) {
+    const card = renderCard(tier, 'gbp', 'monthly')
+    if (tier.id === 'solo' || tier.id === 'pro') {
+      // Self-serve tiers link to signup, never to the contact mailbox.
+      assert.ok(
+        card.includes(`href="${APP_URL}/signup"`),
+        `${tier.id} CTA must link to ${APP_URL}/signup`,
+      )
+      assert.ok(
+        !card.includes('mailto:'),
+        `${tier.id} CTA must not be a contact mailto`,
+      )
+    } else {
+      // Contact-only tiers link to the shared contact address with the
+      // tier's subject, never to signup.
+      assert.ok(
+        card.includes(`href="mailto:${PRICING_CONTACT_EMAIL}?subject=`),
+        `${tier.id} CTA must be a mailto to ${PRICING_CONTACT_EMAIL}`,
+      )
+      assert.ok(
+        card.includes(encodeURIComponent(`HITLy ${tier.label}`)),
+        `${tier.id} mailto subject must name the tier`,
+      )
+      assert.ok(
+        !card.includes(`${APP_URL}/signup`),
+        `${tier.id} CTA must not link to signup`,
+      )
+    }
+    // The CTA label is inside the linked element.
+    assert.ok(
+      /<a [^>]*href="[^"]+"[^>]*>[^<]*</.test(card) && card.includes(`>${tier.cta}</a>`),
+      `${tier.id} CTA text "${tier.cta}" must be the link label`,
+    )
+  }
+})
 
 test('pricing cards show "Free" for plan id solo and never label a plan Solo', () => {
   const markup = renderCards('gbp', 'monthly')

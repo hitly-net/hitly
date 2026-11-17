@@ -13,7 +13,7 @@ import {
   priceDisplay,
   priceNoteFor,
   priceSuffixFor,
-  retentionLabel,
+  retentionDisplayFor,
   seatsLabel,
   type PricingCurrency,
   type PricingInterval,
@@ -63,7 +63,7 @@ export function PricingCard({
         </div>
         <div className="flex justify-between gap-3">
           <dt className="text-zinc-500">Retention</dt>
-          <dd className="font-medium">{retentionLabel(tier.limits)}</dd>
+          <dd className="font-medium">{retentionDisplayFor(tier)}</dd>
         </div>
         <div className="flex justify-between gap-3">
           <dt className="text-zinc-500">SSO</dt>
