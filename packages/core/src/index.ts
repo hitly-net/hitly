@@ -371,6 +371,33 @@ export type {
   EvidenceSystemContext,
 } from './evidence.ts'
 
+export {
+  PRICING_CONTACT_EMAIL,
+  PRICING_CURRENCIES,
+  PRICING_INTERVALS,
+  PRICING_LIMITS,
+  PRICING_TIERS,
+  PRICING_VAT_NOTE,
+  decisionsLabel,
+  formatPricingAmount,
+  isPurchasablePlan,
+  priceDisplay,
+  priceNoteFor,
+  priceSuffixFor,
+  pricingIntervalSuffix,
+  pricingTier,
+  retentionDisplayFor,
+  retentionLabel,
+  seatsLabel,
+  stripeLookupKey,
+} from './pricing.ts'
+export type {
+  PricingCurrency,
+  PricingInterval,
+  PricingLimits,
+  PricingTier,
+} from './pricing.ts'
+
 export * from "./address-classify.ts"
 export * from "./answer-gates.ts"
 export * from "./typed-answer.ts"

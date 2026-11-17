@@ -5,7 +5,7 @@ import { marketingMeta } from '@/lib/site'
 export const metadata = marketingMeta({
   title: 'Pricing',
   description:
-    'HITLy pricing: Solo is free, Pro and Team are monthly Cloud subscriptions, Enterprise by arrangement. Self-hosting the Apache-2.0 server is free with no usage caps.',
+    'HITLy pricing: Free plan, Pro is a self-serve Cloud subscription (monthly or annual), Team and Enterprise by arrangement. Self-hosting the Apache-2.0 server is free with no usage caps.',
   path: '/pricing',
 })
 
