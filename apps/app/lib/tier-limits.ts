@@ -3,7 +3,7 @@
  *
  * Every numeric quota gate in the product must call limit() here — no module
  * may compare workspace.plan against a plan name or hard-code a cap. The map
- * is the `tier_limits` DB table (seeded by migration 0018), so moving a cap
+ * is the `tier_limits` DB table (seeded by migration 0019), so moving a cap
  * is a single UPDATE with no code change:
  *
  *   UPDATE tier_limits SET value = 5000 WHERE plan = 'pro' AND limit_key = 'decisions_per_month';

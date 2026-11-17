@@ -81,8 +81,8 @@ test('P16: completed retention equals today entitlementsFor behaviour, audit equ
 const DELIBERATE_NULLS: ReadonlySet<string> = new Set<string>([
   // self-hosted: everything unlimited (OSS is never capped).
   ...TIER_LIMIT_KEYS.map((k) => `self-hosted|${k}`),
-  // team is the "no seat cap" tier: seats / live projects / API keys unbounded.
-  'team|seats',
+  // team's live projects / API keys stay unbounded; its seat cap (10) comes
+  // from the pricing config and is a number, not a NULL.
   'team|live_projects',
   'team|api_keys',
   // enterprise is unlimited everywhere except api_rpm (support-deal pricing).

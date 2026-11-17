@@ -1,4 +1,5 @@
 import type { EntitlementFeature } from './tier-entitlements.ts'
+import { PRICING_LIMITS } from './pricing.ts'
 
 export const WORKSPACE_PLANS = ['self-hosted', 'solo', 'pro', 'team', 'enterprise'] as const
 export type WorkspacePlan = (typeof WORKSPACE_PLANS)[number]
@@ -11,9 +12,14 @@ export type HousekeepingSchedule = (typeof HOUSEKEEPING_SCHEDULES)[number]
 
 /** Closed inbox items (decided / expired / cancelled) older than this are deleted. */
 export const COMPLETED_RETENTION_DAYS: Record<CloudPlan, number> = {
-  solo: 10,
-  pro: 30,
-  team: 365,
+  // The published pricing config (packages/core/src/pricing.ts) is the single
+  // source for the displayed paid-plan windows; the `!` is justified because
+  // pricing.test.ts pins all three as numbers. Enterprise is a support-deal
+  // plan: its window is pinned at 1000 days (custom only via contract later;
+  // there is deliberately no never-purge tier for completed items).
+  solo: PRICING_LIMITS.solo.retentionDays!,
+  pro: PRICING_LIMITS.pro.retentionDays!,
+  team: PRICING_LIMITS.team.retentionDays!,
   enterprise: 1000,
 }
 

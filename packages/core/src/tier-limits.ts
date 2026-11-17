@@ -2,7 +2,7 @@
  * Tier limits map: the single source of truth for the numeric caps each
  * workspace plan unlocks.
  *
- * The live map is the `tier_limits` DB table (seeded by migration 0018) and
+ * The live map is the `tier_limits` DB table (seeded by migration 0019) and
  * every numeric cap in the product must read it through the helper
  * `limit(workspace, key)` (apps/app/lib/tier-limits.ts). Raising or lowering
  * a cap is one SQL statement — no code change, no deploy:
@@ -21,6 +21,7 @@
  * downgrade.
  */
 import type { WorkspacePlan } from './edition.ts'
+import { PRICING_LIMITS } from './pricing.ts'
 
 /** Every numeric limit key the map may hold. Unknown keys are always denied. */
 export const TIER_LIMIT_KEYS = [
@@ -49,20 +50,43 @@ export function isTierLimitKey(value: string): value is TierLimitKey {
 }
 
 /**
- * Seed for the `tier_limits` table, mirrored verbatim by migration 0018.
+ * Seed for the `tier_limits` table, mirrored verbatim by migration 0019.
  * The DB is the runtime source of truth; this constant documents the seed,
  * backs the seed guard test, and is what a fresh install starts from.
- * Values follow the published tiers; `null` means unlimited. self-hosted is
- * unlimited everywhere so the OSS edition is never capped.
+ * The displayed decisions/seats/completed-retention values are imported
+ * from the single pricing config (packages/core/src/pricing.ts, PRICING_LIMITS)
+ * so the pricing page and the enforced caps can never drift apart; the
+ * remaining keys follow the published tiers. `null` means unlimited.
+ * self-hosted is unlimited everywhere so the OSS edition is never capped.
+ * Enterprise completed retention is 1000 days (custom only via contract
+ * later; there is deliberately no never-purge tier).
  */
 export const TIER_LIMIT_SEED: Record<TierLimitKey, Record<WorkspacePlan, number | null>> = {
-  decisions_per_month: { 'self-hosted': null, solo: 300, pro: 2500, team: 20000, enterprise: null },
-  seats: { 'self-hosted': null, solo: 2, pro: 3, team: null, enterprise: null },
+  decisions_per_month: {
+    'self-hosted': null,
+    solo: PRICING_LIMITS.solo.decisionsPerMonth,
+    pro: PRICING_LIMITS.pro.decisionsPerMonth,
+    team: PRICING_LIMITS.team.decisionsPerMonth,
+    enterprise: null,
+  },
+  seats: {
+    'self-hosted': null,
+    solo: PRICING_LIMITS.solo.seats,
+    pro: PRICING_LIMITS.pro.seats,
+    team: PRICING_LIMITS.team.seats,
+    enterprise: null,
+  },
   live_projects: { 'self-hosted': null, solo: 2, pro: 10, team: null, enterprise: null },
   api_keys: { 'self-hosted': null, solo: 2, pro: 10, team: null, enterprise: null },
   callback_endpoints_per_project: { 'self-hosted': null, solo: 1, pro: 3, team: 10, enterprise: null },
   api_rpm: { 'self-hosted': null, solo: 60, pro: 300, team: 1200, enterprise: 3000 },
-  completed_retention_days: { 'self-hosted': null, solo: 10, pro: 30, team: 365, enterprise: 1000 },
+  completed_retention_days: {
+    'self-hosted': null,
+    solo: PRICING_LIMITS.solo.retentionDays,
+    pro: PRICING_LIMITS.pro.retentionDays,
+    team: PRICING_LIMITS.team.retentionDays,
+    enterprise: 1000,
+  },
   audit_retention_days: { 'self-hosted': null, solo: 30, pro: 365, team: 365, enterprise: 2555 },
 }
 
