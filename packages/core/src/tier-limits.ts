@@ -58,8 +58,9 @@ export function isTierLimitKey(value: string): value is TierLimitKey {
  * so the pricing page and the enforced caps can never drift apart; the
  * remaining keys follow the published tiers. `null` means unlimited.
  * self-hosted is unlimited everywhere so the OSS edition is never capped.
- * Enterprise completed retention is 1000 days (custom only via contract
- * later; there is deliberately no never-purge tier).
+ * Enterprise completed retention is derived from PRICING_LIMITS (the
+ * PM-approved 1000-day window lives in the pricing config itself; custom
+ * only via contract later; there is deliberately no never-purge tier).
  */
 export const TIER_LIMIT_SEED: Record<TierLimitKey, Record<WorkspacePlan, number | null>> = {
   decisions_per_month: {
@@ -85,7 +86,7 @@ export const TIER_LIMIT_SEED: Record<TierLimitKey, Record<WorkspacePlan, number 
     solo: PRICING_LIMITS.solo.retentionDays,
     pro: PRICING_LIMITS.pro.retentionDays,
     team: PRICING_LIMITS.team.retentionDays,
-    enterprise: 1000,
+    enterprise: PRICING_LIMITS.enterprise.retentionDays,
   },
   audit_retention_days: { 'self-hosted': null, solo: 30, pro: 365, team: 365, enterprise: 2555 },
 }

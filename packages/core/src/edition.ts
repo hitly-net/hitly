@@ -13,14 +13,15 @@ export type HousekeepingSchedule = (typeof HOUSEKEEPING_SCHEDULES)[number]
 /** Closed inbox items (decided / expired / cancelled) older than this are deleted. */
 export const COMPLETED_RETENTION_DAYS: Record<CloudPlan, number> = {
   // The published pricing config (packages/core/src/pricing.ts) is the single
-  // source for the displayed paid-plan windows; the `!` is justified because
-  // pricing.test.ts pins all three as numbers. Enterprise is a support-deal
-  // plan: its window is pinned at 1000 days (custom only via contract later;
-  // there is deliberately no never-purge tier for completed items).
+  // source for every paid-plan window; the `!` is justified because
+  // pricing.test.ts pins all four as numbers. Enterprise carries the
+  // PM-approved 1000-day window in PRICING_LIMITS itself (custom only via
+  // contract later; there is deliberately no never-purge tier for completed
+  // items) — no separate literal here.
   solo: PRICING_LIMITS.solo.retentionDays!,
   pro: PRICING_LIMITS.pro.retentionDays!,
   team: PRICING_LIMITS.team.retentionDays!,
-  enterprise: 1000,
+  enterprise: PRICING_LIMITS.enterprise.retentionDays!,
 }
 
 export function isCloudPlan(plan: string): plan is CloudPlan {

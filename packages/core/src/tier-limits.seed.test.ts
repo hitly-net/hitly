@@ -66,4 +66,13 @@ test('the seed values are the pricing config values (single source)', () => {
     )
     assert.equal(COMPLETED_RETENTION_DAYS[plan], PRICING_LIMITS[plan].retentionDays)
   }
+  // Enterprise completed retention comes from the pricing config too: the
+  // 1000-day PM window lives in PRICING_LIMITS, not in a separate literal
+  // in the seed or in COMPLETED_RETENTION_DAYS.
+  assert.equal(PRICING_LIMITS.enterprise.retentionDays, 1000)
+  assert.equal(
+    TIER_LIMIT_SEED.completed_retention_days.enterprise,
+    PRICING_LIMITS.enterprise.retentionDays,
+  )
+  assert.equal(COMPLETED_RETENTION_DAYS.enterprise, PRICING_LIMITS.enterprise.retentionDays)
 })
