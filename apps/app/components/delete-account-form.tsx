@@ -6,7 +6,6 @@ import {
   DELETION_CONFIRMATION_WORD,
   confirmationMatches,
   submitAccountDeletion,
-  submitAccountExport,
   submitDeletionAssertionOptions,
   submitDeletionPasskeyReauth,
   submitDeletionPasswordReauth,
@@ -22,8 +21,9 @@ const DANGER_BUTTON_CLASS =
  * The delete-account danger zone.
  *
  * Step 1 shows exactly what is destroyed — the sole-member workspaces with
- * their project / API-key / decision counts — and offers the export BEFORE
- * anything goes. Step 2 asks for a fresh proof of identity (current password
+ * their project / API-key / decision counts — and points to the support-run
+ * data request (Settings -> Profile) for anyone who wants a copy first. An
+ * open data request is flagged here so deletion does not strand it. Step 2 asks for a fresh proof of identity (current password
  * or a user-verified passkey) and for the word DELETE typed by hand; the
  * button stays disabled until both are in place. The server re-checks every
  * one of these independently — this form is guidance, not the guard.
@@ -42,12 +42,6 @@ export function DeleteAccountForm({ preview, hasPasskey }: { preview: DeletionPr
         Your account has been deleted. This is permanent, and a confirmation email has been sent.
       </p>
     )
-  }
-
-  async function onExport() {
-    setError(null)
-    const outcome = await submitAccountExport()
-    if (!outcome.ok) setError(outcome.message)
   }
 
   async function onPasswordReauth(event: FormEvent<HTMLFormElement>) {
@@ -118,9 +112,16 @@ export function DeleteAccountForm({ preview, hasPasskey }: { preview: DeletionPr
             </ul>
           )}
           <p className="text-xs text-zinc-500">
-            Projects, API keys, approvals and decisions inside these workspaces are erased. Export them first if you
-            need a copy.
+            Projects, API keys, approvals and decisions inside these workspaces are erased. Need a copy of your data
+            first? Ask from Settings &rarr; Profile (&quot;Request my data&quot;) — support prepares the export and sends
+            it to your account email, within one month under UK GDPR.
           </p>
+          {preview.pendingDataRequest ? (
+            <p role="status" data-testid="pending-data-request" className="text-xs text-amber-600 dark:text-amber-400">
+              You have an open data request. Deleting the account now would leave it unanswered — consider waiting for
+              support&apos;s reply, or tell support to close it.
+            </p>
+          ) : null}
         </section>
 
         {preview.keptWorkspaces.length > 0 ? (
@@ -155,14 +156,6 @@ export function DeleteAccountForm({ preview, hasPasskey }: { preview: DeletionPr
         ) : null}
 
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => void onExport()}
-            disabled={pending}
-            className="h-10 rounded-md border border-zinc-300 text-sm font-medium disabled:opacity-50 dark:border-zinc-700"
-          >
-            Export my data
-          </button>
           <button
             type="button"
             onClick={() => setStep('confirm')}

@@ -16,7 +16,6 @@
 export const DELETION_CONFIRMATION_WORD = 'DELETE' as const
 
 export const DELETION_PREVIEW_ENDPOINT = '/api/session/delete-account/preview'
-export const DELETION_EXPORT_ENDPOINT = '/api/session/export'
 export const DELETION_REAUTH_OPTIONS_ENDPOINT = '/api/session/delete-account/reauth/options'
 export const DELETION_REAUTH_ENDPOINT = '/api/session/delete-account/reauth'
 export const DELETION_ENDPOINT = '/api/session/delete-account'
@@ -58,7 +57,6 @@ export const DELETION_RETRY_MESSAGE = 'Could not delete your account right now. 
 export const DELETION_CONFIRMATION_REQUIRED_MESSAGE = `Type ${DELETION_CONFIRMATION_WORD} exactly to confirm.`
 export const DELETION_REAUTH_REQUIRED_MESSAGE = 'Confirm your password or a passkey first, then try again.'
 export const DELETION_SUCCEEDED_MESSAGE = 'Your account has been deleted. This is permanent.'
-export const DELETION_EXPORT_FAILED_MESSAGE = 'Could not prepare your export. Try again in a moment.'
 export const DELETION_PREVIEW_FAILED_MESSAGE = 'Could not load what will be deleted. Try again.'
 
 /** What the confirmation step renders before anything is destroyed. */
@@ -73,7 +71,7 @@ export type DeletionPreview = {
   keptWorkspaces: Array<{ id: string; name: string; role: string; apiKeys: number }>
   blockedWorkspaces: Array<{ id: string; name: string; reason: string; message: string }>
   hasBlocker: boolean
-  exportAvailable: boolean
+  pendingDataRequest: boolean
 }
 
 export type DeletionOutcome = { ok: true; alreadyDeleted?: boolean } | { ok: false; message: string }
@@ -101,33 +99,6 @@ export async function submitDeletionPreview(
     return { ok: false, message: DELETION_PREVIEW_FAILED_MESSAGE }
   } catch {
     return { ok: false, message: DELETION_RETRY_MESSAGE }
-  }
-}
-
-/**
- * Downloads the account export (the "export first" step the confirmation page
- * offers before anything is deleted). The server answers with an attachment;
- * the browser saves it.
- */
-export async function submitAccountExport(fetchImpl: typeof fetch = fetch): Promise<DeletionOutcome> {
-  try {
-    const response = await fetchImpl(DELETION_EXPORT_ENDPOINT, { method: 'GET', credentials: 'include' })
-    if (response.ok) {
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = 'hitly-account-export.json'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
-      return { ok: true }
-    }
-    if (response.status === 401) return { ok: false, message: DELETION_UNAUTHENTICATED_MESSAGE }
-    return { ok: false, message: DELETION_EXPORT_FAILED_MESSAGE }
-  } catch {
-    return { ok: false, message: DELETION_EXPORT_FAILED_MESSAGE }
   }
 }
 

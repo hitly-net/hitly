@@ -28,7 +28,6 @@ describe('raw account-delete path matcher', () => {
       '/api/session/delete-account/preview',
       '/api/session/delete-account/reauth',
       '/api/session/delete-account/reauth/options',
-      '/api/session/export',
       '/api/auth/sign-in/email',
       '/api/auth/passkey/verify-authentication',
       '/api/auth/get-session',

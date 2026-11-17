@@ -28,6 +28,7 @@ import {
   projectEvents,
   projects,
   sessions,
+  supportRequests,
   users,
   verifications,
   workspaces,
@@ -39,7 +40,6 @@ import { newId } from './ids'
 import {
   ACCOUNT_DELETION_SECURITY_EVENT,
   handleAccountDeletion,
-  handleAccountExport,
   handleDeletionPreview,
   handleDeletionReauth,
   handleDeletionReauthOptions,
@@ -352,7 +352,7 @@ describe('deletion preview', () => {
       deletableWorkspaces: Array<{ id: string; projects: number; apiKeys: number; decisions: number }>
       keptWorkspaces: Array<{ id: string; apiKeys: number }>
       hasBlocker: boolean
-      exportAvailable: boolean
+      pendingDataRequest: boolean
     }
     const solo = preview.deletableWorkspaces.find((item) => item.id === soloId)
     assert.ok(solo, 'the sole-member workspace must be listed as deletable')
@@ -364,54 +364,22 @@ describe('deletion preview', () => {
     assert.ok(kept, 'the shared workspace must be listed as kept')
     assert.equal(kept.apiKeys, 1)
     assert.equal(preview.hasBlocker, false)
-    assert.equal(preview.exportAvailable, true)
+    assert.equal(preview.pendingDataRequest, false)
+
+    // An open data request must surface in the preview (the #168 capture).
+    await database.insert(supportRequests).values({
+      id: newId('srq'),
+      userId: owner.id,
+      workspaceId: null,
+      type: 'data',
+      status: 'open',
+    })
+    const again = await handleDeletionPreview(get('/preview', owner.cookie), { log: () => undefined })
+    const preview2 = (await again.json()) as { pendingDataRequest: boolean }
+    assert.equal(preview2.pendingDataRequest, true)
   })
 })
 
-describe('export', () => {
-  it('exports only the sole-member workspaces, redacting secrets', async () => {
-    const owner = await signUp('export-owner')
-    const colleague = await signUp('export-colleague')
-    created.users.push(owner.id, colleague.id)
-
-    const soloRows = await database
-      .select({ workspaceId: memberships.workspaceId })
-      .from(memberships)
-      .where(eq(memberships.userId, owner.id))
-    const soloId = soloRows[0]!.workspaceId
-    created.workspaces.push(soloId)
-    const soloProject = await makeProject(soloId, 'Exportable Project')
-    await makeApiKey(soloId, soloProject, 'export key')
-    const sharedId = await makeWorkspace(colleague.id, 'Private Shared Team')
-    await addMember(sharedId, owner.id, 'member')
-    created.workspaces.push(sharedId)
-    const sharedProject = await makeProject(sharedId, 'Private Shared Project')
-    await makeApiKey(sharedId, sharedProject, 'private key')
-
-    const response = await handleAccountExport(get('/export', owner.cookie), { log: () => undefined })
-    assert.equal(response.status, 200)
-    assert.match(response.headers.get('content-disposition') ?? '', /attachment/)
-    const text = await response.text()
-    const payload = JSON.parse(text) as {
-      profile: { email: string }
-      workspaces: Array<{ id: string; projects: Array<{ name: string; credentials: Record<string, unknown> }>; apiKeys: Array<Record<string, unknown> > }>
-      memberships: Array<{ id: string }>
-    }
-    assert.equal(payload.profile.email, owner.email)
-    assert.deepEqual(
-      payload.workspaces.map((workspace) => workspace.id),
-      [soloId],
-      'shared-workspace contents must not be exported',
-    )
-    assert.equal(payload.workspaces[0]!.projects[0]!.name, 'Exportable Project')
-    assert.deepEqual(payload.workspaces[0]!.projects[0]!.credentials, { baseUrl: '[redacted]', token: '[redacted]' })
-    assert.ok(!text.includes('super-secret-token'), 'third-party credentials must be redacted')
-    assert.ok(!text.includes('hashed-'), 'API key hashes must never be exported')
-    assert.ok(!text.includes('Private Shared Project'))
-    assert.deepEqual(payload.memberships.map((item) => item.id), [sharedId])
-    void sharedProject
-  })
-})
 
 describe('re-auth', () => {
   it('refuses a missing field, a wrong password, and a spent limiter', async () => {
