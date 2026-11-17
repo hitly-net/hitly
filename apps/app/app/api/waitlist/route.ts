@@ -12,15 +12,19 @@ export async function POST(request: Request) {
   const parsed = parseWaitlistPayload(json)
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 })
 
+  // The webhook is opt-in (see lib/waitlist): with WAITLIST_WEBHOOK_URL
+  // unset/blank nothing is posted externally and the signup is accepted.
   const webhook = waitlistWebhookUrl()
-  const response = await fetch(webhook, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(parsed.data),
-  })
+  if (webhook !== null) {
+    const response = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(parsed.data),
+    })
 
-  if (!response.ok) {
-    return NextResponse.json({ error: 'Could not submit. Try again.' }, { status: 502 })
+    if (!response.ok) {
+      return NextResponse.json({ error: 'Could not submit. Try again.' }, { status: 502 })
+    }
   }
 
   return NextResponse.json({ ok: true })
