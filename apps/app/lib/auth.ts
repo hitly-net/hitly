@@ -18,6 +18,7 @@ import { issueEmailVerification } from './email-verification-issue'
 import { resolveAuthSecret } from './auth-secret'
 import { trustedProxyAuthOptions } from './trusted-proxies'
 import { authLogger, handleAuthApiError } from './auth-logging'
+import { authRateLimitEnabled, createAuthRateLimitStorage } from './rate-limit'
 import { PASSKEY_USER_VERIFICATION } from './passkey'
 import { webAuthnRelyingParty } from './webauthn-rp'
 
@@ -93,6 +94,15 @@ function createAuth(database: NonNullable<typeof db>) {
     // errors into a plain 500 with one value-free log line (lib/auth-logging.ts).
     logger: authLogger,
     onAPIError: { onError: handleAuthApiError },
+    // Shared database-backed endpoint limiter (lib/rate-limit.ts): replaces
+    // Better Auth's per-process in-memory storage, so auth limits hold across
+    // server processes; the shared limiter keeps counting in process if the
+    // database is unavailable. Enabled like Better Auth (production) unless
+    // HITLY_RATE_LIMIT_AUTH_ENABLED=1/0 says otherwise.
+    rateLimit: {
+      enabled: authRateLimitEnabled(),
+      customStorage: createAuthRateLimitStorage(),
+    },
     // advanced.ipAddress.trustedProxies from HITLY_TRUSTED_PROXIES; nothing when unset.
     ...trustedProxyAuthOptions(),
     plugins: [

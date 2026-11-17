@@ -1,3 +1,4 @@
+import { newId } from './ids'
 import { before, beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -24,7 +25,16 @@ import {
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// These suites exercise the reset FLOW, not the limiter (the limiter is pinned
+// in lib/reset-request-limit.test.ts). Raise the shared-database budget so many
+// reset requests in one run never hit it; the rule is read on first acquire.
+process.env.HITLY_RATE_LIMIT_RESET_EMAIL_LIMIT = '1000'
+
 const APP_URL = 'http://localhost:3001'
+
+const RUN_TAG = newId('rl').slice(-10)
+const EMAIL = 'alex-' + RUN_TAG + '@example.com'
+const NOBODY = 'nobody-' + RUN_TAG + '@example.com'
 
 type Sent = { to: string; subject: string; text: string }
 let outbox: Sent[] = []
@@ -95,18 +105,18 @@ beforeEach(async () => {
   await drainMail()
   auth = makeAuth()
   outbox = []
-  await auth.api.signUpEmail({ body: { email: 'alex@example.com', password: 'old-password-1', name: 'Alex' } })
+  await auth.api.signUpEmail({ body: { email: EMAIL, password: 'old-password-1', name: 'Alex' } })
 })
 
 describe('reset route paths', () => {
   it('the client posts to the mounted request-password-reset route', async () => {
     assert.equal(REQUEST_PASSWORD_RESET_ENDPOINT, '/api/auth/request-password-reset')
-    const response = await post(REQUEST_PASSWORD_RESET_ENDPOINT, { email: 'alex@example.com' })
+    const response = await post(REQUEST_PASSWORD_RESET_ENDPOINT, { email: EMAIL })
     assert.equal(response.status, 200)
   })
 
   it('the old forget-password path is not served by this Better Auth version', async () => {
-    const response = await post('/api/auth/forget-password', { email: 'alex@example.com' })
+    const response = await post('/api/auth/forget-password', { email: EMAIL })
     assert.equal(response.status, 404)
   })
 
@@ -130,11 +140,11 @@ describe('reset route paths', () => {
 
 describe('requesting a reset', () => {
   it('sends one email with a link to the reset page', async () => {
-    const outcome = await requestPasswordReset('alex@example.com', appFetch)
+    const outcome = await requestPasswordReset(EMAIL, appFetch)
     await drainMail()
     assert.deepEqual(outcome, { kind: 'sent', message: RESET_REQUESTED_MESSAGE })
     assert.equal(outbox.length, 1)
-    assert.equal(outbox[0]?.to, 'alex@example.com')
+    assert.equal(outbox[0]?.to, EMAIL)
     const link = linkFrom(outbox[0]!)
     assert.equal(link.origin, APP_URL)
     assert.equal(link.pathname, '/reset-password')
@@ -142,15 +152,15 @@ describe('requesting a reset', () => {
   })
 
   it('answers an unknown email with the same message and sends nothing', async () => {
-    const known = await post(REQUEST_PASSWORD_RESET_ENDPOINT, { email: 'alex@example.com' })
-    const unknown = await post(REQUEST_PASSWORD_RESET_ENDPOINT, { email: 'nobody@example.com' })
+    const known = await post(REQUEST_PASSWORD_RESET_ENDPOINT, { email: EMAIL })
+    const unknown = await post(REQUEST_PASSWORD_RESET_ENDPOINT, { email: NOBODY })
     assert.equal(unknown.status, known.status)
     assert.deepEqual(await unknown.json(), await known.json())
     // Drain the known-address sender first: its async render must not land
     // in the reset outbox and fake a "sent something" result.
     await drainMail()
     outbox = []
-    const outcome = await requestPasswordReset('nobody@example.com', appFetch)
+    const outcome = await requestPasswordReset(NOBODY, appFetch)
     await drainMail()
     assert.deepEqual(outcome, { kind: 'sent', message: RESET_REQUESTED_MESSAGE })
     assert.equal(outbox.length, 0)
@@ -159,7 +169,7 @@ describe('requesting a reset', () => {
   it('shows the neutral message for server errors too', async () => {
     for (const status of [404, 500, 503]) {
       const fake: typeof fetch = async () => new Response('{}', { status })
-      assert.deepEqual(await requestPasswordReset('alex@example.com', fake), {
+      assert.deepEqual(await requestPasswordReset(EMAIL, fake), {
         kind: 'sent',
         message: RESET_REQUESTED_MESSAGE,
       })
@@ -175,14 +185,14 @@ describe('requesting a reset', () => {
     const offline: typeof fetch = async () => {
       throw new TypeError('fetch failed')
     }
-    const outcome = await requestPasswordReset('alex@example.com', offline)
+    const outcome = await requestPasswordReset(EMAIL, offline)
     assert.equal(outcome.kind, 'network')
   })
 })
 
 describe('setting a new password', () => {
   async function tokenFromEmail() {
-    await requestPasswordReset('alex@example.com', appFetch)
+    await requestPasswordReset(EMAIL, appFetch)
     await drainMail()
     return linkFrom(outbox[0]!).searchParams.get('token')!
   }
@@ -192,14 +202,14 @@ describe('setting a new password', () => {
     const token = await tokenFromEmail()
     assert.deepEqual(await submitNewPassword(token, 'new-password-2', appFetch), { ok: true })
 
-    const signInNew = await post('/api/auth/sign-in/email', { email: 'alex@example.com', password: 'new-password-2' })
+    const signInNew = await post('/api/auth/sign-in/email', { email: EMAIL, password: 'new-password-2' })
     assert.equal(signInNew.status, 200)
-    const signInOld = await post('/api/auth/sign-in/email', { email: 'alex@example.com', password: 'old-password-1' })
+    const signInOld = await post('/api/auth/sign-in/email', { email: EMAIL, password: 'old-password-1' })
     assert.equal(signInOld.status, 401)
   })
 
   it('ends sessions created before the reset', async () => {
-    const signIn = await post('/api/auth/sign-in/email', { email: 'alex@example.com', password: 'old-password-1' })
+    const signIn = await post('/api/auth/sign-in/email', { email: EMAIL, password: 'old-password-1' })
     assert.equal(signIn.status, 200)
     const cookie = signIn.headers
       .getSetCookie()

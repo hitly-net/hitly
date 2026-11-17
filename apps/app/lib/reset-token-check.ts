@@ -1,5 +1,6 @@
 import { RESET_PASSWORD_PAGE } from './password-reset'
-import { resetCheckLimiter } from './reset-check-limit'
+import { resetCheckAcquire, RESET_CHECK_WINDOW_MS } from './reset-check-limit'
+import { resolveDecision, type RateAcquire } from './rate-limit'
 
 /**
  * Checks a reset link's token on the server before the reset page shows the
@@ -105,11 +106,14 @@ export async function loadResetPageState(
   {
     auth,
     clientKey,
-    allow = resetCheckLimiter,
-  }: { auth: ResetCallbackApi | null; clientKey: string; allow?: (key: string) => boolean },
+    allow = resetCheckAcquire,
+  }: { auth: ResetCallbackApi | null; clientKey: string; allow?: RateAcquire },
 ): Promise<ResetPageState> {
   const check = auth
-    ? async (token: string): Promise<ResetTokenState> => (allow(clientKey) ? checkResetToken(auth, token) : 'unknown')
+    ? async (token: string): Promise<ResetTokenState> =>
+        (await resolveDecision(allow, clientKey, RESET_CHECK_WINDOW_MS)).allowed
+          ? checkResetToken(auth, token)
+          : 'unknown'
     : null
   return resolveResetPageState(params, check)
 }

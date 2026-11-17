@@ -350,6 +350,7 @@ describe('public sign-up verification', () => {
 
     const blocked = await handleResendEmailVerification(resendRequest(cookie, 'a'), deps)
     assert.equal(blocked.status, 429)
+    assert.equal(blocked.headers.get('retry-after'), '900', 'a spent budget names the seconds left in its window')
     const blockedBody = await blocked.json()
     assert.deepEqual(blockedBody, { error: 'too_many_attempts' })
     assert.ok(!JSON.stringify(blockedBody).includes('@'))
@@ -370,6 +371,7 @@ describe('public sign-up verification', () => {
     assert.equal(sentMail.length, 0, 'an already-verified account is not mailed again')
     const verifiedBlocked = await handleResendEmailVerification(resendRequest(cookie, 'verified'), verifiedDeps)
     assert.equal(verifiedBlocked.status, 429)
+    assert.equal(verifiedBlocked.headers.get('retry-after'), '900')
     assert.deepEqual(await verifiedBlocked.json(), blockedBody)
 
     const anonymous = await handleResendEmailVerification(

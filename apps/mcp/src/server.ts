@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { MAX_BODY_BYTES, MCP_PATH, type McpConfig } from './config.ts'
 import { HttpHostClient, type FetchLike, type HostClient } from './host-client.ts'
 import { clientIdFor, createLogger, type Logger } from './logger.ts'
-import { createRateLimiter } from './rate-limit.ts'
+import { createRateLimiter, type McpRateAcquire } from './rate-limit.ts'
 import { hostHeaderAllowed, isLoopbackBind, originAllowed } from './security.ts'
 import { registerTools } from './tools.ts'
 
@@ -19,6 +19,11 @@ export interface ServerDeps {
   now?: () => number
   /** Clock for the rate limiter (tests); defaults to wall time. */
   rateNow?: () => number
+  /**
+   * Rate-limit decision for a client id (tests; or the DB-backed limiter
+   * built in main.ts). Defaults to the per-process fixed-window limiter.
+   */
+  rateAcquire?: McpRateAcquire
 }
 
 /** Project API keys look like `hitly_<base64url>`; resume tokens (`hitly_resume_…`) are not API keys. */
@@ -108,7 +113,13 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
     publicUrlOrigin: config.publicUrlOrigin,
     loopbackBound,
   }
-  const rateLimiter = createRateLimiter(config.rateLimit, config.rateWindowMs, deps.rateNow ?? Date.now)
+  const memoryLimiter = createRateLimiter(config.rateLimit, config.rateWindowMs, deps.rateNow ?? Date.now)
+  const rateAcquire: McpRateAcquire =
+    deps.rateAcquire ??
+    (async (clientId: string) => {
+      const budget = memoryLimiter.tryConsume(clientId)
+      return budget.ok ? { ok: true, retryAfterMs: 0 } : { ok: false, retryAfterMs: budget.retryAfterMs }
+    })
   return createServer(async (req, res) => {
     const started = Date.now()
     res.on('finish', () => {
@@ -166,7 +177,7 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         })
         return
       }
-      const budget = rateLimiter.tryConsume(clientIdFor(auth.key))
+      const budget = await rateAcquire(clientIdFor(auth.key))
       if (!budget.ok) {
         req.resume()
         const retryAfterSec = Math.max(1, Math.ceil(budget.retryAfterMs / 1000))
