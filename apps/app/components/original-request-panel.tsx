@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { redactedRequestJsonFromCanonical } from '@/lib/redact-request-payload'
+import { redactedRequestJson, redactedRequestJsonFromCanonical } from '@/lib/redact-request-payload'
 
 /**
  * "View original request" panel (hitly#98): opens the create-once
@@ -10,6 +10,13 @@ import { redactedRequestJsonFromCanonical } from '@/lib/redact-request-payload'
  * the redacted payload; `payloadHash` / `argsHash` of the stored original for
  * off-host verification. The UI redacts again as a second line of defence.
  * `editedArgs` is never rendered here — see EditedArgsPanel.
+ *
+ * `rawStoredView` carries the (already reviewer-redacted) stored fields the
+ * detail page used to show in a separate "Full JSON" panel but that are NOT in
+ * the create-once envelope record (the redacted origin reference and the
+ * effective metadata bag). They render here in a collapsed-by-default
+ * "Raw stored view" toggle, redacted again client-side as a second line of
+ * defence; Copy/Download remain scoped to the original request.
  */
 
 type OriginalRequestResponse = {
@@ -38,12 +45,21 @@ function downloadJson(filename: string, text: string) {
   URL.revokeObjectURL(url)
 }
 
-export function OriginalRequestPanel({ approvalId }: { approvalId: string }) {
+export function OriginalRequestPanel({
+  approvalId,
+  rawStoredView,
+}: {
+  approvalId: string
+  rawStoredView?: Record<string, unknown> | null
+}) {
   const [open, setOpen] = useState(false)
+  const [rawViewOpen, setRawViewOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<OriginalRequestResponse | null>(null)
   const [copied, setCopied] = useState(false)
+
+  const hasRawStoredView = Boolean(rawStoredView && Object.keys(rawStoredView).length > 0)
 
   async function load() {
     setLoading(true)
@@ -69,6 +85,7 @@ export function OriginalRequestPanel({ approvalId }: { approvalId: string }) {
   function onToggle() {
     const next = !open
     setOpen(next)
+    if (!next) setRawViewOpen(false)
     if (next && !data && !loading) void load()
   }
 
@@ -141,6 +158,32 @@ export function OriginalRequestPanel({ approvalId }: { approvalId: string }) {
                   </button>
                 </div>
               </div>
+              {hasRawStoredView ? (
+                <div className="mt-3 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                  <button
+                    type="button"
+                    onClick={() => setRawViewOpen((current) => !current)}
+                    aria-expanded={rawViewOpen}
+                    className="w-full cursor-pointer select-none text-left text-sm font-medium"
+                  >
+                    Raw stored view
+                  </button>
+                  {rawViewOpen ? (
+                    <>
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        Stored fields not part of the create-once request above (origin
+                        reference, metadata bag), shown redacted the same way.
+                      </p>
+                      <pre
+                        data-testid="raw-stored-view-json"
+                        className="mt-2 max-h-96 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900"
+                      >
+                        {redactedRequestJson(rawStoredView)}
+                      </pre>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
             </>
           ) : null}
         </div>

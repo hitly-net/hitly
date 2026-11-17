@@ -42,7 +42,10 @@ export type PricingLimits = {
   decisionsPerMonth: number | null
   /** People who can respond (members + invites). */
   seats: number | null
-  /** Days closed decisions and their evidence are kept. */
+  /**
+   * Days completed (closed) decisions and their evidence are kept.
+   * Approved values: Free 10, Pro 30, Team 90, Enterprise 1000.
+   */
   retentionDays: number | null
 }
 
@@ -55,7 +58,10 @@ export const PRICING_LIMITS: Record<CloudPlan, PricingLimits> = {
   solo: { decisionsPerMonth: 300, seats: 2, retentionDays: 10 },
   pro: { decisionsPerMonth: 2500, seats: 3, retentionDays: 30 },
   team: { decisionsPerMonth: 20000, seats: 10, retentionDays: 90 },
-  enterprise: { decisionsPerMonth: null, seats: null, retentionDays: null },
+  // Enterprise completed-decision retention is a concrete 1000-day limit
+  // (contract-backed, imported by the tier_limits seed); the marketing
+  // surface shows it as a contract term via `retentionDisplay` below.
+  enterprise: { decisionsPerMonth: null, seats: null, retentionDays: 1000 },
 }
 
 export type PricingTier = {
@@ -80,6 +86,12 @@ export type PricingTier = {
    */
   stripeLookupKeys?: Record<PricingInterval, string>
   limits: PricingLimits
+  /**
+   * Optional marketing override for the Retention cell. When set, pricing
+   * surfaces show this instead of the formatted `limits.retentionDays`
+   * (e.g. Enterprise shows a contract term while the limit stays 1000).
+   */
+  retentionDisplay?: string
   /** Which SSO the tier includes, as displayed. */
   ssoLabel: string
 }
@@ -146,6 +158,7 @@ export const PRICING_TIERS: readonly PricingTier[] = [
       annual: { gbp: 750, usd: 950 },
     },
     limits: PRICING_LIMITS.enterprise,
+    retentionDisplay: 'Custom, up to 7 years',
     ssoLabel: 'SAML and all providers',
   },
 ]
@@ -217,7 +230,17 @@ export function seatsLabel(limits: PricingLimits): string {
   return limits.seats === null ? 'Custom' : String(limits.seats)
 }
 
-/** '10 days' / '30 days' / 'Custom, up to 7 years'. */
+/**
+ * Helper for the Retention cell: the tier's contract-style `retentionDisplay`
+ * when set, else the formatted limit ('10 days' / '30 days'); a null limit
+ * falls back to the contract-style copy.
+ */
+export function retentionDisplayFor(tier: PricingTier): string {
+  if (tier.retentionDisplay) return tier.retentionDisplay
+  return retentionLabel(tier.limits)
+}
+
+/** '10 days' / '30 days' / 'Custom, up to 7 years' (null limit). */
 export function retentionLabel(limits: PricingLimits): string {
   return limits.retentionDays === null ? 'Custom, up to 7 years' : `${limits.retentionDays} days`
 }

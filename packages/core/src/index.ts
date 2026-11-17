@@ -397,6 +397,7 @@ export {
   priceSuffixFor,
   pricingIntervalSuffix,
   pricingTier,
+  retentionDisplayFor,
   retentionLabel,
   seatsLabel,
   stripeLookupKey,

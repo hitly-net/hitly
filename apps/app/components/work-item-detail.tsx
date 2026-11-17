@@ -7,7 +7,6 @@ import { AppShell } from '@/components/app-shell'
 import { ContextMarkdown } from '@/components/context-markdown'
 import { AnswerForm } from '@/components/answer-form'
 import { ForceCancelButton } from '@/components/force-cancel-button'
-import { JsonDisclosure } from '@/components/json-disclosure'
 import { MarkPresentedIfCanAct, RefreshOnFocus } from '@/components/work-item-client'
 import { EditedArgsPanel } from '@/components/edited-args-panel'
 import { OriginalRequestPanel } from '@/components/original-request-panel'
@@ -174,8 +173,7 @@ function WorkItemDetailView({ page, errorMessage }: { page: WorkItemPageDto; err
         attachments={flight.attachments}
       />
       <ArgsPayload value={page.originalArgs} />
-      <JsonDisclosure value={page.jsonDisclosure} />
-      <OriginalRequestPanel approvalId={page.id} />
+      <OriginalRequestPanel approvalId={page.id} rawStoredView={page.rawStoredView} />
       <EditedArgsPanel editedArgs={page.editedArgs} />
       {latestDecision ? (
         <section className="mt-8 max-w-2xl">

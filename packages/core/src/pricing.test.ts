@@ -20,6 +20,7 @@ import {
   priceSuffixFor,
   pricingIntervalSuffix,
   pricingTier,
+  retentionDisplayFor,
   retentionLabel,
   seatsLabel,
   stripeLookupKey,
@@ -90,7 +91,7 @@ test('limits: decisions, seats and retention match the approved tiers', () => {
   assert.deepEqual(PRICING_LIMITS.enterprise, {
     decisionsPerMonth: null,
     seats: null,
-    retentionDays: null,
+    retentionDays: 1000,
   })
   // Displayed labels.
   assert.equal(decisionsLabel(PRICING_LIMITS.solo), '300')
@@ -104,7 +105,23 @@ test('limits: decisions, seats and retention match the approved tiers', () => {
   assert.equal(retentionLabel(PRICING_LIMITS.solo), '10 days')
   assert.equal(retentionLabel(PRICING_LIMITS.pro), '30 days')
   assert.equal(retentionLabel(PRICING_LIMITS.team), '90 days')
-  assert.equal(retentionLabel(PRICING_LIMITS.enterprise), 'Custom, up to 7 years')
+  // PM ruling: Enterprise completed retention is the concrete 1000-day
+  // limit (imported by the tier_limits seed later); the marketing copy is
+  // contract-style via the per-tier display override.
+  assert.equal(retentionLabel(PRICING_LIMITS.enterprise), '1000 days')
+  assert.equal(
+    retentionDisplayFor(pricingTier('enterprise')!),
+    'Custom, up to 7 years',
+  )
+  // A genuinely null limit still falls back to the contract-style copy.
+  assert.equal(
+    retentionLabel({ decisionsPerMonth: null, seats: null, retentionDays: null }),
+    'Custom, up to 7 years',
+  )
+  // Only Enterprise carries a display override.
+  for (const id of ['solo', 'pro', 'team'] as const) {
+    assert.equal(pricingTier(id)?.retentionDisplay, undefined, `${id} must not override retention`)
+  }
   // Each tier carries its limits by reference.
   for (const tier of PRICING_TIERS) {
     assert.deepEqual(tier.limits, PRICING_LIMITS[tier.id])
