@@ -338,6 +338,7 @@ describe('password change request policy', () => {
       deps,
     )
     assert.equal(blocked.status, 429)
+    assert.equal(blocked.headers.get('retry-after'), '900', 'a spent budget names the seconds left in its window')
     assert.deepEqual(await blocked.json(), { error: 'too_many_attempts' })
     assert.equal(calls.changePassword, CHANGE_PASSWORD_ATTEMPT_LIMIT, 'the blocked attempt never checks the password')
 

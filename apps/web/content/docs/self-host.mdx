@@ -49,6 +49,39 @@ Local Compose runs **Postgres 16** (`postgres://USER:PASSWORD@localhost:5432/hit
 
 Older self-host installs used MariaDB. There is no in-place upgrade: stand up Postgres, run `yarn db:migrate` on an empty database, and re-create workspaces. Schema was squashed to a single Postgres migration.
 
+## Rate limiting
+
+Rate limiting is **shared through Postgres**: every app process counts into the `rate_limit_buckets` table (migration `0016`), so limits hold across replicas instead of resetting per process. One atomic `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` per request opens or extends a fixed window; expired rows are swept opportunistically from the same path (at most once per minute per process), so no cron is required. The table needs no extra grants for a normal single-role setup — if your app connects with a dedicated role that is not the table owner (e.g. a least-privilege Cloud role), grant that role `SELECT, INSERT, UPDATE, DELETE` on `rate_limit_buckets` during the `0016` rollout, otherwise the limiter falls back to per-process counting (it logs one warning when that happens).
+
+Buckets are keyed by `SHA-256(route + NUL + subject)` — raw IPs, emails and API keys are never stored or logged; the `route` column only names the family (`auth`, `mfa-reauth`, `mfa-verify`, `password-change`, `passkey-reauth`, `email-change`, `resend-email-verification`, `reset-check`, `reset-check-shared`, `reset-email`, `ingest`, `rest-read`, `rest-write`, `invite`, `failed-auth`). Every limited answer is a `429` with a `Retry-After` header in seconds. Keys and tokens are format-checked **before** any counting: a malformed or unknown API key / invite token never creates a per-subject row — such attempts count against the per-client-address `failed-auth` budget instead, and only an authenticated key is counted per key (by hash). The unauthenticated `GET /api/v1/health` probe is not rate limited at all, so monitoring is never throttled and a health check writes nothing to the database.
+
+When the database is unavailable the limiter logs one line per process and transparently falls back to per-process counting — endpoints stay protected, limits just become per-node until Postgres returns. Set `HITLY_RATE_LIMIT_DB=0` to force per-process counting everywhere (e.g. to run without migration `0016`).
+
+Per-family limits and windows come from env (whole numbers). An unusable value — not a whole number, or `0` for a limit — is never fatal: it logs one warning per affected variable, the first time that family is used (never the value), and keeps the shipped default, so a typo cannot disable a limiter or take the app down. The defaults shipped with each route are:
+
+| Variable | Default | Covers |
+| --- | --- | --- |
+| — (no override) | Better Auth's own per-endpoint rules | `/api/auth` endpoints, counted through `customStorage` (hashed client IP + path) |
+| `HITLY_RATE_LIMIT_MFA_REAUTH_LIMIT` / `_WINDOW_MS` | 10 / 15 min | MFA re-auth challenges |
+| `HITLY_RATE_LIMIT_MFA_VERIFY_LIMIT` / `_WINDOW_MS` | 10 / 15 min | TOTP verify attempts |
+| `HITLY_RATE_LIMIT_PASSWORD_CHANGE_LIMIT` / `_WINDOW_MS` | 10 / 15 min | password changes |
+| `HITLY_RATE_LIMIT_PASSKEY_REAUTH_LIMIT` / `_WINDOW_MS` | 10 / 15 min | passkey re-auth |
+| `HITLY_RATE_LIMIT_EMAIL_CHANGE_LIMIT` / `_WINDOW_MS` | 10 / 15 min | email changes |
+| `HITLY_RATE_LIMIT_RESEND_EMAIL_VERIFICATION_LIMIT` / `_WINDOW_MS` | 5 / 15 min | verification resends |
+| `HITLY_RATE_LIMIT_RESET_CHECK_LIMIT` / `_WINDOW_MS` | 30 / 60 s | reset-token checks per client (`HITLY_RATE_LIMIT_RESET_CHECK_SHARED_*`, default 600 / 60 s, caps clients with no usable address) |
+| `HITLY_RATE_LIMIT_RESET_EMAIL_LIMIT` / `_WINDOW_MS` | 5 / 60 min | reset emails per account |
+| `HITLY_RATE_LIMIT_INGEST_LIMIT` / `_WINDOW_MS` | 120 / 60 s | `POST /api/v1/approvals` per API key |
+| `HITLY_RATE_LIMIT_REST_READ_LIMIT` / `_WINDOW_MS` | 600 / 60 s | REST `/api/v1` reads: session-authed routes (per session user, billed once per request even through nested guards), key-authed GETs `GET /api/v1/approvals`, `GET /api/v1/approvals/by-run-id` and `GET /api/v1/approvals/[id]` (per hashed API key, counted only after the key authenticates), and unauthenticated `GET /api/v1/signup-status` (per hashed client-address key). `GET /api/v1/health` is exempt |
+| `HITLY_RATE_LIMIT_REST_WRITE_LIMIT` / `_WINDOW_MS` | 120 / 60 s | REST `/api/v1` key/token-authed mutations: requester `POST /api/v1/approvals/[id]/cancel` with an API key, `POST /api/v1/housekeeping` (per hashed cron token) |
+| `HITLY_RATE_LIMIT_INVITE_LIMIT` / `_WINDOW_MS` | 30 / 60 s | `POST /api/v1/invites/lookup` and `/accept` per verified invite token (hashed) |
+| `HITLY_RATE_LIMIT_FAILED_AUTH_LIMIT` / `_WINDOW_MS` | 60 / 60 s | Unauthenticated / invalid key-and-token attempts per hashed client address (never per unverified subject) |
+
+`HITLY_TRUSTED_PROXIES` is a comma-separated list of the reverse-proxy addresses (IPs/CIDRs) allowed to speak for a client via `X-Forwarded-For` — list your reverse proxy there, and firewall the app ports so only that proxy can reach them; otherwise any client could spoof its address and dodge the per-address budgets.
+
+Note on direct access: when no trusted proxy supplies `X-Forwarded-For`, all such clients share one per-address bucket (`addr:unknown`) for the failed-auth and address-keyed budgets. Behind the recommended reverse-proxy setup every request carries the header, so this only bites when clients reach the app ports directly — another reason to firewall them.
+
+`HITLY_RATE_LIMIT_AUTH_ENABLED=1|0` forces Better Auth's own limiter on or off; the default keeps its production-only behaviour. The MCP server limits per API key in-process by default; set `HITLY_MCP_DATABASE_URL` to count through the same shared table (tune with `HITLY_MCP_RATE_LIMIT` / `HITLY_MCP_RATE_LIMIT_WINDOW_MS`).
+
 ## What is not in this repo
 
 Stripe billing, hosted plan limits, and SSO ship in a private `@hitly/cloud` overlay used by [hitly.net](https://hitly.net). The `@hitly/cloud` package here is a stub: billing API routes return 404, and the nav hides Cloud-only items.

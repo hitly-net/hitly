@@ -1,68 +1,12 @@
 import { NextResponse } from 'next/server'
-import { ingestApproval, listRequesterPending } from '@/lib/approvals'
-import { createOncePolicy } from '@/lib/create-once'
+import { listRequesterPending, authenticateProjectKey } from '@/lib/approvals'
+import { handleIngestPost } from '@/lib/ingest-route'
+import { applyFailedAuthLimit, applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
+import { isWellFormedApiKey } from '@/lib/keys'
 import { parseCursorParam, parseLimitParam } from '@/lib/list-cursor'
-import { argsHash } from '@hitly/core'
 
 export async function POST(request: Request) {
-  try {
-    const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-    if (!apiKey) {
-      return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
-    }
-
-    const raw = await request.text()
-    if (!raw.trim()) {
-      return NextResponse.json(
-        {
-          error:
-            'JSON body required. Put plugin, projectId, runId, and resumeUrl in the POST body (n8n: Send Body), not query parameters.',
-        },
-        { status: 400 },
-      )
-    }
-    let body: Record<string, unknown>
-    try {
-      body = JSON.parse(raw) as Record<string, unknown>
-    } catch {
-      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-    }
-    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 })
-    }
-    const result = await ingestApproval({
-      apiKey,
-      body,
-      idempotencyKey: request.headers.get('idempotency-key'),
-    })
-
-    if (!result.ok) {
-      return NextResponse.json(
-        'code' in result && result.code
-          ? { error: result.error, code: result.code }
-          : { error: result.error },
-        { status: result.status },
-      )
-    }
-
-    const envelope = result.approval.envelope as { action?: { args?: Record<string, unknown> }; expiresAt?: string }
-    return NextResponse.json({
-      id: result.approval.id,
-      status: result.approval.status,
-      replayed: result.replayed,
-      // The expiry the host actually stored (rule/project defaults included),
-      // so requester clients never echo a deadline that differs from the row.
-      expiresAt: envelope.expiresAt ?? result.approval.expiresAt?.toISOString() ?? null,
-      envelope: result.approval.envelope,
-      // hitl-spec 3.8 over the stored original args (JCS, b64url SHA-256).
-      argsHash: await argsHash(envelope.action?.args ?? {}),
-      // hitl-spec 3.2: the published create-once retention period.
-      createOnce: createOncePolicy(),
-    })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Ingest failed'
-    return NextResponse.json({ error: message }, { status: 500 })
-  }
+  return handleIngestPost(request)
 }
 
 /**
@@ -75,6 +19,23 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
   if (!apiKey) return NextResponse.json({ error: 'Missing API key' }, { status: 401 })
+  // The per-key budget is only touched AFTER the key authenticates; junk or
+  // unknown keys are counted per client address in the failed-auth budget,
+  // so guesses can never mint per-key rows. The unauthenticated reply below
+  // is produced by listRequesterPending itself, unchanged.
+  if (isWellFormedApiKey(apiKey)) {
+    const authn = await authenticateProjectKey(apiKey)
+    if (authn) {
+      const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey))
+      if (limited) return limited
+    } else {
+      const failed = await applyFailedAuthLimit(request)
+      if (failed) return failed
+    }
+  } else {
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+  }
   const url = new URL(request.url)
   const status = url.searchParams.get('status') ?? 'open'
   // MCP list_pending sends status=pending. Treat it as open; do not widen to other values.
