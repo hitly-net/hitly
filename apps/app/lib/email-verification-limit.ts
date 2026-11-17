@@ -1,12 +1,15 @@
 import { createRateLimiter, type RateLimiter } from './reset-check-limit'
+import { createRateAcquire } from './rate-limit'
 
 /**
  * A per-client limit on signed-in resend requests, using the same limiter
- * factory as email change. Past the limit the route answers 429 without
- * sending another message.
+ * factory as email change. Past the limit the route answers 429 (with
+ * Retry-After) without sending another message.
  *
- * The limit is per server process. It never stores or logs an address or a
- * token, and the key is the client address, not the account.
+ * Attempts count into the shared database (lib/rate-limit.ts) so the limit
+ * holds across server processes; the per-process factory above is the
+ * fallback while the database is unavailable. It never stores or logs an
+ * address or a token, and the key is the client address, not the account.
  */
 
 export const RESEND_EMAIL_VERIFICATION_LIMIT = 5
@@ -22,4 +25,7 @@ export function createResendEmailVerificationLimiter(options: { now?: () => numb
   })
 }
 
-export const resendEmailVerificationLimiter = createResendEmailVerificationLimiter()
+export const resendEmailVerificationAttemptAcquire = createRateAcquire('resend-email-verification', {
+  limit: RESEND_EMAIL_VERIFICATION_LIMIT,
+  windowMs: RESEND_EMAIL_VERIFICATION_WINDOW_MS,
+})

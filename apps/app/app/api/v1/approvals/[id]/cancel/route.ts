@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 import { and, eq } from 'drizzle-orm'
 import { approvals } from '@hitly/db/schema'
-import { cancelApproval, cancelApprovalAsRequester } from '@/lib/approvals'
+import { cancelApproval, cancelApprovalAsRequester, authenticateProjectKey } from '@/lib/approvals'
 import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { withApiTenant } from '@/lib/api-session'
 import { requireDb } from '@/lib/tenant'
+import { applyFailedAuthLimit, applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
+import { isWellFormedApiKey } from '@/lib/keys'
 
 async function readReason(request: Request): Promise<string | undefined> {
   const text = await request.text().catch(() => '')
@@ -21,21 +23,34 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const { id } = await context.params
 
   // Requester cancel with the project API key that created the request.
-  // A Bearer value that is not an API key falls through to the session path
-  // (reviewer Bearer session tokens on mobile).
+  // A Bearer value that is not an API key may be a Better Auth bearer
+  // SESSION token (mobile reviewers) — it must not be counted as a failed
+  // login up front. It counts in failed-auth only if the session check
+  // below then fails to authenticate.
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-  if (apiKey) {
-    const result = await cancelApprovalAsRequester({ apiKey, approvalId: id, reason: await readReason(request) })
-    if (result.ok) return NextResponse.json({ id, status: result.status, decision: 'cancel', by: 'requester' })
-    if (result.status !== 401) {
-      return NextResponse.json(
-        'code' in result && result.code ? { error: result.error, code: result.code } : { error: result.error },
-        { status: result.status },
-      )
+  const malformedBearer = apiKey ? !isWellFormedApiKey(apiKey) : false
+  if (apiKey && isWellFormedApiKey(apiKey)) {
+    // Count per key (by hash) only once the key has authenticated; a failed
+    // attempt counts per client address in the failed-auth budget instead.
+    const authn = await authenticateProjectKey(apiKey)
+    if (authn) {
+      const limited = await applyRestLimit('write', apiKeyRestSubject(apiKey))
+      if (limited) return limited
+      const result = await cancelApprovalAsRequester({ apiKey, approvalId: id, reason: await readReason(request) })
+      if (result.ok) return NextResponse.json({ id, status: result.status, decision: 'cancel', by: 'requester' })
+      if (result.status !== 401) {
+        return NextResponse.json(
+          'code' in result && result.code ? { error: result.error, code: result.code } : { error: result.error },
+          { status: result.status },
+        )
+      }
+    } else {
+      const failed = await applyFailedAuthLimit(request)
+      if (failed) return failed
     }
   }
 
-  return withApiTenant(async (ctx) => {
+  const sessionResponse = await withApiTenant(async (ctx) => {
     const database = requireDb()
     const rows = await database
       .select()
@@ -61,4 +76,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     return NextResponse.json({ id, status: result.status, decision: 'cancel' })
   })
+  if (apiKey && malformedBearer && sessionResponse.status === 401) {
+    // The bearer was neither an API key nor a valid session: a failed login,
+    // counted per client address (M5 shape). Valid bearer sessions never get
+    // here with a 401, so mobile reviewers are never counted.
+    const failed = await applyFailedAuthLimit(request)
+    if (failed) return failed
+  }
+  return sessionResponse
 }
