@@ -70,8 +70,8 @@ afterEach(() => {
   Node.prototype.appendChild = realAppendChild
 })
 
-async function openPanel() {
-  render(<OriginalRequestPanel approvalId="apr_1" />)
+async function openPanel(rawStoredView?: Record<string, unknown> | null) {
+  render(<OriginalRequestPanel approvalId="apr_1" rawStoredView={rawStoredView} />)
   fireEvent.click(screen.getByRole('button', { name: 'View original request' }))
   await waitFor(() => assert.ok(screen.getByTestId('original-request-json')))
 }
@@ -146,5 +146,93 @@ describe('OriginalRequestPanel', () => {
     assert.equal('editedArgs' in shown, false)
     assert.equal(screen.queryByTestId('edited-args-panel'), null)
     assert.equal(screen.queryByRole('heading', { name: 'Edited arguments' }), null)
+  })
+
+  it('renders exactly one JSON panel: no separate "Full JSON" panel', async () => {
+    await openPanel({
+      origin: { plugin: 'http', runId: 'run_9' },
+      metadata: { note: 'meta-visible' },
+    })
+    assert.equal(screen.queryByText('Full JSON'), null)
+    // The only <pre> on the page is the original-request JSON; the raw
+    // stored view is collapsed and its <pre> is not mounted.
+    assert.equal(document.querySelectorAll('pre').length, 1)
+    assert.equal(document.querySelector('pre')?.dataset.testid, 'original-request-json')
+    assert.equal(document.querySelectorAll('summary').length, 0)
+  })
+
+  it('Raw stored view is collapsed by default, expands, and stays redacted', async () => {
+    const rawCanary = ['raw', 'stored', 'secret', 'canary'].join('-')
+    const raw = {
+      origin: {
+        plugin: 'http',
+        runId: 'run_9',
+        cb_auth_token: TOKEN,
+        resumeHandle: { resumeUrl: HANDLE },
+      },
+      metadata: { note: 'meta-visible', apiKey: rawCanary },
+    }
+    await openPanel(raw)
+
+    // Collapsed by default: the toggle is there, its content is not mounted.
+    const toggle = screen.getByRole('button', { name: 'Raw stored view' })
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false')
+    assert.equal(screen.queryByTestId('raw-stored-view-json'), null)
+
+    fireEvent.click(toggle)
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true')
+    const pre = screen.getByTestId('raw-stored-view-json')
+    const shown = pre.textContent ?? ''
+    // Extra fields are present...
+    assert.ok(shown.includes('run_9'), 'origin reference must be visible')
+    assert.ok(shown.includes('meta-visible'), 'metadata bag must be visible')
+    // ...and redacted the same way as the original request.
+    assert.equal(shown.includes(TOKEN), false)
+    assert.equal(shown.includes(HANDLE), false)
+    assert.equal(shown.includes(rawCanary), false)
+    assert.ok(shown.includes(REDACTED))
+
+    // Collapses again.
+    fireEvent.click(toggle)
+    assert.equal(screen.queryByTestId('raw-stored-view-json'), null)
+
+    // Copy/Download stay scoped to the original request, not the raw view.
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    await waitFor(() => assert.equal(clipboardText, DISPLAY))
+    fireEvent.click(screen.getByRole('button', { name: 'Download (JSON)' }))
+    assert.equal(downloadFilename, 'original-request-apr_1.json')
+    const blob = objectUrlBlob
+    if (!blob) throw new Error('expected a downloaded blob')
+    assert.equal(await blob.text(), DISPLAY)
+  })
+
+  it('resets the Raw stored view toggle to collapsed when the outer panel closes', async () => {
+    await openPanel({
+      origin: { plugin: 'http', runId: 'run_9' },
+      metadata: { note: 'meta-visible' },
+    })
+    // Expand the raw stored view inside the open panel.
+    fireEvent.click(screen.getByRole('button', { name: 'Raw stored view' }))
+    assert.ok(screen.getByTestId('raw-stored-view-json'))
+
+    // Close the outer "View original request" panel.
+    fireEvent.click(screen.getByRole('button', { name: 'View original request' }))
+    assert.equal(screen.queryByTestId('raw-stored-view-json'), null)
+
+    // Reopen: the raw stored view must be collapsed again, not remembered open.
+    fireEvent.click(screen.getByRole('button', { name: 'View original request' }))
+    await waitFor(() => assert.ok(screen.getByTestId('original-request-json')))
+    const toggle = screen.getByRole('button', { name: 'Raw stored view' })
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false', 'raw view must reset to collapsed on panel close')
+    assert.equal(screen.queryByTestId('raw-stored-view-json'), null)
+  })
+
+  it('shows no Raw stored view toggle when there are no extra stored fields', async () => {
+    await openPanel(undefined)
+    assert.equal(screen.queryByRole('button', { name: 'Raw stored view' }), null)
+    await cleanup()
+    await openPanel({})
+    assert.equal(screen.queryByRole('button', { name: 'Raw stored view' }), null)
   })
 })
