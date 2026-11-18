@@ -1,5 +1,25 @@
 import Link from 'next/link'
 import { HitlyWordmark } from '@hitly/ui'
+import {
+  COMPANY_NUMBER,
+  LEGAL_FOOTER_COMPANY_PREFIX,
+  LEGAL_FOOTER_COMPANY_SUFFIX,
+  SUPPORT_EMAIL,
+} from '@/lib/legal'
+
+/**
+ * Legal footer links (Legal-approved legal notice). Every marketing page
+ * carries the full set: all seven legal pages plus the support address.
+ */
+export const LEGAL_FOOTER_LINKS = [
+  { href: '/terms', label: 'Terms' },
+  { href: '/privacy', label: 'Privacy' },
+  { href: '/aup', label: 'AUP' },
+  { href: '/dpa', label: 'DPA' },
+  { href: '/subprocessors', label: 'Subprocessors' },
+  { href: '/account-deletion', label: 'Account deletion' },
+  { href: '/legal', label: 'Legal notice' },
+]
 
 const links = [
   { href: '/docs', label: 'Docs' },
@@ -40,23 +60,34 @@ export function SiteFooter() {
             <HitlyWordmark trademark /> — approval inbox for agent work.
           </p>
           <p className="text-xs text-zinc-500">
-            <HitlyWordmark /> is a product of Metaspan Ltd (company no.{' '}
+            {LEGAL_FOOTER_COMPANY_PREFIX}{' '}
             <a
               href="https://find-and-update.company-information.service.gov.uk/company/13641200"
               target="_blank"
               rel="noopener noreferrer"
               className="underline hover:text-zinc-900 dark:hover:text-zinc-50"
             >
-              13641200
+              {COMPANY_NUMBER}
             </a>
-            ).
+            {LEGAL_FOOTER_COMPANY_SUFFIX}
           </p>
         </div>
-        <div className="flex gap-4">
-          <Link href="/docs">Docs</Link>
-          <Link href="/privacy">Privacy</Link>
-          <Link href="/terms">Terms</Link>
-          <Link href="/terms/billing">Billing</Link>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          {LEGAL_FOOTER_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="hover:text-zinc-900 dark:hover:text-zinc-50"
+            >
+              {link.label}
+            </Link>
+          ))}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="hover:text-zinc-900 dark:hover:text-zinc-50"
+          >
+            {SUPPORT_EMAIL}
+          </a>
         </div>
       </div>
     </footer>

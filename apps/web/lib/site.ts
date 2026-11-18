@@ -5,7 +5,17 @@ import type { Metadata, MetadataRoute } from 'next'
 export const SITE_URL = 'https://hitly.net'
 
 /** Marketing routes that should appear in the sitemap, in nav order. */
-export const MARKETING_ROUTES = ['/', '/pricing', '/terms', '/terms/billing', '/privacy'] as const
+export const MARKETING_ROUTES = [
+  '/',
+  '/pricing',
+  '/privacy',
+  '/terms',
+  '/aup',
+  '/dpa',
+  '/subprocessors',
+  '/account-deletion',
+  '/legal',
+] as const
 
 /** Relative URL → absolute https://hitly.net URL. */
 export function absoluteUrl(path: string): string {

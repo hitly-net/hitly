@@ -1,11 +1,11 @@
+import { LegalDoc } from '@/components/marketing/legal-doc'
 import { SiteFooter, SiteHeader } from '@/components/marketing/site-chrome'
-import { HitlyWordmark } from '@hitly/ui'
 import { marketingMeta } from '@/lib/site'
 
 export const metadata = marketingMeta({
-  title: 'Privacy',
+  title: 'Privacy Notice',
   description:
-    'How HITLy stores approval envelopes, decisions, and workspace membership — and what it never does with your payloads.',
+    'Privacy Notice for HITLy™ Cloud: what we collect, why, who processes it, and your rights.',
   path: '/privacy',
 })
 
@@ -13,14 +13,7 @@ export default function PrivacyPage() {
   return (
     <>
       <SiteHeader />
-      <main className="mx-auto max-w-3xl flex-1 px-6 py-16">
-        <h1 className="text-3xl font-semibold">Privacy</h1>
-        <p className="mt-4 text-zinc-600 dark:text-zinc-400">
-          <HitlyWordmark /> stores approval envelopes, decisions, and workspace membership so we can resume origin
-          workflows. We do not train models on your payloads. This page will be replaced with a full
-          policy before launch.
-        </p>
-      </main>
+      <LegalDoc file="privacy" />
       <SiteFooter />
     </>
   )
