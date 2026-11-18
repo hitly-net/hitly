@@ -16,7 +16,6 @@ Registered in England and Wales, company number 13641200
 Registered office: 3 Saxon Way West, Corby NN18 9EZ, United Kingdom
 
 VAT number: GB 420056447
-ICO data protection fee registration: [ICO REGISTRATION NUMBER]
 
 ## How to contact us
 

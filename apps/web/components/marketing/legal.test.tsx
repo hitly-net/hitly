@@ -82,12 +82,26 @@ test('the legal notice page ships the approved VAT number', () => {
 
 test('every legal render is free of forbidden content', () => {
   for (const doc of DOCS) {
-    const html = renderToStaticMarkup(React.createElement(LegalDoc, { file: doc.file }))
+    let html = renderToStaticMarkup(React.createElement(LegalDoc, { file: doc.file }))
+    // URL/hostname/webhook forms of n8n are banned on every page without
+    // exception (r9.6 approves exactly one n8n mention: the waitlist row
+    // on /subprocessors, which the HTML form check still sees).
+    for (const re of [/\bn8n[._-]\w+/i, /https?:\/\/\S*n8n\S*/i, /\bn8n\.io\b/i]) {
+      assert.ok(!re.test(html), `${doc.file}: must not render an n8n URL/hostname form`)
+    }
+    if (doc.file === 'subprocessors') {
+      // Strip ONLY the Legal-approved waitlist row before the word ban;
+      // any other n8n mention still fails the scan below.
+      const approvedCell = /<td[^>]*>n8n \(self-hosted\)<\/td>/g
+      const matches = html.match(approvedCell) ?? []
+      assert.equal(matches.length, 1, 'subprocessors: exactly the approved n8n row renders')
+      html = html.replace(approvedCell, '')
+    }
     for (const marker of ['®', '[CONFIRM', '[VAT']) {
       assert.ok(!html.includes(marker), `${doc.file}: must not render "${marker}"`)
     }
     assert.ok(!/INTERNAL/.test(html), `${doc.file}: must not render INTERNAL`)
-    for (const word of ['cloud-test', 'interweb', 'n8n', 'spark', 'qnap']) {
+    for (const word of ['cloud-test', 'interweb', 'spark', 'qnap', 'n8n']) {
       assert.ok(!new RegExp(`\\b${word}\\b`, 'i').test(html), `${doc.file}: must not mention ${word}`)
     }
     assert.ok(

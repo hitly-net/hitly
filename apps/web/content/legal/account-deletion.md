@@ -48,7 +48,7 @@ When you delete your account, we delete these immediately from HITLy Cloud's liv
 - **Pre-release database copies:** before each software release, we take a copy of the database. These copies are deleted from the server within 30 days; any copies inside HITLy Cloud backups roll off with the backups, within up to 5 months.
 - **Security logs:** account security events (MFA changes, recovery-code use and lockouts, passkeys added or removed, email verified, account deleted) are linked to your account while it exists. After deletion, they are kept for 90 days in pseudonymised form (your ID and email replaced by keyed hashes, and your IP address shortened), then deleted.
 - **Billing and tax records**, where paid plans were used: kept for 6 years, as UK law requires.
-- **Support emails:** kept for [SUPPORT TICKET RETENTION] after the request is closed. We may keep support backups for up to 12 months, then they are deleted. They will include a UK off-site backup.
+- **Support emails:** kept for 2 years after the request is closed. We may keep support backups for up to 12 months, then they are deleted. They will include a UK off-site backup.
 
 If we ever restore from a backup, we re-apply account deletions made since that backup before the service resumes.
 

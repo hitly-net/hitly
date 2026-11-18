@@ -69,6 +69,21 @@ export const SUPPORT_EMAIL = 'support@hitly.net'
 const PLACEHOLDER = /^\[[A-Z][A-Z0-9 ]*\]$/
 
 /**
+ * Publish-time values. Legal ships the texts with [VERSION] and
+ * [EFFECTIVE DATE] as authoring placeholders; Ops sets the real values at
+ * deploy time via the LEGAL_VERSION and LEGAL_EFFECTIVE_DATE environment
+ * variables (set them at build and run time). When a variable is unset, the
+ * corresponding line renders nothing — the raw bracket text is never
+ * published. Dynamic key access keeps bundlers from inlining the value at
+ * build time.
+ */
+function publishTimeValue(envName: string, frontmatterValue: string | null): string | null {
+  const fromEnv = process.env[envName]?.trim()
+  if (fromEnv && !PLACEHOLDER.test(fromEnv)) return fromEnv
+  return frontmatterValue
+}
+
+/**
  * A standalone placeholder line (e.g. "Last updated: [EFFECTIVE DATE]" in
  * the subprocessor list) is an authoring marker, not content: drop the line
  * instead of publishing an unfilled bracket. Placeholders embedded inside
@@ -103,7 +118,12 @@ export function loadLegalDoc(file: LegalDocFile): LegalDoc {
   const path = join(process.cwd(), 'content', 'legal', `${file}.md`)
   const raw = readFileSync(path, 'utf8')
   const { meta, body } = parseFrontmatter(raw)
-  return { ...meta, body: stripPlaceholderLines(body) }
+  return {
+    ...meta,
+    version: publishTimeValue('LEGAL_VERSION', meta.version),
+    effective: publishTimeValue('LEGAL_EFFECTIVE_DATE', meta.effective),
+    body: stripPlaceholderLines(body),
+  }
 }
 
 /**

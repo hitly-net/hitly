@@ -42,6 +42,7 @@ These run on servers owned and operated by Metaspan Ltd in a UK data centre (Hig
 | Application hosting and database | Runs HITLy Cloud, the API and the MCP server. The database runs on the same UK servers |
 | Backups | HITLy Cloud: daily copy to separate Metaspan-owned servers in the UK. HITLy Cloud backups are also copied to an off-site backup in the UK operated by Metaspan. Live data is deleted at once; backup copies roll off within up to 5 months. Backups are kept secure and are not used for anything else. If we ever restore from a backup, we re-apply account deletions made since that backup before the service resumes. WAL-G and PBS backups are encrypted. Pre-release database copies: deleted from the server within 30 days; copies inside backups roll off with the backups, within up to 5 months. Support system: we may keep backups for up to 12 months; they will include a UK off-site backup |
 | Better Auth (open-source library) | Sign-in, sessions, passkeys and MFA, stored in our own database |
+| n8n (self-hosted) | Receives early-access waitlist sign-ups |
 | Plausible Analytics (self-hosted) | Cookieless, aggregate website and app analytics |
 | Zammad helpdesk (self-hosted) | Handles emails sent to support@hitly.net |
 

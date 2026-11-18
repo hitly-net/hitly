@@ -13,7 +13,7 @@ HITLy is a business-to-business service. It is not for consumers, and it is not 
 
 ## 1. Who we are
 
-Metaspan Ltd, trading as HITLy™, is registered in England and Wales (company number 13641200). Our registered office is 3 Saxon Way West, Corby NN18 9EZ, United Kingdom. ICO registration number: [ICO REGISTRATION NUMBER].
+Metaspan Ltd, trading as HITLy™, is registered in England and Wales (company number 13641200). Our registered office is 3 Saxon Way West, Corby NN18 9EZ, United Kingdom.
 
 Privacy contact: support@hitly.net (please put "Privacy" in the subject line). You can also write to the address above. We have not appointed a data protection officer, because the law does not require one for our processing. The privacy contact handles these matters.
 
@@ -46,6 +46,7 @@ We have not appointed a representative in the EU under Article 27 GDPR. HITLy Cl
 | Analytics: page visited, referrer domain, browser and device type, approximate country | Our self-hosted, cookieless Plausible analytics | To understand how our sites are used and improve them | Legitimate interests in improving our service |
 | Support emails: name, email, the content of your messages, and any attachments | You, by email to support@hitly.net | To answer and resolve your request | Contract; legitimate interests in supporting our customers |
 | Billing details: company name, billing email, address, tax ID, plan, invoices (when billing launches). Stripe handles card details; we never see full card numbers | You; Stripe | To charge for paid plans and keep financial records | Contract; legal obligation (tax and accounting) |
+| Waitlist: your email address, if you join our early-access waitlist | You, through the waitlist form | To invite you to HITLy when places open | Legitimate interests in managing early access. You can ask us to remove you at any time |
 | Business contact details used for service updates and occasional product news | You | To tell you about changes and features | Legitimate interests. You can opt out at any time |
 
 We do not ask for special category data, and our Acceptable Use Policy forbids putting it into HITLy without a written agreement.
@@ -100,12 +101,13 @@ EU personal data can flow freely to the UK under the European Commission's adequ
 | Data | How long |
 |---|---|
 | Account data | While the account exists. Deleted when you delete your account (see https://hitly.net/account-deletion). Shared-workspace decisions and comments stay with the workspace, with your name replaced by "Deleted user" and device fields removed |
-| Completed approval items | Under your workspace plan: Solo 10 days, Pro 30 days, Team 365 days, Enterprise 1,000 days |
+| Completed approval items | Under your workspace plan: Solo 10 days, Pro 30 days, Team 90 days, Enterprise 1,000 days or the period in your contract |
 | Workspace audit log | Under your workspace plan: Solo 30 days, Pro and Team 365 days, Enterprise 7 years (2,555 days) |
 | Security logs | Kept while your account exists. When you delete your account, they are kept for 90 days in pseudonymised form (your ID and email replaced by keyed hashes, IP address shortened), then deleted |
 | HITLy Cloud backups | Live data is deleted at once. HITLy Cloud backup copies roll off within up to 5 months. Until backups roll off, they are kept secure and are not used for anything else. |
 | Pre-release database copies | Taken before each software release. Deleted from the server within 30 days; any copies inside HITLy Cloud backups roll off with the backups, within up to 5 months |
-| Support emails | [SUPPORT TICKET RETENTION] after the request is closed |
+| Waitlist emails | Until we invite you or 12 months after you join, whichever is sooner, or sooner if you ask |
+| Support emails | 2 years after the request is closed |
 | Support system backups | We may keep them for up to 12 months, then they are deleted. They will include a UK off-site backup |
 | Billing and tax records (when billing launches) | 6 years after the end of the financial year they relate to, as UK law requires |
 | Analytics | Aggregate statistics only, with no persistent identifier for you |

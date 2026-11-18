@@ -78,7 +78,7 @@ Metaspan will add more information as it becomes available.
 
 9.1 When the Service ends, or when a workspace or account is deleted, Metaspan deletes the Customer Personal Data concerned from HITLy Cloud's live systems straight away. HITLy Cloud backup copies roll off within up to 5 months. Pre-release database copies are deleted from the server within 30 days; any copies inside HITLy Cloud backups roll off with the backups, within up to 5 months. Until backups roll off, they are kept secure and are not used for anything else. If we ever restore from a backup, we re-apply account deletions made since that backup before the service resumes.
 
-9.1A Customer Personal Data that the Customer includes in support emails is kept in Metaspan's support system for [SUPPORT TICKET RETENTION] after the request is closed. We may keep support backups for up to 12 months, then they are deleted. They will include a UK off-site backup. Until they are deleted, support backups are kept secure and are not used for anything else.
+9.1A Customer Personal Data that the Customer includes in support emails is kept in Metaspan's support system for 2 years after the request is closed. We may keep support backups for up to 12 months, then they are deleted. They will include a UK off-site backup. Until they are deleted, support backups are kept secure and are not used for anything else.
 
 9.2 Before deletion, the Customer may ask support for a copy of its data through a Data request.
 
@@ -139,7 +139,7 @@ Annexes I to III of the EU SCCs are completed by Annexes 1 to 3 of this DPA.
 | Categories of personal data | User names and work emails; workspace membership and roles; any personal data the Customer's agents include in approval requests, prompts, questions, answers, evidence, comments and attachments; push tokens; decision timestamps and audit trails |
 | Special category data | None, unless agreed in writing (see the AUP) |
 | Frequency | Continuous |
-| Retention | Under the Customer's plan. Completed items: Solo 10 days, Pro 30 days, Team 365 days, Enterprise 1,000 days. Audit log: Solo 30 days, Pro and Team 365 days, Enterprise 7 years (2,555 days). HITLy Cloud backups: live data deleted at once; backup copies roll off within up to 5 months. Pre-release database copies: deleted from the server within 30 days; copies inside backups roll off with the backups, within up to 5 months. Support system backups: we may keep them for up to 12 months; they will include a UK off-site backup |
+| Retention | Under the Customer's plan. Completed items: Solo 10 days, Pro 30 days, Team 90 days, Enterprise 1,000 days or the period in the Enterprise contract. Audit log: Solo 30 days, Pro and Team 365 days, Enterprise 7 years (2,555 days). HITLy Cloud backups: live data deleted at once; backup copies roll off within up to 5 months. Pre-release database copies: deleted from the server within 30 days; copies inside backups roll off with the backups, within up to 5 months. Support system backups: we may keep them for up to 12 months; they will include a UK off-site backup |
 | Sub-processor processing | As listed in Annex 3, for the purposes shown there |
 | Competent supervisory authority | For UK transfers, the Information Commissioner's Office. For EU transfers, as determined by clause 13 of the EU SCCs |
 
