@@ -3,9 +3,11 @@ import { invites, memberships, users } from '@hitly/db/schema'
 import { cancelInvite, removeWorkspaceMember } from '@/actions/team'
 import { AppShell } from '@/components/app-shell'
 import { ResendInviteButton, WorkspaceInviteForm } from '@/components/team-invite-controls'
+import { TierUsageMeter } from '@/components/tier-usage-meter'
 import { getAppContext } from '@/lib/context'
 import { canManageWorkspace } from '@/lib/rbac'
 import { requireDb } from '@/lib/require-db'
+import { seatUnits, tierUsageFor } from '@/lib/tier-enforcement'
 
 export const metadata = { title: 'Team' }
 
@@ -42,12 +44,15 @@ export default async function TeamPage() {
     )
   
   const admin = canManageWorkspace(role)
+  // Seat limit/usage shown where the invite/add actions live.
+  const seatsUsage = await tierUsageFor({ plan: workspace.plan }, 'seats', await seatUnits(database, workspace.id))
 
   return (
     <AppShell>
       <h1 className="text-2xl font-semibold">Team</h1>
       <p className="mt-2 text-sm text-zinc-500">Workspace members. Project roles are set on each project.</p>
-      {admin ? <WorkspaceInviteForm /> : null}
+      {admin ? <WorkspaceInviteForm upgrade={seatsUsage.upgrade} /> : null}
+      <TierUsageMeter title="Seats (members and pending invites)" usage={seatsUsage} />
       <ul className="mt-6 max-w-md divide-y divide-zinc-200 dark:divide-zinc-800">
         {members.map((member) => (
           <li key={member.id} className="flex items-center justify-between py-3 text-sm">

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import type { PluginId } from '@hitly/core'
 import { Badge, PluginMark, pluginBrand } from '@hitly/ui'
 import { CreateProjectModal } from '@/components/create-project-modal'
+import type { UpgradeHint } from '@/lib/tier-limit-result'
 
 export type ProjectListItem = {
   id: string
@@ -17,9 +18,11 @@ export type ProjectListItem = {
 export function ProjectList({
   projects,
   canCreate,
+  upgrade = null,
 }: {
   projects: ProjectListItem[]
   canCreate: boolean
+  upgrade?: UpgradeHint | null
 }) {
   const [q, setQ] = useState('')
   const filtered = useMemo(() => {
@@ -37,7 +40,7 @@ export function ProjectList({
           placeholder="Filter by name"
           className="h-10 min-w-56 max-w-xl flex-1 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
         />
-        {canCreate ? <CreateProjectModal /> : null}
+        {canCreate ? <CreateProjectModal upgrade={upgrade} /> : null}
       </div>
       <ul className="mt-6 divide-y divide-zinc-200 dark:divide-zinc-800">
         {filtered.length === 0 ? (
