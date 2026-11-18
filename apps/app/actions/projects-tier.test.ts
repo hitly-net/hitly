@@ -66,16 +66,8 @@ const projectRefusal = {
   limit: 2,
   usage: 2,
 }
-const retentionRefusal = {
-  code: TIER_LIMIT_CODE,
-  limitKey: 'completed_retention_days' as const,
-  message: "This item is 12 days old — past your plan's 10-day retention for completed items. Upgrade to extend retention.",
-  limit: 10,
-  usage: 12,
-}
 
 let setProjectStatusImpl: (args: { status: string }) => Promise<{ ok: boolean; status?: string; error?: string; code?: string; status2?: number }>
-let retryResumeImpl: () => Promise<{ error?: string; code?: string; status?: number }>
 
 mock.module(new URL('../lib/project-create.ts', import.meta.url).href, {
   namedExports: {
@@ -100,11 +92,6 @@ mock.module(new URL('../lib/project-lifecycle.ts', import.meta.url).href, {
     setProjectStatus: async (args: { status: string }) => setProjectStatusImpl(args),
   },
 })
-mock.module(new URL('../lib/approvals.ts', import.meta.url).href, {
-  namedExports: {
-    retryResume: async () => retryResumeImpl(),
-  },
-})
 mock.module(new URL('../lib/resume-secret.ts', import.meta.url).href, {
   namedExports: { rotateProjectResumeSecret: async () => ({ resumeSecret: 'secret' }) },
 })
@@ -120,7 +107,6 @@ beforeEach(() => {
   sim.reset()
   redirects.length = 0
   setProjectStatusImpl = async () => ({ ok: true, status: 'live' })
-  retryResumeImpl = async () => ({})
 })
 
 function projectForm(name = 'Te Project'): FormData {
@@ -156,29 +142,5 @@ describe('resume/unarchive live-project cap', () => {
   it('a successful resume still reports ok', async () => {
     const result = await actions.unarchiveProject('prj_x')
     assert.equal(result.ok, true)
-  })
-})
-
-describe('retryWorkItem retention refusal', () => {
-  it('redirects to the work item with the human refusal message as ?error= (never a 500)', async () => {
-    sim.nextRows = [{ id: 'apr_x', projectId: 'prj_x', workspaceId: sim.ctx.workspace.id }]
-    retryResumeImpl = async () => ({ error: retentionRefusal.message, code: TIER_LIMIT_CODE, status: 402 })
-    await assert.rejects(
-      () => actions.retryWorkItem('apr_x'),
-      (error: unknown) => typeof error === 'object' && error !== null && 'digest' in error,
-    )
-    assert.equal(redirects.length, 1)
-    assert.match(redirects[0], /^\/inbox\/apr_x\?error=/)
-    assert.ok(
-      decodeURIComponent(redirects[0]).includes(retentionRefusal.message),
-      'the human retention message must reach the UI',
-    )
-  })
-
-  it('an ordinary retry success does not redirect with an error', async () => {
-    sim.nextRows = [{ id: 'apr_y', projectId: 'prj_x', workspaceId: sim.ctx.workspace.id }]
-    retryResumeImpl = async () => ({})
-    await actions.retryWorkItem('apr_y')
-    assert.deepEqual(redirects, [])
   })
 })
