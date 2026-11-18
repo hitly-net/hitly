@@ -2,15 +2,13 @@
  * Action-path test: retryWorkItem rides a tier (retention) refusal onto the
  * ?error= redirect so the reviewer sees the human message (never a 500).
  *
- * This lives in its OWN file, apart from projects-tier.test.ts, because the
- * retryResume dependency is reached through a DYNAMIC import inside the
- * action: the whole `yarn test` run shares one module-mock registry, and a
- * file that mocks the same specifier (lib/rest-limit-routes.test.ts) can
- * swap the active implementation in the gap between this file being loaded
- * and its tests running. Registering the mock at load and executing
- * immediately — with no other suite in between — keeps that gap
- * microseconds, and before() additionally pins the implementation onto
- * whichever namespace object the registry actually serves.
+ * The action now imports retryResume from lib/approvals statically; node's
+ * mock.module (as of the 22.23 module.registerHooks change, under the tsx
+ * loader) intercepts static imports resolved after registration but not
+ * runtime await-import() calls, so a static import is what makes this mock
+ * effective deterministically. The suite lives in its own file so the
+ * retry-flow mocks stay isolated from the create/resume suites in
+ * projects-tier.test.ts.
  */
 import assert from 'node:assert/strict'
 import { before, beforeEach, describe, it, mock } from 'node:test'
@@ -108,16 +106,6 @@ mock.module(new URL('../lib/approvals.ts', import.meta.url).href, {
 let actions: typeof import('../actions/projects')
 before(async () => {
   actions = await import('../actions/projects')
-  // Belt and braces: pin the controlled implementation onto whatever
-  // namespace object the shared registry actually serves for this specifier
-  // (a late-registered mock from another file may be the active one). If the
-  // namespace is read-only the registry-level mock above already provides it.
-  try {
-    const mod = (await import('../lib/approvals.ts')) as unknown as { retryResume?: unknown }
-    mod.retryResume = async () => retryResumeImpl()
-  } catch {
-    // fall through to the registry mock
-  }
 })
 
 beforeEach(() => {
