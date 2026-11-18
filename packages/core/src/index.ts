@@ -324,6 +324,7 @@ export {
 } from './edition.ts'
 export type {
   CloudPlan,
+  EditionBilling,
   EditionId,
   EditionNavItem,
   Entitlements,
@@ -370,6 +371,16 @@ export type {
   EvidenceSink,
   EvidenceSystemContext,
 } from './evidence.ts'
+
+export {
+  TIER_LIMIT_KEYS,
+  TIER_LIMIT_SEED,
+  isTierLimitKey,
+  buildLimitsMap,
+  limitFromMap,
+  withinLimit,
+} from './tier-limits.ts'
+export type { TierLimitKey, LimitsMap, LimitRead } from './tier-limits.ts'
 
 export {
   PRICING_CONTACT_EMAIL,

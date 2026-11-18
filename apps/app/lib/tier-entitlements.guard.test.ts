@@ -57,6 +57,11 @@ const RULES: Rule[] = [
     pattern: /\btierEntitlements\b/,
     allow: /apps[/\\]app[/\\]lib[/\\]tier-entitlements\.ts$|packages[/\\]db[/\\]src[/\\]schema\.ts$/,
   },
+  {
+    name: 'direct tier_limits table use',
+    pattern: /\btierLimits\b/,
+    allow: /apps[/\\]app[/\\]lib[/\\]tier-limits\.ts$|packages[/\\]db[/\\]src[/\\]schema\.ts$/,
+  },
 ]
 
 function* walk(dir: string): Generator<string> {

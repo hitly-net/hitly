@@ -1,4 +1,5 @@
 import type { EntitlementFeature } from './tier-entitlements.ts'
+import { PRICING_LIMITS } from './pricing.ts'
 
 export const WORKSPACE_PLANS = ['self-hosted', 'solo', 'pro', 'team', 'enterprise'] as const
 export type WorkspacePlan = (typeof WORKSPACE_PLANS)[number]
@@ -11,10 +12,16 @@ export type HousekeepingSchedule = (typeof HOUSEKEEPING_SCHEDULES)[number]
 
 /** Closed inbox items (decided / expired / cancelled) older than this are deleted. */
 export const COMPLETED_RETENTION_DAYS: Record<CloudPlan, number> = {
-  solo: 10,
-  pro: 30,
-  team: 365,
-  enterprise: 1000,
+  // The published pricing config (packages/core/src/pricing.ts) is the single
+  // source for every paid-plan window; the `!` is justified because
+  // pricing.test.ts pins all four as numbers. Enterprise carries the
+  // PM-approved 1000-day window in PRICING_LIMITS itself (custom only via
+  // contract later; there is deliberately no never-purge tier for completed
+  // items) — no separate literal here.
+  solo: PRICING_LIMITS.solo.retentionDays!,
+  pro: PRICING_LIMITS.pro.retentionDays!,
+  team: PRICING_LIMITS.team.retentionDays!,
+  enterprise: PRICING_LIMITS.enterprise.retentionDays!,
 }
 
 export function isCloudPlan(plan: string): plan is CloudPlan {
@@ -47,6 +54,29 @@ export interface EditionNavItem {
   label: string
   /** Gated by the tier entitlements map; hidden unless can(workspace, feature). */
   feature?: EntitlementFeature
+}
+
+/**
+ * Billing seam. The OSS edition ships a stub (never a paid plan, no plan
+ * history); the Cloud overlay implements it against its own billing tables.
+ * The app-side wrapper fails closed against DESTRUCTIVE use: a throw from
+ * the hook is treated like "subscription exists" (workspace deletion is
+ * refused) and "plan just changed" (retention sweeps keep data longer).
+ */
+export interface EditionBilling {
+  /**
+   * True while the workspace has a live paid subscription (statuses active,
+   * trialing, past_due or unpaid — including cancel-at-period-end, which is
+   * still live until the period ends). Used by destructive flows (e.g.
+   * workspace deletion) to answer 409 `active_subscription`.
+   */
+  hasActivePaidSubscription(workspaceId: string): Promise<boolean>
+  /**
+   * When the effective plan last changed (e.g. a downgrade), or null when
+   * unknown. Retention sweeps never delete items closed after this instant,
+   * so a downgrade cannot immediately destroy data kept by the richer plan.
+   */
+  getPlanChangedAt(workspaceId: string): Promise<Date | null>
 }
 
 export type TenantDocument = Record<string, unknown>
@@ -86,6 +116,8 @@ export interface HitlyEdition {
    * When a tenant pays for isolation, Cloud returns that workspace's connection string.
    */
   resolveDatabaseUrl?(workspace: { id: string; plan: string }): string | null
+  /** Billing seam. OSS provides a never-paid stub; Cloud overrides it. */
+  billing?: EditionBilling
 }
 
 export type EditionId = 'oss' | 'cloud'

@@ -8,6 +8,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -671,6 +672,31 @@ export const tierEntitlements = pgTable(
       'tier_entitlements_min_plan_check',
       // Plan names come from WORKSPACE_PLANS (a compile-time constant).
       sql`${table.minPlan} in (${sql.raw(WORKSPACE_PLANS.map((plan) => `'${plan}'`).join(', '))})`,
+    ),
+  ],
+)
+
+/**
+ * Numeric caps per plan (NULL value = unlimited). Read only through
+ * `limit(workspace, key)` (apps/app/lib/tier-limits.ts), the same
+ * single-read-path rule as tier_entitlements. A missing row blocks new use
+ * (fail-closed); the self-hosted plan is seeded entirely NULL.
+ */
+export const tierLimits = pgTable(
+  'tier_limits',
+  {
+    plan: varchar('plan', { length: 32 }).notNull(),
+    limitKey: varchar('limit_key', { length: 64 }).notNull(),
+    /** NULL means unlimited for this (plan, limit_key). */
+    value: integer('value'),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.plan, table.limitKey], name: 'tier_limits_pkey' }),
+    check(
+      'tier_limits_plan_check',
+      // Plan names come from WORKSPACE_PLANS (a compile-time constant).
+      sql`${table.plan} in (${sql.raw(WORKSPACE_PLANS.map((plan) => `'${plan}'`).join(', '))})`,
     ),
   ],
 )
