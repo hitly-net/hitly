@@ -97,6 +97,14 @@ test('every legal render is free of forbidden content', () => {
       assert.equal(matches.length, 1, 'subprocessors: exactly the approved n8n row renders')
       html = html.replace(approvedCell, '')
     }
+    if (doc.file === 'legal-notice') {
+      // Strip ONLY the Legal-approved registered mark sentence (r9.8)
+      // before the marker ban; any other ® still fails the scan below.
+      const approvedSentence = /<p[^>]*>HITLy® is a registered trade mark of Metaspan Ltd in the United Kingdom \(UK00004435292\)\. Other names and logos belong to their owners\.<\/p>/g
+      const matches = html.match(approvedSentence) ?? []
+      assert.equal(matches.length, 1, 'legal-notice: exactly the approved registered mark sentence renders')
+      html = html.replace(approvedSentence, '')
+    }
     for (const marker of ['®', '[CONFIRM', '[VAT']) {
       assert.ok(!html.includes(marker), `${doc.file}: must not render "${marker}"`)
     }

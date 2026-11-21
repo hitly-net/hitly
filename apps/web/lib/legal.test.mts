@@ -40,6 +40,13 @@ const FORBIDDEN_WORDS = ['cloud-test', 'interweb', 'spark', 'qnap']
  */
 const APPROVED_N8N_ROW =
   '| n8n (self-hosted) | Receives early-access waitlist sign-ups |'
+/**
+ * The UK registered trade mark sentence is the ONE place where ® is
+ * permitted (r9.8). Legal-notice.md carries this exact sentence;
+ * everywhere else ® remains forbidden.
+ */
+const APPROVED_REGISTERED_MARK_SENTENCE =
+  'HITLy® is a registered trade mark of Metaspan Ltd in the United Kingdom (UK00004435292). Other names and logos belong to their owners.'
 /** URL / hostname / webhook forms of n8n are banned everywhere, no exceptions. */
 const N8N_URL_FORMS = [/\bn8n[._-]\w+/i, /https?:\/\/\S*n8n\S*/i, /\bn8n\.io\b/i]
 const RFC1918 = /\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/
@@ -49,6 +56,14 @@ function withoutApprovedN8nRow(text: string, file: string): string {
   if (file !== 'subprocessors') return text
   const stripped = text.replace(APPROVED_N8N_ROW, '')
   assert.notEqual(stripped, text, 'subprocessors.md must carry the approved n8n waitlist row')
+  return stripped
+}
+
+/** Remove the single Legal-approved registered mark sentence (legal-notice only) before scanning. */
+function withoutApprovedRegisteredMarkSentence(text: string, file: string): string {
+  if (file !== 'legal-notice') return text
+  const stripped = text.replace(APPROVED_REGISTERED_MARK_SENTENCE, '')
+  assert.notEqual(stripped, text, 'legal-notice.md must carry the approved registered mark sentence')
   return stripped
 }
 
@@ -95,7 +110,9 @@ test('published legal texts contain no forbidden markers, hosts or private IPs',
       const hit = re.exec(raw)
       assert.ok(!hit, `${file}.md must not contain an n8n URL/hostname form (found ${hit?.[0]})`)
     }
-    assertClean(withoutApprovedN8nRow(raw, file), `${file}.md`)
+    let stripped = withoutApprovedN8nRow(raw, file)
+    stripped = withoutApprovedRegisteredMarkSentence(stripped, file)
+    assertClean(stripped, `${file}.md`)
   }
 })
 
@@ -117,11 +134,11 @@ test('legal-notice ships the approved VAT number', () => {
   assert.ok(!doc.body.includes('delete this line'), 'placeholder line replaced')
 })
 
-test('legal-notice states the UK trade mark as registered (r9.7)', () => {
+test('legal-notice states the UK trade mark as registered (r9.8)', () => {
   const body = loadLegalDoc('legal-notice').body
   assert.ok(
     body.includes(
-      'HITLy™ is a registered trade mark of Metaspan Ltd in the United Kingdom (UK00004435292). Other names and logos belong to their owners.',
+      'HITLy® is a registered trade mark of Metaspan Ltd in the United Kingdom (UK00004435292). Other names and logos belong to their owners.',
     ),
     'legal-notice must carry the exact registered-trade-mark sentence',
   )
