@@ -35,7 +35,7 @@ const FORBIDDEN_EXACT = ['®', 'INTERNAL', '[CONFIRM', '[VAT']
 const FORBIDDEN_WORDS = ['cloud-test', 'interweb', 'spark', 'qnap']
 /**
  * n8n is banned on every page, with ONE exception: the exact
- * Legal-approved row in the subprocessor list (r9.6). Any other mention —
+ * Legal-approved row in the subprocessor list (r9.7). Any other mention —
  * and every URL/hostname/webhook form, even in that file — fails.
  */
 const APPROVED_N8N_ROW =
@@ -117,6 +117,20 @@ test('legal-notice ships the approved VAT number', () => {
   assert.ok(!doc.body.includes('delete this line'), 'placeholder line replaced')
 })
 
+test('legal-notice states the UK trade mark as registered (r9.7)', () => {
+  const body = loadLegalDoc('legal-notice').body
+  assert.ok(
+    body.includes(
+      'HITLy™ is a registered trade mark of Metaspan Ltd in the United Kingdom (UK00004435292). Other names and logos belong to their owners.',
+    ),
+    'legal-notice must carry the exact registered-trade-mark sentence',
+  )
+  // The Trade marks section must no longer describe the mark as an application.
+  const section = body.split(/^## /m).find((s: string) => s.startsWith('Trade marks')) ?? ''
+  assert.ok(section.length > 0, 'Trade marks section exists')
+  assert.ok(!/\bapplication\b/i.test(section), 'Trade marks section must not mention "application"')
+})
+
 test('no bracket placeholder of any kind can ship, including [VERSION] and [EFFECTIVE DATE]', () => {
   // With no publish-time env set, the frontmatter placeholders must parse to
   // null so the renderer omits the lines instead of printing raw brackets.
@@ -127,7 +141,7 @@ test('no bracket placeholder of any kind can ship, including [VERSION] and [EFFE
     assert.equal(doc.version, null, `${file}: [VERSION] must not render when LEGAL_VERSION is unset`)
     assert.equal(doc.effective, null, `${file}: [EFFECTIVE DATE] must not render when LEGAL_EFFECTIVE_DATE is unset`)
     const rendered = renderedSurface(doc)
-    // r9.6 left NO open placeholders: any /\[[A-Z][A-Z0-9 ]+\]/ in what a
+    // r9.7 left NO open placeholders: any /\[[A-Z][A-Z0-9 ]+\]/ in what a
     // page renders is a regression (this kills re-inserting, e.g.,
     // [ICO REGISTRATION NUMBER]).
     const hit = /\[[A-Z][A-Z0-9 ]+\]/.exec(rendered)

@@ -84,7 +84,7 @@ test('every legal render is free of forbidden content', () => {
   for (const doc of DOCS) {
     let html = renderToStaticMarkup(React.createElement(LegalDoc, { file: doc.file }))
     // URL/hostname/webhook forms of n8n are banned on every page without
-    // exception (r9.6 approves exactly one n8n mention: the waitlist row
+    // exception (r9.7 approves exactly one n8n mention: the waitlist row
     // on /subprocessors, which the HTML form check still sees).
     for (const re of [/\bn8n[._-]\w+/i, /https?:\/\/\S*n8n\S*/i, /\bn8n\.io\b/i]) {
       assert.ok(!re.test(html), `${doc.file}: must not render an n8n URL/hostname form`)
