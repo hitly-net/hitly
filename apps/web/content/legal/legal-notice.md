@@ -29,7 +29,7 @@ We have not appointed a representative in the EU under Article 27 GDPR. HITLy Cl
 
 ## Trade marks
 
-HITLy™ is a registered trade mark of Metaspan Ltd in the United Kingdom (UK00004435292). Other names and logos belong to their owners.
+HITLy® is a registered trade mark of Metaspan Ltd in the United Kingdom (UK00004435292). Other names and logos belong to their owners.
 
 ## Open source
 
