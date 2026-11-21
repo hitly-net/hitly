@@ -12,6 +12,7 @@ import { generateApiKey, generateResumeSecret } from './keys'
 import { requireDb, requireTenantWorkspaceId } from './tenant'
 import { encodeTenantJson } from './tenant-crypto'
 import { assertEmailVerifiedForCreate } from './verified-gate'
+import { assertLiveProject, liveProjectCount, planOfWorkspace } from './tier-enforcement'
 
 /**
  * Reads the acting user's CURRENT stored verification flag (never a
@@ -50,6 +51,12 @@ export async function insertNewProject(args: {
   if (!name) throw new Error('Name is required')
   if (!isListedPluginId(plugin)) throw new Error('Choose a plugin')
   await assertCreatorVerified(args.userId)
+  // Live-project cap: a new project is born `live`, so it consumes a live
+  // slot — refuse over the plan's cap before any write.
+  await assertLiveProject(
+    { plan: (await planOfWorkspace(requireDb(), workspaceId)) ?? '' },
+    await liveProjectCount(requireDb(), workspaceId),
+  )
 
   const database = requireDb()
   const projectId = newId('prj').slice(0, 36)

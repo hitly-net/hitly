@@ -7,6 +7,7 @@ import { newId } from './ids'
 import { APIError } from 'better-auth/api'
 import { currentInviteSignup, normaliseEmail, runWithInviteSignup, type InviteSignupContext } from './invite-signup'
 import { assertEmailVerifiedForCreate } from './verified-gate'
+import { assertSeat, hasPendingInviteFor, planOfWorkspace, seatUnits } from './tier-enforcement'
 
 /**
  * Add an EXISTING account to a workspace (the inviteToWorkspace existing-user
@@ -28,6 +29,13 @@ export async function addExistingUserToWorkspace(args: {
 }): Promise<void> {
   const database = args.database ?? requireDatabase()
   await assertActorEmailVerified(args.actorUserId, database)
+  // Seat cap: refuse a NEW member over the plan's cap before any write or
+  // mail. Existing members/invites are never touched; accepts of already
+  // pending invites (which already occupy their seat) are not gated here.
+  await assertSeat(
+    { plan: (await planOfWorkspace(database, args.workspaceId)) ?? '' },
+    await seatUnits(database, args.workspaceId),
+  )
   await database.insert(memberships).values({
     id: newId('mem').slice(0, 36),
     workspaceId: args.workspaceId,
@@ -135,6 +143,16 @@ export async function createAndSendWorkspaceInvite(args: {
   const database = args.database ?? requireDatabase()
   await assertActorEmailVerified(args.actorUserId, database)
   const email = normaliseEmail(args.email)
+  // Seat cap: a NEW pending invite over the plan's cap is refused before any
+  // write or mail. Re-inviting the same address REPLACES that pending invite
+  // (seat count never grows), so a replacement is not new use and is not
+  // gated — any genuinely new seat still is, even post-downgrade.
+  if (!(await hasPendingInviteFor(database, args.workspaceId, email))) {
+    await assertSeat(
+      { plan: (await planOfWorkspace(database, args.workspaceId)) ?? '' },
+      await seatUnits(database, args.workspaceId),
+    )
+  }
   const token = generateInviteToken()
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS)
   await database

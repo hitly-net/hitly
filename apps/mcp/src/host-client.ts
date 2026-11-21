@@ -17,6 +17,7 @@ export type HostErrorCode =
   | 'not_found'
   | 'invalid_request'
   | 'not_supported_by_host'
+  | 'tier_limit_reached'
   | 'host_error'
   | 'unreachable'
 
@@ -90,11 +91,14 @@ export class HttpHostClient implements HostClient {
       }
     }
     if (!response.ok) {
-      const message =
-        parsed && typeof parsed === 'object' && typeof (parsed as { error?: unknown }).error === 'string'
-          ? (parsed as { error: string }).error
-          : `HITLy host returned ${response.status}`
-      return { ok: false, status: response.status, error: message, code: codeFor(response.status) }
+      const body = parsed && typeof parsed === 'object' ? (parsed as { error?: unknown; code?: unknown }) : {}
+      const message = typeof body.error === 'string' ? body.error : `HITLy host returned ${response.status}`
+      // A tier-cap refusal is machine-readable (stable code) and carries the
+      // human message; surface it verbatim instead of flattening the 402 to
+      // 'invalid_request'.
+      const code =
+        body.code === 'tier_limit_reached' ? 'tier_limit_reached' : codeFor(response.status)
+      return { ok: false, status: response.status, error: message, code }
     }
     return { ok: true, status: response.status, data: parsed as T }
   }

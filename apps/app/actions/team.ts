@@ -20,11 +20,14 @@ import {
   revokeWorkspaceInvite,
 } from '@/lib/invites'
 import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
+import { toTierLimitBlockedResult, type TierLimitBlockedResult } from '@/lib/tier-enforcement'
 import { findUserByEmail } from '@/lib/workspace'
 
 const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3001'
 
-export async function inviteToWorkspace(formData: FormData): Promise<GateBlockedResult | void> {
+export async function inviteToWorkspace(
+  formData: FormData,
+): Promise<GateBlockedResult | TierLimitBlockedResult | void> {
   const { user, workspace, role } = await getAppContext()
   if (!canManageWorkspace(role)) {
     throw new Error('Only workspace admins can invite people')
@@ -83,7 +86,10 @@ export async function inviteToWorkspace(formData: FormData): Promise<GateBlocked
       }
     })
   } catch (error) {
-    const blocked = toGateBlockedResult(error)
+    // Both gates (verified-email, tier caps) throw out of the tenant
+    // transaction so nothing commits; the typed refusal is produced AFTER
+    // the transaction has been discarded.
+    const blocked = toGateBlockedResult(error) ?? toTierLimitBlockedResult(error)
     if (blocked) return blocked
     throw error
   }
