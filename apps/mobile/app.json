@@ -34,7 +34,10 @@
       "bundleIdentifier": "net.hitly.app",
       "supportsTablet": true,
       "icon": "./assets/icons/ios-icon.png",
-      "associatedDomains": ["applinks:cloud.hitly.net"]
+      "associatedDomains": ["applinks:cloud.hitly.net"],
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "net.hitly.app",

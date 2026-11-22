@@ -46,3 +46,10 @@ env/
 !apps/mobile/android/app/debug.keystore
 google-services.json
 credentials.json
+
+# iOS signing material and generated build trees (never commit)
+*.p8
+*.p12
+*.mobileprovision
+apps/mobile/ios/
+apps/mobile/dist-ios/
