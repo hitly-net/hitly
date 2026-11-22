@@ -55,4 +55,6 @@ here): `HITLY_MOBILE_APP_ID`, `HITLY_IOS_TEAM_ID`, `HITLY_ANDROID_SHA256`
 
 ## Unconfirmed
 
-- Release/signing pipeline details live in EAS (external), not in this repo.
+- (none — the iOS build path lives in this repo: `scripts/build-ios.sh` and
+  `docs/ios-build.md`; the EAS service still performs the actual signing for
+  the credential-gated `device` / `testflight` targets)
