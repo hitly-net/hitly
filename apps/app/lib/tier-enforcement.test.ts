@@ -166,3 +166,20 @@ describe('retentionAgeDays', () => {
     assert.equal(tier.retentionAgeDays(new Date(now - DAY), now), 1)
   })
 })
+
+describe('ENFORCED_TIER_LIMIT_KEYS', () => {
+  it('claims every key this build actually gates, including api_keys', () => {
+    for (const key of [
+      'decisions_per_month',
+      'seats',
+      'live_projects',
+      'completed_retention_days',
+      'api_keys',
+    ] as const) {
+      assert.ok(
+        (tier.ENFORCED_TIER_LIMIT_KEYS as readonly string[]).includes(key),
+        `${key} must be listed in ENFORCED_TIER_LIMIT_KEYS so clients can pre-flight it`,
+      )
+    }
+  })
+})
