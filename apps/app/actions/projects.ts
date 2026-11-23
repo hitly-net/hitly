@@ -26,6 +26,7 @@ import {
 import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from '@/lib/rbac'
 import { clientFromHeaders } from '@/lib/request-client'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
+import { toTierLimitBlockedResult, type TierLimitBlockedResult } from '@/lib/tier-enforcement'
 import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
 import { rotateProjectResumeSecret } from '@/lib/resume-secret'
 import { logProjectEvent } from '@/lib/events'
@@ -70,11 +71,15 @@ async function requireProjectAdmin(projectId: string) {
 /**
  * Result of a key create/regenerate. A gate-blocked action returns the typed
  * state instead of throwing, so the web UI renders the verify-email state
- * rather than an error page or a 500.
+ * rather than an error page or a 500. A tier-limit refusal from the
+ * chokepoint (api_keys cap) converts the same way, after the tenant
+ * transaction has rolled back.
  */
-export type ApiKeyActionResult = { apiKey: string } | GateBlockedResult
+export type ApiKeyActionResult = { apiKey: string } | GateBlockedResult | TierLimitBlockedResult
 
-export async function createProject(formData: FormData): Promise<GateBlockedResult | void> {
+export async function createProject(
+  formData: FormData,
+): Promise<GateBlockedResult | TierLimitBlockedResult | void> {
   // The gate error must THROW OUT of withAppTenant: a normal return would
   // COMMIT the tenant transaction, so anything written before a
   // write-then-gate ordering (a mutant or a future refactor) would persist.
@@ -95,7 +100,7 @@ export async function createProject(formData: FormData): Promise<GateBlockedResu
       redirect(`/projects/${projectId}/config`)
     })
   } catch (error) {
-    const blocked = toGateBlockedResult(error)
+    const blocked = toGateBlockedResult(error) ?? toTierLimitBlockedResult(error)
     if (blocked) return blocked
     throw error
   }
@@ -166,7 +171,7 @@ export async function createProjectApiKey(projectId: string, formData: FormData)
       return { apiKey: raw }
     })
   } catch (error) {
-    const blocked = toGateBlockedResult(error)
+    const blocked = toGateBlockedResult(error) ?? toTierLimitBlockedResult(error)
     if (blocked) return blocked
     throw error
   }
