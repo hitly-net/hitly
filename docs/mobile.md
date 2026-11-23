@@ -402,3 +402,8 @@ yarn dev:mobile       # Expo
 ```
 
 Point the hosted login at `http://localhost:3001` (or your LAN IP from a device).
+
+## Builds
+
+- iOS (simulator, unsigned, signed device, TestFlight): see
+  [docs/ios-build.md](ios-build.md); the entry point is `scripts/build-ios.sh`.
