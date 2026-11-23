@@ -18,6 +18,8 @@ import { resumeSecretPrefix } from '@/lib/keys'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
 import { withAppTenant } from '@/lib/context'
 import { decodeTenantJson } from '@/lib/tenant-crypto'
+import { TierUsageMeter } from '@/components/tier-usage-meter'
+import { apiKeyCount, approvalsCreatedThisMonth, tierUsageFor } from '@/lib/tier-enforcement'
 
 export const metadata = { title: 'Config' }
 
@@ -32,6 +34,20 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
 
   const database = requireDb()
   const workspaceId = requireTenantWorkspaceId()
+  // Monthly decision limit/usage shown where integrations live (this is the
+  // surface where the API keys that create decisions are managed).
+  const decisionsUsage = await tierUsageFor(
+    { plan: workspace.plan },
+    'decisions_per_month',
+    await approvalsCreatedThisMonth(database, workspaceId),
+  )
+  // API-key cap is per workspace (the create chokepoint counts by workspace),
+  // so the meter shown here reflects workspace-wide key usage.
+  const apiKeysUsage = await tierUsageFor(
+    { plan: workspace.plan },
+    'api_keys',
+    await apiKeyCount(database, workspaceId),
+  )
   const keys = await database
     .select()
     .from(projectApiKeys)
@@ -91,10 +107,13 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
       )}
 
       <h2 className="mt-10 text-lg font-semibold">API keys</h2>
+      <TierUsageMeter title="Decisions this month" usage={decisionsUsage} />
+      <TierUsageMeter title="API keys (workspace)" usage={apiKeysUsage} />
       <p className="mt-1 text-sm text-zinc-500">Authenticate ingest. The secret is shown once when you create or regenerate a key.</p>
       <ProjectApiKeys
         projectId={id}
         readOnly={archived}
+        upgrade={apiKeysUsage.upgrade}
         keys={keys.map((key) => ({
           id: key.id,
           name: key.name,

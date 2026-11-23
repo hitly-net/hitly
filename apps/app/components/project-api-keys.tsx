@@ -8,7 +8,9 @@ import {
   type ApiKeyActionResult,
 } from '@/actions/projects'
 import { VerifyEmailRequiredNotice } from '@/components/verify-email-required'
+import { TierLimitNotice } from '@/components/tier-limit-notice'
 import { isGateBlockedResult } from '@/lib/verified-gate'
+import { isTierLimitBlockedResult, type TierLimitBlockedResult, type UpgradeHint } from '@/lib/tier-limit-result'
 
 export type ProjectApiKeyRow = {
   id: string
@@ -23,25 +25,36 @@ export function ProjectApiKeys({
   readOnly,
   createKey = createProjectApiKey,
   regenerate = regenerateProjectApiKey,
+  upgrade = null,
 }: {
   projectId: string
   keys: ProjectApiKeyRow[]
   readOnly?: boolean
   createKey?: (projectId: string, formData: FormData) => Promise<ApiKeyActionResult>
   regenerate?: (projectId: string, keyId: string) => Promise<ApiKeyActionResult>
+  upgrade?: UpgradeHint | null
 }) {
   const [raw, setRaw] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   // A gate-blocked create/regenerate renders the typed state; the action
   // never throws for the gate, so there is no error page and no error id.
   const [gateBlocked, setGateBlocked] = useState(false)
+  // An api_keys cap refusal returns its own typed state and renders the
+  // refusal message with the plan-appropriate upgrade path.
+  const [tierBlocked, setTierBlocked] = useState<TierLimitBlockedResult | null>(null)
 
   function applyResult(result: ApiKeyActionResult) {
     if (isGateBlockedResult(result)) {
       setGateBlocked(true)
+      setTierBlocked(null)
+      setRaw(null)
+    } else if (isTierLimitBlockedResult(result)) {
+      setGateBlocked(false)
+      setTierBlocked(result)
       setRaw(null)
     } else {
       setGateBlocked(false)
+      setTierBlocked(null)
       setRaw(result.apiKey)
     }
   }
@@ -125,6 +138,7 @@ export function ProjectApiKeys({
           </button>
         </div>
         {gateBlocked ? <VerifyEmailRequiredNotice /> : null}
+        {tierBlocked ? <TierLimitNotice result={tierBlocked} upgrade={upgrade} /> : null}
         {raw ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 p-3 font-mono text-xs break-all dark:border-amber-900 dark:bg-amber-950">
             Copy now — this is shown once: {raw}

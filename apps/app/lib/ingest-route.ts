@@ -33,6 +33,8 @@ export interface IngestRouteDeps {
   failedAcquire?: RestLimitAcquire
   /** Overrides key authentication for tests; defaults to the real authenticateProjectKey. */
   authenticate?: (apiKey: string) => Promise<unknown | null>
+  /** Test seam for the ingest write path (tier refusals etc. without a database). */
+  ingest?: typeof ingestApproval
   log?: (line: string) => void
 }
 
@@ -94,7 +96,8 @@ export async function handleIngestPost(request: Request, deps: IngestRouteDeps =
     if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 })
     }
-    const result = await ingestApproval({
+    const ingest = deps.ingest ?? ingestApproval
+    const result = await ingest({
       apiKey,
       body,
       idempotencyKey: request.headers.get('idempotency-key'),

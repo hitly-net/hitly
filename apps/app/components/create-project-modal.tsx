@@ -3,19 +3,26 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { createProject } from '@/actions/projects'
 import { VerifyEmailRequiredNotice } from '@/components/verify-email-required'
+import { TierLimitNotice } from '@/components/tier-limit-notice'
 import { PluginSelect } from '@/components/plugin-select'
 import { isGateBlockedResult } from '@/lib/verified-gate'
+import { isTierLimitBlockedResult, type TierLimitBlockedResult, type UpgradeHint } from '@/lib/tier-limit-result'
 
 export function CreateProjectModal({
   create = createProject,
+  upgrade = null,
 }: {
   create?: (formData: FormData) => Promise<Awaited<ReturnType<typeof createProject>>>
+  upgrade?: UpgradeHint | null
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const formRef = useRef<HTMLFormElement>(null)
   // A gate-blocked create returns the typed state instead of throwing, so
   // the modal renders "Verify your email to continue" rather than a 500.
+  // A tier-cap refusal (live project limit) renders its own refusal notice
+  // with the upgrade path.
   const [gateBlocked, setGateBlocked] = useState(false)
+  const [tierBlocked, setTierBlocked] = useState<TierLimitBlockedResult | null>(null)
   const [busy, setBusy] = useState(false)
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -25,9 +32,14 @@ export function CreateProjectModal({
       const result = await create(new FormData(event.currentTarget))
       if (isGateBlockedResult(result)) {
         setGateBlocked(true)
+        setTierBlocked(null)
+      } else if (isTierLimitBlockedResult(result)) {
+        setGateBlocked(false)
+        setTierBlocked(result)
       } else {
         // Success paths redirect server-side; clear any stale blocked state.
         setGateBlocked(false)
+        setTierBlocked(null)
       }
     } finally {
       setBusy(false)
@@ -70,6 +82,7 @@ export function CreateProjectModal({
           </label>
           <PluginSelect />
           {gateBlocked ? <VerifyEmailRequiredNotice /> : null}
+          {tierBlocked ? <TierLimitNotice result={tierBlocked} upgrade={upgrade} /> : null}
           <div className="mt-2 flex justify-end gap-2">
             <button
               type="button"

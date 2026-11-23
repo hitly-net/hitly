@@ -12,6 +12,7 @@ import {
   projectRules,
   users,
 } from '@hitly/db/schema'
+import { cancelApproval, decideApproval, parseDecisionBody, retryResume } from '@/lib/approvals'
 import { getAppContext, withAppTenant } from '@/lib/context'
 import { parseAnswerField } from '@/lib/answer-form-helpers'
 import { guardProjectAdminChange } from '@/lib/member-guard'
@@ -392,9 +393,10 @@ export async function retryWorkItem(approvalId: string) {
     if (!canDecide(access)) throw new Error('You cannot retry this work item')
     const archivedRetry = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
     if (archivedRetry) throw new Error(archivedRetry.error)
-    const { retryResume } = await import('@/lib/approvals')
     const result = await retryResume({ approvalId, workspaceId: workspace.id })
-    if (result.error && (result.status === 500 || result.status === 400)) {
+    // A tier refusal (retention-bound retry) rides the same ?error= display
+    // path as other retry failures, so the reviewer sees the human message.
+    if (result.error && (result.status === 500 || result.status === 400 || result.status === 402)) {
       const returnPath = `/inbox/${approvalId}`
       const errorParam = encodeURIComponent(result.error)
       redirect(`${returnPath}?error=${errorParam}`)
@@ -422,7 +424,6 @@ export async function cancelWorkItem(approvalId: string) {
     if (!canDecide(access)) throw new Error('You cannot cancel this work item')
     const archivedCancel = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
     if (archivedCancel) throw new Error(archivedCancel.error)
-    const { cancelApproval } = await import('@/lib/approvals')
     const result = await cancelApproval({ approvalId, actorUserId: user.id, workspaceId: workspace.id })
     throwUnlessConflict(result)
     revalidateWorkItem(approvalId, approval.projectId)
@@ -526,7 +527,6 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     if (editedRaw) {
       editedArgs = JSON.parse(editedRaw) as Record<string, unknown>
     }
-    const { decideApproval, parseDecisionBody } = await import('@/lib/approvals')
     const payload = parseDecisionBody({
       decision,
       response: response || undefined,

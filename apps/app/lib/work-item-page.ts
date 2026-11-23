@@ -23,6 +23,7 @@ import { canDecide, getProjectAccess } from './rbac'
 import { redactApprovalForReviewer, type OriginField } from './reviewer-approval'
 import { requireDb, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
+import { planOfWorkspace, retentionAgeDays, tierUsageFor, type TierUsage } from './tier-enforcement'
 
 export type WorkItemPerson = {
   userId: string
@@ -66,6 +67,8 @@ export type WorkItemPageDto = {
   canAct: boolean
   canCancel: boolean
   canRetry: boolean
+  /** Retention limit/usage for the retry action (null when retry is not offered). */
+  retention: TierUsage | null
   expired: boolean
   canDelegate: boolean
   allowed: AllowedActions
@@ -278,6 +281,16 @@ export async function loadWorkItemPage(args: {
       : `/inbox/${approvalRow.id}`
 
     const project = access.project
+    // Retention limit/usage shown next to the retry action (the capped
+    // action lives here): item age vs the plan's completed-item retention.
+    const canRetryNow = approvalRow.status === 'failed_resume' && Boolean(canDecide(access)) && !archived
+    const retentionUsage: TierUsage | null = canRetryNow
+      ? await tierUsageFor(
+          { plan: (await planOfWorkspace(requireDb(), args.workspaceId)) ?? '' },
+          'completed_retention_days',
+          retentionAgeDays(approvalRow.createdAt),
+        )
+      : null
     return {
       ok: true as const,
       id: approvalRow.id,
@@ -300,6 +313,7 @@ export async function loadWorkItemPage(args: {
       canAct,
       canCancel,
       canRetry: approvalRow.status === 'failed_resume' && Boolean(canDecide(access)) && !archived,
+      retention: retentionUsage,
       expired,
       canDelegate,
       allowed,

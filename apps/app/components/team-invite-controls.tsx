@@ -3,19 +3,26 @@
 import { useState, type FormEvent } from 'react'
 import { inviteToWorkspace, resendInvite } from '@/actions/team'
 import { VerifyEmailRequiredNotice } from '@/components/verify-email-required'
+import { TierLimitNotice } from '@/components/tier-limit-notice'
 import { isGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
+import { isTierLimitBlockedResult, type TierLimitBlockedResult, type UpgradeHint } from '@/lib/tier-limit-result'
 
 /**
  * Invite form for the team page. A gate-blocked invite send returns the typed
  * state (never a throw/500), so the form renders the shared
  * "Verify your email to continue" notice with the rate-limited resend link.
+ * A tier-cap refusal (seat limit) returns its own typed state and renders the
+ * refusal message with the plan-appropriate upgrade path.
  */
 export function WorkspaceInviteForm({
   invite = inviteToWorkspace,
+  upgrade = null,
 }: {
-  invite?: (formData: FormData) => Promise<GateBlockedResult | void>
+  invite?: (formData: FormData) => Promise<GateBlockedResult | TierLimitBlockedResult | void>
+  upgrade?: UpgradeHint | null
 }) {
   const [gateBlocked, setGateBlocked] = useState(false)
+  const [tierBlocked, setTierBlocked] = useState<TierLimitBlockedResult | null>(null)
   const [busy, setBusy] = useState(false)
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -24,6 +31,7 @@ export function WorkspaceInviteForm({
     try {
       const result = await invite(new FormData(event.currentTarget))
       setGateBlocked(isGateBlockedResult(result))
+      setTierBlocked(isTierLimitBlockedResult(result) ? result : null)
     } finally {
       setBusy(false)
     }
@@ -60,6 +68,7 @@ export function WorkspaceInviteForm({
           <VerifyEmailRequiredNotice />
         </div>
       ) : null}
+      {tierBlocked ? <TierLimitNotice result={tierBlocked} upgrade={upgrade} /> : null}
     </div>
   )
 }
