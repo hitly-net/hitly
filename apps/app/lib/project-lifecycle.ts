@@ -2,6 +2,8 @@ import { and, eq } from 'drizzle-orm'
 import { isProjectStatus, type ProjectStatus, type WorkspaceRole } from '@hitly/core'
 import { projects } from '@hitly/db/schema'
 import { can } from './tier-entitlements'
+import { gateLiveProject, liveProjectCount, lockTierSeries, planOfWorkspace } from './tier-enforcement'
+import { TIER_LIMIT_CODE, TIER_LIMIT_HTTP_STATUS } from './tier-limit-result'
 import { logProjectEvent } from './events'
 import { canManageWorkspace } from './rbac'
 import { requireDb, requireTenantWorkspaceId } from './tenant'
@@ -20,7 +22,7 @@ export type ProjectLifecycleError = {
   ok: false
   error: string
   code: string
-  status: 400 | 403 | 404 | 409
+  status: 400 | 402 | 403 | 404 | 409
 }
 
 type WorkspacePlanRef = { id: string; plan: string }
@@ -128,6 +130,20 @@ export async function setProjectStatus(args: {
     }
   }
   const workspaceId = requireTenantWorkspaceId()
+  if (args.status === 'live') {
+    // Going live is new use of a live-project slot (a paused/archived project
+    // no longer occupies one). Same lock as insertNewProject so a create and
+    // a reactivation cannot both slip past the cap (C10).
+    const database = requireDb()
+    await lockTierSeries(database, workspaceId, 'live_projects')
+    const liveGate = await gateLiveProject(
+      { plan: (await planOfWorkspace(database, workspaceId)) ?? '' },
+      await liveProjectCount(database, workspaceId),
+    )
+    if (!liveGate.allowed) {
+      return { ok: false, error: liveGate.message, code: TIER_LIMIT_CODE, status: TIER_LIMIT_HTTP_STATUS }
+    }
+  }
   await requireDb()
     .update(projects)
     .set({ status: args.status, updatedAt: new Date() })
