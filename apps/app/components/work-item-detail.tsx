@@ -6,6 +6,7 @@ import { decideWorkItem, delegateWorkItem, retryWorkItem } from '@/actions/proje
 import { AppShell } from '@/components/app-shell'
 import { ContextMarkdown } from '@/components/context-markdown'
 import { AnswerForm } from '@/components/answer-form'
+import { TierUsageMeter } from '@/components/tier-usage-meter'
 import { ForceCancelButton } from '@/components/force-cancel-button'
 import { MarkPresentedIfCanAct, RefreshOnFocus } from '@/components/work-item-client'
 import { EditedArgsPanel } from '@/components/edited-args-panel'
@@ -230,11 +231,16 @@ function WorkItemDetailView({ page, errorMessage }: { page: WorkItemPageDto; err
         />
       ) : null}
       {page.canRetry ? (
-        <form action={retryWorkItem.bind(null, page.id)} className="mt-4">
-          <button type="submit" className="text-sm underline">
-            Retry resume
-          </button>
-        </form>
+        <>
+          {page.retention ? (
+            <TierUsageMeter title="Completed-item retention" usage={page.retention} />
+          ) : null}
+          <form action={retryWorkItem.bind(null, page.id)} className="mt-4">
+            <button type="submit" className="text-sm underline">
+              Retry resume
+            </button>
+          </form>
+        </>
       ) : null}
     </AppShell>
   )

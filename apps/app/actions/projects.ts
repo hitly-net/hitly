@@ -12,6 +12,7 @@ import {
   projectRules,
   users,
 } from '@hitly/db/schema'
+import { cancelApproval, decideApproval, parseDecisionBody, retryResume } from '@/lib/approvals'
 import { getAppContext, withAppTenant } from '@/lib/context'
 import { parseAnswerField } from '@/lib/answer-form-helpers'
 import { guardProjectAdminChange } from '@/lib/member-guard'
@@ -27,6 +28,7 @@ import { canAdminProject, canDecide, canManageWorkspace, getProjectAccess } from
 import { clientFromHeaders } from '@/lib/request-client'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
 import { toGateBlockedResult, type GateBlockedResult } from '@/lib/verified-gate'
+import { toTierLimitBlockedResult, type TierLimitBlockedResult } from '@/lib/tier-enforcement'
 import { rotateProjectResumeSecret } from '@/lib/resume-secret'
 import { logProjectEvent } from '@/lib/events'
 import { headers } from 'next/headers'
@@ -74,7 +76,9 @@ async function requireProjectAdmin(projectId: string) {
  */
 export type ApiKeyActionResult = { apiKey: string } | GateBlockedResult
 
-export async function createProject(formData: FormData): Promise<GateBlockedResult | void> {
+export async function createProject(
+  formData: FormData,
+): Promise<GateBlockedResult | TierLimitBlockedResult | void> {
   // The gate error must THROW OUT of withAppTenant: a normal return would
   // COMMIT the tenant transaction, so anything written before a
   // write-then-gate ordering (a mutant or a future refactor) would persist.
@@ -95,7 +99,7 @@ export async function createProject(formData: FormData): Promise<GateBlockedResu
       redirect(`/projects/${projectId}/config`)
     })
   } catch (error) {
-    const blocked = toGateBlockedResult(error)
+    const blocked = toGateBlockedResult(error) ?? toTierLimitBlockedResult(error)
     if (blocked) return blocked
     throw error
   }
@@ -387,9 +391,10 @@ export async function retryWorkItem(approvalId: string) {
     if (!canDecide(access)) throw new Error('You cannot retry this work item')
     const archivedRetry = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
     if (archivedRetry) throw new Error(archivedRetry.error)
-    const { retryResume } = await import('@/lib/approvals')
     const result = await retryResume({ approvalId, workspaceId: workspace.id })
-    if (result.error && (result.status === 500 || result.status === 400)) {
+    // A tier refusal (retention-bound retry) rides the same ?error= display
+    // path as other retry failures, so the reviewer sees the human message.
+    if (result.error && (result.status === 500 || result.status === 400 || result.status === 402)) {
       const returnPath = `/inbox/${approvalId}`
       const errorParam = encodeURIComponent(result.error)
       redirect(`${returnPath}?error=${errorParam}`)
@@ -417,7 +422,6 @@ export async function cancelWorkItem(approvalId: string) {
     if (!canDecide(access)) throw new Error('You cannot cancel this work item')
     const archivedCancel = mutationBlockedForProjectStatus(access?.project.status ?? 'live')
     if (archivedCancel) throw new Error(archivedCancel.error)
-    const { cancelApproval } = await import('@/lib/approvals')
     const result = await cancelApproval({ approvalId, actorUserId: user.id, workspaceId: workspace.id })
     throwUnlessConflict(result)
     revalidateWorkItem(approvalId, approval.projectId)
@@ -521,7 +525,6 @@ export async function decideWorkItem(approvalId: string, formData: FormData) {
     if (editedRaw) {
       editedArgs = JSON.parse(editedRaw) as Record<string, unknown>
     }
-    const { decideApproval, parseDecisionBody } = await import('@/lib/approvals')
     const payload = parseDecisionBody({
       decision,
       response: response || undefined,

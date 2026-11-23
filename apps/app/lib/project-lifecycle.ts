@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { isProjectStatus, type ProjectStatus, type WorkspaceRole } from '@hitly/core'
 import { projects } from '@hitly/db/schema'
 import { can } from './tier-entitlements'
+import { TIER_LIMIT_CODE, TIER_LIMIT_HTTP_STATUS, gateLiveProject, liveProjectCount } from './tier-enforcement'
 import { logProjectEvent } from './events'
 import { canManageWorkspace } from './rbac'
 import { requireDb, requireTenantWorkspaceId } from './tenant'
@@ -20,7 +21,7 @@ export type ProjectLifecycleError = {
   ok: false
   error: string
   code: string
-  status: 400 | 403 | 404 | 409
+  status: 400 | 402 | 403 | 404 | 409
 }
 
 type WorkspacePlanRef = { id: string; plan: string }
@@ -128,6 +129,18 @@ export async function setProjectStatus(args: {
     }
   }
   const workspaceId = requireTenantWorkspaceId()
+  // Live-project cap: entering `live` (resume or unarchive) consumes a live
+  // slot — refuse the transition over the plan's cap. Leaving `live` and
+  // every read/delete path stay free.
+  if (args.status === 'live') {
+    const liveGate = await gateLiveProject(
+      { plan: args.workspace.plan },
+      await liveProjectCount(requireDb(), workspaceId),
+    )
+    if (!liveGate.allowed) {
+      return { ok: false, error: liveGate.message, code: TIER_LIMIT_CODE, status: TIER_LIMIT_HTTP_STATUS }
+    }
+  }
   await requireDb()
     .update(projects)
     .set({ status: args.status, updatedAt: new Date() })
