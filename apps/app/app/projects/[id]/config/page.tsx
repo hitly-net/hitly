@@ -13,6 +13,8 @@ import { canAdminProject, canManageWorkspace } from '@/lib/rbac'
 import { canUseProjectLifecycle } from '@/lib/project-lifecycle'
 import { requireVisibleProject } from '@/lib/project-page'
 import { publicOriginFields } from '@/lib/project-config'
+import { parseMastraFactoryConfig } from '@/lib/mastra-factory-config'
+import { ProjectMastraFactoryConfig } from '@/components/project-mastra-factory-config'
 import { ensureProjectResumeSecret } from '@/lib/resume-secret'
 import { resumeSecretPrefix } from '@/lib/keys'
 import { requireDb, requireTenantWorkspaceId } from '@/lib/tenant'
@@ -104,6 +106,17 @@ export default async function ProjectConfigPage({ params }: { params: Promise<{ 
         <div className="mt-3 max-w-xl">
           <TestEvidenceSink projectId={id} />
         </div>
+      )}
+
+      {project.plugin === 'mastra-factory' && (
+        <>
+          <h2 className="mt-10 text-lg font-semibold">Mastra Factory gates</h2>
+          <ProjectMastraFactoryConfig
+            projectId={id}
+            {...parseMastraFactoryConfig(credentials)}
+            readOnly={archived}
+          />
+        </>
       )}
 
       <h2 className="mt-10 text-lg font-semibold">API keys</h2>

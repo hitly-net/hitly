@@ -4,6 +4,7 @@ import { langgraphPlugin } from '@hitly/plugin-langgraph'
 import { mastraPlugin } from '@hitly/plugin-mastra'
 import { openshellPlugin } from '@hitly/plugin-openshell'
 import { temporalPlugin } from '@hitly/plugin-temporal'
+import { mastraFactoryPlugin } from '@hitly/mastra-factory-plugin/server'
 import type { HitlyPlugin, PluginId } from '@hitly/core'
 
 export const plugins: Record<PluginId, HitlyPlugin> = {
@@ -13,6 +14,7 @@ export const plugins: Record<PluginId, HitlyPlugin> = {
   temporal: temporalPlugin,
   hermes: hermesPlugin,
   openshell: openshellPlugin,
+  'mastra-factory': mastraFactoryPlugin,
 }
 
 export function getPlugin(id: PluginId): HitlyPlugin {

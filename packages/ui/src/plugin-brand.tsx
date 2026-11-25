@@ -16,6 +16,7 @@ export const PLUGIN_BRANDS: Record<PluginId, PluginBrand> = {
   temporal: { id: 'temporal', label: 'Temporal', bg: '#000000', fg: '#FFFFFF' },
   hermes: { id: 'hermes', label: 'Hermes', bg: '#1A1408', fg: '#E8C547' },
   openshell: { id: 'openshell', label: 'OpenShell', bg: '#0A0A0A', fg: '#76B900' },
+  'mastra-factory': { id: 'mastra-factory', label: 'Mastra Factory', bg: '#111111', fg: '#A78BFA' },
 }
 
 function MarkSvg({ children, ...props }: SVGProps<SVGSVGElement>) {
@@ -93,6 +94,7 @@ const ICONS: Record<PluginId, (props: SVGProps<SVGSVGElement>) => ReactElement> 
   temporal: TemporalMark,
   hermes: HermesMark,
   openshell: OpenShellMark,
+  'mastra-factory': MastraMark,
 }
 
 export function pluginBrand(plugin: string): PluginBrand {
