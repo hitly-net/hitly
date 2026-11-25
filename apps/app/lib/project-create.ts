@@ -11,6 +11,7 @@ import { newId } from './ids'
 import { generateApiKey, generateResumeSecret } from './keys'
 import { requireDb, requireTenantWorkspaceId } from './tenant'
 import { encodeTenantJson } from './tenant-crypto'
+import { apiKeyCount, assertApiKey, assertLiveProject, liveProjectCount, lockTierSeries, planOfWorkspace } from './tier-enforcement'
 import { assertEmailVerifiedForCreate } from './verified-gate'
 
 /**
@@ -51,7 +52,15 @@ export async function insertNewProject(args: {
   if (!isListedPluginId(plugin)) throw new Error('Choose a plugin')
   await assertCreatorVerified(args.userId)
 
+  // Live-project cap: the tenant transaction is still unwritten, so a
+  // refusal leaves no rows behind. The advisory lock serialises concurrent
+  // creates for this workspace so at cap-1 exactly one wins (C10); the
+  // status flip to `live` in project-lifecycle takes the same lock.
   const database = requireDb()
+  await lockTierSeries(database, workspaceId, 'live_projects')
+  const plan = await planOfWorkspace(database, workspaceId)
+  await assertLiveProject({ plan: plan ?? '' }, await liveProjectCount(database, workspaceId))
+
   const projectId = newId('prj').slice(0, 36)
   await database.insert(projects).values({
     id: projectId,
@@ -88,17 +97,30 @@ export async function insertNewProject(args: {
  * it too, so the unverified-email gate holds for every caller. Returns the
  * raw key (shown once).
  */
-export async function insertNewProjectApiKey(args: {
+/** Args for {@link insertNewProjectApiKey}. Named so the C8 chokepoint guard's
+ * brace-matcher finds the function body at the first `{` after the signature. */
+type ProjectApiKeyCreateArgs = {
   projectId: string
   userId: string
   name: unknown
-}): Promise<string> {
+}
+
+export async function insertNewProjectApiKey(args: ProjectApiKeyCreateArgs): Promise<string> {
   const workspaceId = requireTenantWorkspaceId()
   const name = String(args.name ?? '').trim() || 'Ingest key'
   await assertCreatorVerified(args.userId)
 
-  const generated = generateApiKey()
+  // api_keys cap, enforced at the single chokepoint every key create passes
+  // through. The advisory lock serialises concurrent creates for this
+  // workspace on this limit key inside the tenant transaction, so at cap-1
+  // exactly one insert wins and the losers get a clean TierLimitError
+  // (their transactions roll back with no row written).
   const database = requireDb()
+  await lockTierSeries(database, workspaceId, 'api_keys')
+  const plan = await planOfWorkspace(database, workspaceId)
+  await assertApiKey({ plan: plan ?? '' }, await apiKeyCount(database, workspaceId))
+
+  const generated = generateApiKey()
   await database.insert(projectApiKeys).values({
     id: newId('key').slice(0, 36),
     workspaceId,

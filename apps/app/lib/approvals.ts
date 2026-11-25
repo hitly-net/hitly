@@ -23,7 +23,16 @@ import {
   type ResumeResponse,
   type WorkspaceRole,
 } from '@hitly/core'
-import { approvals, decisionRecords, evidenceReceipts, projectApiKeys, projectEvents, projectRules, projects, users } from '@hitly/db/schema'
+import { approvals, decisionRecords, evidenceReceipts, projectApiKeys, projectEvents, projectRules, projects, users, workspaces } from '@hitly/db/schema'
+import {
+  TIER_LIMIT_CODE,
+  TIER_LIMIT_HTTP_STATUS,
+  approvalsCreatedThisMonth,
+  gateMonthlyDecisions,
+  gateRetentionBound,
+  lockTierSeries,
+  retentionAgeDays,
+} from './tier-enforcement'
 import { getPlugin } from './plugins'
 import { envelopeMetadata, stripOriginSecrets } from './origin'
 import { hashApiKey } from './keys'
@@ -458,7 +467,7 @@ async function applyRules(args: {
 type IngestedApproval = NonNullable<Awaited<ReturnType<typeof loadApproval>>>
 type IngestApprovalResult =
   | { ok: true; replayed: boolean; approval: IngestedApproval }
-  | { ok: false; error: string; status: 400 | 401 | 409 | 500; code?: string }
+  | { ok: false; error: string; status: 400 | 401 | 402 | 409 | 500; code?: string }
 
 export async function ingestApproval(args: {
   apiKey: string
@@ -603,6 +612,30 @@ export async function ingestApproval(args: {
       error: ingestBlock.error,
       code: ingestBlock.code,
       status: 409 as const,
+    }
+  }
+
+  // Tier cap (decisions/month): refuse NEW decisions past the plan's cap,
+  // after every replay/conflict path above so an idempotent replay never
+  // consumes quota and never needs headroom. Existing data is untouched.
+  // The advisory lock serialises concurrent ingests for this workspace so
+  // at cap-1 exactly one approval is created (check-count-write is atomic).
+  await lockTierSeries(database, project.workspaceId, 'decisions_per_month')
+  const planRows = await database
+    .select({ plan: workspaces.plan })
+    .from(workspaces)
+    .where(eq(workspaces.id, project.workspaceId))
+    .limit(1)
+  const decisionsGate = await gateMonthlyDecisions(
+    { plan: planRows[0]?.plan ?? '' },
+    await approvalsCreatedThisMonth(database, project.workspaceId),
+  )
+  if (!decisionsGate.allowed) {
+    return {
+      ok: false as const,
+      error: decisionsGate.message,
+      code: TIER_LIMIT_CODE,
+      status: TIER_LIMIT_HTTP_STATUS,
     }
   }
 
@@ -1430,6 +1463,21 @@ export async function retryResume(args: { approvalId: string; workspaceId?: stri
     const record = decisionRows[0]
     if (!record || !isDecision(record.decision)) {
       return { error: 'No decision to retry', status: 409 as const }
+    }
+    // Retention-bound action: a retry is NEW work on an item the plan's
+    // completed-item retention window no longer covers. Refuse before any
+    // resume attempt; reading the item stays allowed (reads are never gated).
+    const retentionPlanRows = await database
+      .select({ plan: workspaces.plan })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1)
+    const retentionGate = await gateRetentionBound(
+      { plan: retentionPlanRows[0]?.plan ?? '' },
+      retentionAgeDays(approval.createdAt),
+    )
+    if (!retentionGate.allowed) {
+      return { error: retentionGate.message, code: TIER_LIMIT_CODE, status: TIER_LIMIT_HTTP_STATUS }
     }
     const payload = (await decodeTenantJson(workspaceId, record.payload)) as unknown as DecisionPayload
     // A retry must not relabel the original decider's device or display: reuse

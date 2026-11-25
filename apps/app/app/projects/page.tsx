@@ -2,9 +2,11 @@ import { inArray, asc } from 'drizzle-orm'
 import { projects } from '@hitly/db/schema'
 import { AppShell } from '@/components/app-shell'
 import { ProjectList } from '@/components/project-list'
+import { TierUsageMeter } from '@/components/tier-usage-meter'
 import { withAppTenant } from '@/lib/context'
 import { canManageWorkspace, listArchivedProjects, listVisibleProjectIds } from '@/lib/rbac'
 import { requireDb } from '@/lib/tenant'
+import { liveProjectCount, tierUsageFor } from '@/lib/tier-enforcement'
 
 export const metadata = { title: 'Projects' }
 
@@ -31,6 +33,12 @@ export default async function ProjectsPage() {
           .orderBy(asc(projects.name))
   const canCreate = canManageWorkspace(role)
   const archived = await listArchivedProjects({ workspaceId: workspace.id, workspaceRole: role })
+  // Live-project limit/usage shown where the create/resume actions live.
+  const liveProjectsUsage = await tierUsageFor(
+    { plan: workspace.plan },
+    'live_projects',
+    await liveProjectCount(requireDb(), workspace.id),
+  )
 
   return (
     <AppShell>
@@ -38,9 +46,10 @@ export default async function ProjectsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Projects</h1>
           <p className="mt-2 text-sm text-zinc-500">Work items, origin credentials, people, rules, channels, and logs.</p>
+          <TierUsageMeter title="Live projects" usage={liveProjectsUsage} />
         </div>
       </div>
-      <ProjectList projects={list} canCreate={canCreate} />
+      <ProjectList projects={list} canCreate={canCreate} upgrade={liveProjectsUsage.upgrade} />
       {archived.length > 0 ? (
         <div className="mt-10">
           <h2 className="text-lg font-semibold">Archived</h2>
