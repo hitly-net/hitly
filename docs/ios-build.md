@@ -133,10 +133,15 @@ The simulator `xcodebuild` also passes a concrete `-destination` and
 Override it with `HITLY_IOS_DESTINATION`.
 
 After the simulator `.app` is copied to `dist-ios/simulator/`, the script
-runs `codesign -d --entitlements` on that shipped bundle (not only the
-`derived/` copy). The dump must contain `keychain-access-groups`. If it does
-not, the script exits non-zero and names the entitlement. This check runs
-before the `CFBundleVersion` stamp.
+stamps `CFBundleVersion` from the build number it logged, then checks that
+shipped bundle (not only the `derived/` copy). `codesign -d --entitlements`
+prints nothing on an ad-hoc simulator build. The entitlements live in the
+executable's `__TEXT,__entitlements` section, which the script reads with
+`segedit` when the codesign output has no valid id. The required entitlement
+is `application-identifier` (`<team>.net.hitly.app`; `FAKETEAMID` when no
+Apple team is set). `keychain-access-groups` is not required. A missing or
+wrong `application-identifier` fails the script, and the shipped `.app` is
+removed so it is not left behind.
 
 Remote path, for `device` and `testflight`:
 `npx eas-cli@27.11.0 build --platform ios --profile <profile> --non-interactive`.
@@ -152,12 +157,13 @@ A JavaScript UI needs Metro (`npx expo start`); opening the `.app` alone does
 not load the JS bundle. A packager-less Debug launch may still show a LogBox
 that no script URL was provided. That message is about Metro, not signing.
 
-The official simulator path is ad-hoc signed (`CODE_SIGN_IDENTITY=-`) so the
-`.app` embeds entitlements, including `keychain-access-groups` (needed by
-`expo-secure-store`). `codesign -d --entitlements` on the shipped
-`dist-ios/simulator/*.app` must show that key. A missing keychain entitlement
-on this path is a build failure. The simulator target does not need an Apple
-team, Apple ID, or `EXPO_TOKEN`.
+The official simulator path is ad-hoc signed (`CODE_SIGN_IDENTITY=-`).
+`codesign -d --entitlements` prints nothing on that simulator build. The
+entitlements are in the executable `__TEXT,__entitlements` section and are
+read with `segedit`. The required entitlement is `application-identifier`
+(`<team>.net.hitly.app`, `FAKETEAMID` when no team is set).
+`keychain-access-groups` is not required. The simulator target does not
+need an Apple team, Apple ID, or `EXPO_TOKEN`.
 
 The `unsigned` target stays signing-disabled (`CODE_SIGNING_ALLOWED=NO`). It
 is not the official simulator path.

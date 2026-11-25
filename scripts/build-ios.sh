@@ -4,8 +4,9 @@
 #
 # Targets:
 #   simulator   Local simulator .app for macOS review (default). Ad-hoc
-#               signed with CODE_SIGN_IDENTITY=- so keychain-access-groups
-#               is embedded. No Apple team, no EXPO_TOKEN, no EAS account.
+#               signed with CODE_SIGN_IDENTITY=-. The shipped .app must
+#               carry application-identifier <team>.net.hitly.app. No Apple
+#               team, no EXPO_TOKEN, no EAS account.
 #   unsigned    Local signing-disabled device .app (review on a device via
 #               tooling that accepts unsigned bundles). Credential-free.
 #               Still passes CODE_SIGNING_ALLOWED=NO.
@@ -257,18 +258,62 @@ run_xcodebuild() {
   )
 }
 
-# After the simulator .app is copied to dist-ios/simulator/, confirm ad-hoc
-# signing embedded keychain-access-groups. expo-secure-store throws at
-# startup without it. This runs before the CFBundleVersion stamp.
-verify_simulator_keychain_entitlement() {
-  local app="$1" dump
-  require_cmd codesign
-  if ! dump="$(codesign -d --entitlements - "${app}" 2>/dev/null)"; then
-    die "codesign -d --entitlements failed for the shipped simulator .app; it must be ad-hoc signed (CODE_SIGN_IDENTITY=-) and include the keychain-access-groups entitlement"
+# Print the <string> that follows an application-identifier key, or nothing.
+application_identifier_from() {
+  awk '
+    {
+      rest = $0
+      if (!found && index(rest, "<key>application-identifier</key>")) {
+        found = 1
+        sub(/.*<key>application-identifier<\/key>/, "", rest)
+      }
+      if (found && index(rest, "<string>")) {
+        val = rest
+        sub(/.*<string>/, "", val)
+        sub(/<\/string>.*/, "", val)
+        printf "%s", val
+        exit
+      }
+    }
+  ' <<< "$1"
+}
+
+# Non-empty team prefix, then exactly .net.hitly.app. FAKETEAMID.net.hitly.app
+# and a real team prefix both match. An empty prefix does not.
+application_identifier_ok() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9]+\.net\.hitly\.app$ ]]
+}
+
+# Ad-hoc simulator builds on Xcode 16 leave codesign -d --entitlements empty.
+# The id then lives in the main executable's __TEXT,__entitlements section.
+# A missing or wrong id fails the script. The caller stamps CFBundleVersion
+# first; on failure this removes the shipped .app so it is not left at the
+# Xcode default build number.
+verify_simulator_application_identifier() {
+  local app="$1" exe dump section id tmp
+  exe="${app}/$(basename "${app}" .app)"
+  dump=""
+  if command -v codesign >/dev/null 2>&1; then
+    dump="$(codesign -d --entitlements - "${app}" 2>/dev/null || true)"
   fi
-  if ! grep -q 'keychain-access-groups' <<< "${dump}"; then
-    die "the shipped simulator .app is missing the keychain-access-groups entitlement (codesign -d --entitlements). Ad-hoc signing with CODE_SIGN_IDENTITY=- must embed it"
+  id="$(application_identifier_from "${dump}")"
+  if application_identifier_ok "${id}"; then
+    return 0
   fi
+  section=""
+  if command -v segedit >/dev/null 2>&1 && [[ -f "${exe}" ]]; then
+    tmp="$(mktemp)"
+    if segedit "${exe}" -extract __TEXT __entitlements "${tmp}" >/dev/null 2>&1; then
+      section="$(cat "${tmp}" 2>/dev/null || true)"
+    fi
+    rm -f "${tmp}"
+  fi
+  id="$(application_identifier_from "${section}")"
+  if application_identifier_ok "${id}"; then
+    return 0
+  fi
+  rm -rf "${app}"
+  die "the shipped simulator .app has no valid application-identifier entitlement (looked in codesign -d --entitlements output and __TEXT,__entitlements). Expected <team>.net.hitly.app"
 }
 
 # The script contract joins recorded xcodebuild argv on NUL and then applies
@@ -341,10 +386,10 @@ build_local_unsigned_app() {
   [[ -n "${app_bundle}" ]] || die "the local build finished but no .app bundle was found under dist-ios"
   cp -R "${app_bundle}" "${out_dir}/"
   shipped="${out_dir}/$(basename "${app_bundle}")"
-  if [[ "${target}" == "simulator" ]]; then
-    verify_simulator_keychain_entitlement "${shipped}"
-  fi
   stamp_build_number "${shipped}/Info.plist" "${build_number}"
+  if [[ "${target}" == "simulator" ]]; then
+    verify_simulator_application_identifier "${shipped}"
+  fi
   log "artifact: ${shipped}"
 }
 
