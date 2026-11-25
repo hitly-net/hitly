@@ -58,7 +58,10 @@ export async function attemptSquashMerge(args: {
   token?: string
 }): Promise<{ merged: boolean; reason?: string }> {
   const { api, pr, expectedHeadSha } = args
-  if ('token' in args && !args.token) {
+  // Any absent or empty token — key present as undefined or key omitted —
+  // refuses with zero API calls. Production always passes the configured
+  // token; there is no "proceed without a token" path to preserve.
+  if (!args.token) {
     return { merged: false, reason: 'no GitHub token configured — merge-ready recorded only, a human must merge' }
   }
   const path = `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`

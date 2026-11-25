@@ -12,6 +12,11 @@ export interface ApprovalAuthorityState {
   status: string
   decision: string | null
   metadata: Record<string, unknown>
+  /** Decision payload, present once HITLy holds a decision. */
+  reason?: string
+  editedArgs?: Record<string, unknown>
+  response?: string
+  answer?: string
 }
 
 export interface ResumeDispatch {

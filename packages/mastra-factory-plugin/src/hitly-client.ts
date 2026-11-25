@@ -35,10 +35,17 @@ export interface RemoteIntegrationConfig {
 
 /**
  * Minimal HITLy REST client (project-scoped API key). Endpoints:
- * - POST /api/v1/approvals            (create; Idempotency-Key create-once)
- * - GET  /api/v1/approvals/:id        (authoritative approval state)
- * - GET  /api/v1/approvals?status=pending (reconciliation list)
+ * - POST /api/v1/approvals (create; Idempotency-Key create-once)
+ * - GET  /api/v1/projects/:id/integrations/mastra-factory/approvals/:approvalId
+ *      (authoritative approval state — the plugin trusts only this, never the
+ *      callback's claim; carries the gate + session identity metadata)
+ * - GET  /api/v1/projects/:id/integrations/mastra-factory/approvals
+ *      (restart-seed feed: open gate approvals with create-time metadata)
  * - GET  /api/v1/projects/:id/integrations/mastra-factory (gate config)
+ *
+ * The integration-namespace reads (not the generic requester list) are the
+ * only contract that guarantees the `net.hitly/*` gate/session metadata the
+ * reconciler needs to re-adopt approvals after a Factory restart.
  */
 export class HitlyClient {
   private readonly baseUrl: string
@@ -101,23 +108,41 @@ export class HitlyClient {
   }
 
   async getApproval(id: string): Promise<ApprovalAuthorityState> {
-    const { status, body } = await this.request(`/api/v1/approvals/${encodeURIComponent(id)}`, { method: 'GET' })
+    const { status, body } = await this.request(
+      `/api/v1/projects/${encodeURIComponent(this.projectId)}/integrations/mastra-factory/approvals/${encodeURIComponent(id)}`,
+      { method: 'GET' },
+    )
     if (status !== 200) throw HitlyClient.errorFrom(status, body)
     const record = (body ?? {}) as Record<string, unknown>
-    return {
+    const state: ApprovalAuthorityState = {
       id: typeof record.id === 'string' ? record.id : id,
       status: typeof record.status === 'string' ? record.status : 'pending',
       decision: typeof record.decision === 'string' ? record.decision : null,
       metadata: typeof record.metadata === 'object' && record.metadata !== null ? (record.metadata as Record<string, unknown>) : {},
     }
+    if (typeof record.reason === 'string') state.reason = record.reason
+    if (typeof record.editedArgs === 'object' && record.editedArgs !== null) state.editedArgs = record.editedArgs as Record<string, unknown>
+    if (typeof record.response === 'string') state.response = record.response
+    if (typeof record.answer === 'string') state.answer = record.answer
+    return state
   }
 
-  async listPending(): Promise<{ approvals: Array<{ id: string; status: string }> }> {
-    const { status, body } = await this.request('/api/v1/approvals?status=pending&limit=200', { method: 'GET' })
+  /** Open gate approvals for restart reconciliation, with create-time metadata. */
+  async listPending(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>> {
+    const { status, body } = await this.request(`/api/v1/projects/${encodeURIComponent(this.projectId)}/integrations/mastra-factory/approvals`, {
+      method: 'GET',
+    })
     if (status !== 200) throw HitlyClient.errorFrom(status, body)
     const record = (body ?? {}) as Record<string, unknown>
-    const approvals = Array.isArray(record.approvals) ? (record.approvals as Array<{ id: string; status: string }>) : []
-    return { approvals }
+    const items = Array.isArray(record.approvals) ? (record.approvals as Array<Record<string, unknown>>) : []
+    return items
+      .filter((item) => typeof item.id === 'string' && typeof item.status === 'string')
+      .map((item) => ({
+        id: item.id as string,
+        status: item.status as string,
+        decision: typeof item.decision === 'string' ? item.decision : null,
+        metadata: typeof item.metadata === 'object' && item.metadata !== null ? (item.metadata as Record<string, unknown>) : {},
+      }))
   }
 
   async getIntegrationConfig(): Promise<RemoteIntegrationConfig> {

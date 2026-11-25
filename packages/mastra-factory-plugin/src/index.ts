@@ -4,6 +4,8 @@ import { applyDecision, type ApplyDeps } from './apply.ts'
 import { HitlyReconciler, type OpenApproval } from './worker.ts'
 import type { ApprovalSnapshot, Gate, PluginRuntimeConfig } from './types.ts'
 
+export { DEFAULT_POLL_INTERVAL_MS, parseRuntimeConfig } from './config.ts'
+
 /**
  * Session-identity extraction is injected so this module never imports
  * `@mastra/*` at runtime. The Factory host passes the real implementation
@@ -36,7 +38,18 @@ export interface ApplySeams {
 export interface HitlyPluginOptions {
   config: PluginRuntimeConfig
   client: HitlyClientLike & {
-    getApproval?(id: string): Promise<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>
+    getApproval?(
+      id: string,
+    ): Promise<{
+      id: string
+      status: string
+      decision: string | null
+      metadata: Record<string, unknown>
+      reason?: string
+      editedArgs?: Record<string, unknown>
+      response?: string
+      answer?: string
+    }>
     getIntegrationConfig?(): Promise<{ gates: Record<Gate, boolean>; mergeAfterAccept: boolean }>
     listPending?(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>>
   }
@@ -149,7 +162,7 @@ export class HitlyMastraFactoryPlugin {
     this.mergeAfterAccept = remote.mergeAfterAccept
   }
 
-  routes(_ctx: unknown): Array<{ path: string; method: string; requiresAuth: boolean; handler: (context: unknown) => Promise<Response> }> {
+  routes(_ctx: unknown): Array<{ path: string; method: 'POST'; requiresAuth: boolean; handler: (context: unknown) => Promise<Response> }> {
     return [
       {
         path: RESUME_PATH,
@@ -186,7 +199,7 @@ export class HitlyMastraFactoryPlugin {
     return applyDecision(snapshot, deps)
   }
 
-  postToolObserver(args: { toolContext: { toolName: string; input: unknown; output?: unknown; error?: unknown; toolCallId?: string; context: unknown }; requestContext: unknown }): void {
+  async postToolObserver(args: { toolContext: { toolName: string; input: unknown; output?: unknown; error?: unknown; toolCallId?: string; context: unknown }; requestContext?: unknown }): Promise<void> {
     try {
       const toolContext = args.toolContext
       if (!toolContext || toolContext.error) return

@@ -57,21 +57,58 @@ test('plugin mismatch (400) surfaces as typed error', async () => {
   await assert.rejects(() => client.createApproval({ plugin: 'http', runId: 'r1' }, 'idem-1'), /mismatch/i)
 })
 
-test('getApproval reads authoritative status for the poller', async () => {
-  const { fetchImpl, calls } = stubFetch(() => ({ status: 200, body: { id: 'apv_1', status: 'decided', decision: 'accept' } }))
+test('getApproval reads authoritative state from the plugin integration endpoint', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({
+    status: 200,
+    body: {
+      id: 'apv_1',
+      status: 'decided',
+      decision: 'accept',
+      metadata: { 'net.hitly/gate': 'plan', 'net.hitly/factory/session-id': 'sess-1' },
+      reason: 'ship it',
+    },
+  }))
   const client = new HitlyClient({ ...config, fetchImpl })
   const approval = await client.getApproval('apv_1')
   assert.equal(approval.status, 'decided')
   assert.equal(approval.decision, 'accept')
-  assert.match(calls[0]!.url, /\/api\/v1\/approvals\/apv_1$/)
+  assert.equal(approval.metadata['net.hitly/gate'], 'plan')
+  assert.equal(approval.reason, 'ship it')
+  // Authority must come from the plugin's key-scoped integration namespace,
+  // the only read that guarantees the gate/session metadata.
+  assert.match(calls[0]!.url, /\/api\/v1\/projects\/[^/]+\/integrations\/mastra-factory\/approvals\/apv_1$/)
 })
 
-test('listPending fetches only open approvals for reconciliation', async () => {
-  const { fetchImpl, calls } = stubFetch(() => ({ status: 200, body: { approvals: [{ id: 'apv_9', status: 'pending' }] } }))
+test('listPending returns an array with create-time metadata for restart seeding', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({
+    status: 200,
+    body: {
+      approvals: [
+        {
+          id: 'apv_9',
+          status: 'pending',
+          decision: null,
+          gate: 'plan',
+          metadata: { 'net.hitly/gate': 'plan', 'net.hitly/factory/session-id': 'sess-1', 'net.hitly/factory/tool-call-id': 'tc-1' },
+        },
+      ],
+    },
+  }))
   const client = new HitlyClient({ ...config, fetchImpl })
   const list = await client.listPending()
-  assert.equal(list.approvals[0]!.id, 'apv_9')
-  assert.match(calls[0]!.url, /status=pending/)
+  assert.equal(Array.isArray(list), true)
+  assert.equal(list[0]!.id, 'apv_9')
+  // The seed feed must carry the identity the reconciler re-adopts with —
+  // without it, approvals opened before a Factory restart could never resume.
+  assert.equal(list[0]!.metadata['net.hitly/factory/session-id'], 'sess-1')
+  assert.match(calls[0]!.url, /\/api\/v1\/projects\/[^/]+\/integrations\/mastra-factory\/approvals$/)
+})
+
+test('listPending tolerates a malformed body without throwing', async () => {
+  const { fetchImpl } = stubFetch(() => ({ status: 200, body: { unexpected: 'shape' } }))
+  const client = new HitlyClient({ ...config, fetchImpl })
+  const list = await client.listPending()
+  assert.deepEqual(list, [])
 })
 
 test('server errors throw with status for retry/backoff decisions', async () => {

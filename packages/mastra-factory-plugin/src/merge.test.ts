@@ -30,7 +30,7 @@ test('squash merge sends merge_method=squash with the pinned head SHA', async ()
     'GET /repos/hitly-net/hitly/pulls/201': { merged: false, head: { sha: 'abc123' }, mergeable: true },
     'PUT /repos/hitly-net/hitly/pulls/201/merge': { merged: true, sha: 'abc123' },
   })
-  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123' })
+  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123', token: 'ghp_test' })
   assert.equal(result.merged, true)
   const mergeCall = api.calls.find((c) => c.method === 'PUT')!
   assert.equal((mergeCall.body as { merge_method: string }).merge_method, 'squash')
@@ -41,7 +41,7 @@ test('head SHA drift blocks the merge — verdict was for an older commit', asyn
   const api = gh({
     'GET /repos/hitly-net/hitly/pulls/201': { merged: false, head: { sha: 'def456' }, mergeable: true },
   })
-  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123' })
+  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123', token: 'ghp_test' })
   assert.equal(result.merged, false)
   assert.match(result.reason ?? '', /sha|head|drift/i)
   assert.equal(api.calls.some((c) => c.method === 'PUT'), false)
@@ -51,7 +51,7 @@ test('already-merged PR is reported, not re-merged', async () => {
   const api = gh({
     'GET /repos/hitly-net/hitly/pulls/201': { merged: true, head: { sha: 'abc123' } },
   })
-  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123' })
+  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123', token: 'ghp_test' })
   assert.equal(result.merged, false)
   assert.match(result.reason ?? '', /already/i)
   assert.equal(api.calls.some((c) => c.method === 'PUT'), false)
@@ -61,7 +61,7 @@ test('mergeable=false blocks the merge', async () => {
   const api = gh({
     'GET /repos/hitly-net/hitly/pulls/201': { merged: false, head: { sha: 'abc123' }, mergeable: false },
   })
-  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123' })
+  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123', token: 'ghp_test' })
   assert.equal(result.merged, false)
   assert.equal(api.calls.some((c) => c.method === 'PUT'), false)
 })
@@ -81,7 +81,7 @@ test('merge API errors surface as not-merged, never throw', async () => {
     'GET /repos/hitly-net/hitly/pulls/201': { merged: false, head: { sha: 'abc123' }, mergeable: true },
     'PUT /repos/hitly-net/hitly/pulls/201/merge': { __throw: '405 Method Not Allowed' },
   })
-  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123' })
+  const result = await attemptSquashMerge({ api, pr: PR, expectedHeadSha: 'abc123', token: 'ghp_test' })
   assert.equal(result.merged, false)
   assert.match(result.reason ?? '', /405|merge/i)
 })

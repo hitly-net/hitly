@@ -10,6 +10,7 @@ import { deliverFactorySessionNotification, resolveSessionThread } from '@mastra
 import type { FactoryIntegration, IntegrationContext } from '@mastra/factory/integrations/base'
 import type { ApplySeams, HitlyPluginOptions, SessionTargetSeams } from './index.ts'
 import { HitlyMastraFactoryPlugin } from './index.ts'
+import { HitlyClient } from './hitly-client.ts'
 import { attemptSquashMerge, createGitHubApi, parsePrUrl } from './merge.ts'
 
 type RequestContext = { get(key: string): unknown }
@@ -146,7 +147,9 @@ export class HitlyReconcileWorker extends MastraWorker {
   }
 }
 
-export interface HitlyIntegrationOptions extends Omit<HitlyPluginOptions, 'seams' | 'applySeams'> {
+export interface HitlyIntegrationOptions extends Omit<HitlyPluginOptions, 'seams' | 'applySeams' | 'client'> {
+  /** Override in tests; defaults to a real HitlyClient built from the parsed config. */
+  client?: HitlyPluginOptions['client']
   /** Override in tests; defaults to the real host-context-backed seams. */
   seams?: SessionTargetSeams
   applySeams?: ApplySeams
@@ -165,6 +168,11 @@ export function createHitlyIntegration(options: HitlyIntegrationOptions): HitlyM
   const hostRef: HostContextRef = { current: undefined }
   const seams = options.seams ?? sessionTargetSeams
   const applySeams = options.applySeams ?? createApplySeams(hostRef)
+  const client = options.client ?? new HitlyClient({
+    hitlyBaseUrl: options.config.hitlyBaseUrl,
+    hitlyApiKey: options.config.hitlyApiKey,
+    projectId: options.config.projectId,
+  })
   // Default merge authority: GitHub REST squash, gated upstream on the
   // HITLy-accepted review verdict + mergeAfterAccept. No token → refuse with
   // zero API calls (merge-ready recorded only).
@@ -177,7 +185,7 @@ export function createHitlyIntegration(options: HitlyIntegrationOptions): HitlyM
       const token = options.config.githubToken
       return attemptSquashMerge({ api: createGitHubApi(token ?? ''), pr, expectedHeadSha: args.headSha, token })
     })
-  const integration = new HitlyMastraFactoryPlugin({ ...options, seams, applySeams, attemptMerge })
+  const integration = new HitlyMastraFactoryPlugin({ ...options, client, seams, applySeams, attemptMerge })
 
   const bind = integration as HitlyMastraFactoryPlugin & {
     initialize?(args: unknown): void | Promise<void>
@@ -197,6 +205,10 @@ export function createHitlyIntegration(options: HitlyIntegrationOptions): HitlyM
     return [new HitlyReconcileWorker(integration, options.config.pollIntervalMs, options.log)]
   }
 
-  const conforming: FactoryIntegration = integration as unknown as HitlyMastraFactoryPlugin & FactoryIntegration
+  // Structural conformance to FactoryIntegration is checked here, at compile
+  // time, against the real upstream type (this is the only module that
+  // imports it). A missing/renamed required member fails the build — the
+  // plugin must never silently stop being an integration.
+  const conforming: FactoryIntegration = integration
   return conforming as HitlyMastraFactoryPlugin & FactoryIntegration
 }

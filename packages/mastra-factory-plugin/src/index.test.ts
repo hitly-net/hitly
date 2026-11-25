@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { HitlyMastraFactoryPlugin } from './index.ts'
+import type { HitlyPluginOptions } from './index.ts'
 import type { HitlyClientLike } from './gates.ts'
 import { parseRuntimeConfig } from './config.ts'
 
@@ -146,6 +147,67 @@ test('observer failures never throw into the tool pipeline (Factory catches, we 
   const plugin = new HitlyMastraFactoryPlugin({ config: parseRuntimeConfig(baseEnv), client, seams: fakeSeams })
   const { args } = toolEvent('submit_plan', { plan: 'x' })
   await assert.doesNotReject(() => Promise.resolve(plugin.postToolObserver!(args as never)))
+})
+
+// ---------------------------------------------------------------------------
+// Restart reconciliation: approvals opened before a Factory restart must be
+// re-adopted from HITLy's authoritative feed and their decisions applied.
+// ---------------------------------------------------------------------------
+
+const SEED_METADATA = {
+  'net.hitly/gate': 'plan',
+  'net.hitly/factory/session-id': 'sess-1',
+  'net.hitly/factory/tool-call-id': 'tc-1',
+  'net.hitly/factory/org-id': 'org_1',
+  'net.hitly/factory/user-id': 'user_1',
+}
+
+test('decisions made while the Factory was down are applied on the first reconcile tick', async () => {
+  const parked: Array<Record<string, unknown>> = []
+  const client = {
+    createApproval: async () => ({ id: 'unused', status: 'pending' }),
+    listPending: async () => [{ id: 'apv_pre_restart', status: 'pending', decision: null, metadata: SEED_METADATA }],
+    getApproval: async (id: string) => ({ id, status: 'decided', decision: 'accept', metadata: SEED_METADATA }),
+  }
+  const plugin = new HitlyMastraFactoryPlugin({
+    config: parseRuntimeConfig(baseEnv),
+    client: client as unknown as HitlyPluginOptions['client'],
+    seams: fakeSeams,
+    applySeams: {
+      answerParked: async (args) => void parked.push(args as unknown as Record<string, unknown>),
+      signalSession: async () => {},
+    },
+  })
+  const tick = await plugin.reconcileNow()
+  assert.equal(tick.applied, 1)
+  assert.equal(parked.length, 1)
+  assert.equal(parked[0]!.decision, 'approve')
+  assert.equal(parked[0]!.sessionId, 'sess-1')
+  assert.equal(parked[0]!.toolCallId, 'tc-1')
+  // Closed after apply: the next tick must not re-answer the parked call.
+  const second = await plugin.reconcileNow()
+  assert.equal(second.applied, 0)
+  assert.equal(parked.length, 1)
+})
+
+test('seeded gate-less or identity-less rows are skipped, never applied', async () => {
+  const parked: unknown[] = []
+  const client = {
+    createApproval: async () => ({ id: 'unused', status: 'pending' }),
+    listPending: async () => [
+      { id: 'apv_nogate', status: 'pending', decision: null, metadata: { 'net.hitly/factory/session-id': 'sess-1' } },
+      { id: 'apv_noident', status: 'pending', decision: null, metadata: { 'net.hitly/gate': 'plan' } },
+    ],
+    getApproval: async (id: string) => ({ id, status: 'decided', decision: 'accept', metadata: {} }),
+  }
+  const plugin = new HitlyMastraFactoryPlugin({
+    config: parseRuntimeConfig(baseEnv),
+    client: client as unknown as HitlyPluginOptions['client'],
+    seams: fakeSeams,
+    applySeams: { answerParked: async () => void parked.push(1), signalSession: async () => {} },
+  })
+  await plugin.reconcileNow()
+  assert.equal(parked.length, 0)
 })
 
 // ---------------------------------------------------------------------------
