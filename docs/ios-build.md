@@ -29,8 +29,14 @@ credentials are missing, and never print secret values.
   `simulator` and `unsigned` targets
 - Node 22 and Yarn 1.22 (`yarn install --frozen-lockfile` first, from the
   repo root)
-- For `device` / `testflight`: the EAS CLI is invoked through `npx`; the
-  build runs on Expo Application Services
+- CocoaPods **1.13** or newer for the local `simulator` and `unsigned`
+  targets only (not for EAS `device` / `testflight`). The script runs
+  `pod --version` and refuses to prebuild when the installed CocoaPods is
+  below 1.13, naming both the 1.13 floor and the version it found.
+  CocoaPods **1.16.2** is the verified version (1.13.0 and 1.16.2 both pass).
+- For `device` / `testflight`: a pinned EAS CLI, `eas-cli@27.11.0`, invoked
+  as `npx eas-cli@27.11.0` (not an unpinned `npx eas`). The build runs on
+  Expo Application Services. There is no live fallback to a floating CLI.
 
 ## Apple prerequisites (signed paths only)
 
@@ -49,7 +55,13 @@ signing material managed by EAS:
   `ITSAppUsesNonExemptEncryption: false` in `apps/mobile/app.json`.
 
 Provide credentials through your environment, or a file referenced by
-`HITLY_IOS_SIGNING_ENV` (sourced by the script, contents never printed):
+`HITLY_IOS_SIGNING_ENV`. When that variable is set, the script loads that
+file **before** it tests whether `EXPO_TOKEN` is present, so a token that
+exists only in the file passes the gate. The file is assignment lines
+(`KEY=value` or `export KEY=value`), which are shell-quoted and then
+sourced; it is not run as an arbitrary shell script, and its contents are
+never printed. If the variable is set and the file is missing, the script
+exits naming `HITLY_IOS_SIGNING_ENV` and does not print the file:
 
 ```
 export EXPO_TOKEN=<your-token-from-expo>
@@ -91,11 +103,31 @@ scripts/build-ios.sh testflight
 ```
 
 Steps the script runs: a dirty-tree gate (override with `HITLY_ALLOW_DIRTY=1`),
-the credential gate for the signed targets, then either a local path
-(`CI=1 npx expo prebuild --platform ios --no-install --clean`, restore
-`apps/mobile/package.json`, `xcodebuild` with `CODE_SIGNING_ALLOWED=NO`) or a
-remote EAS build (`npx eas build --platform ios --profile <profile>
---non-interactive`).
+the credential gate for the signed targets (signing env sourced first, then
+`EXPO_TOKEN`), then either a local path or a remote EAS build.
+
+Local path, for `simulator` and `unsigned`:
+
+1. CocoaPods preflight (`pod --version`, minimum 1.13) before prebuild.
+2. For `simulator` only, a runtime preflight (`xcrun simctl list devices available`).
+   If the requested device is not listed, the script fails and does not run
+   `xcodebuild`.
+3. `CI=1 npx expo prebuild --platform ios --no-install --clean`, then restore
+   `apps/mobile/package.json`.
+4. `pod install` in `apps/mobile/ios` (prebuild is `--no-install`, so the
+   `.xcworkspace` does not exist until this step). A failed `pod install`
+   exits non-zero and the error names `pod install`.
+5. `xcodebuild` with `CODE_SIGNING_ALLOWED=NO`. Caller `CC`, `CXX`, and `LD`
+   are unset for that process so a foreign compiler cannot replace Apple
+   clang. `DEVELOPER_DIR` is forwarded verbatim when it is set.
+
+The simulator `xcodebuild` also passes a concrete `-destination` and
+`ONLY_ACTIVE_ARCH=YES`. The default destination is
+`platform=iOS Simulator,name=iPhone 16 Pro` (no OS version is pinned).
+Override it with `HITLY_IOS_DESTINATION`.
+
+Remote path, for `device` and `testflight`:
+`npx eas-cli@27.11.0 build --platform ios --profile <profile> --non-interactive`.
 
 Output lands under `apps/mobile/dist-ios/` (gitignored):
 
@@ -103,17 +135,34 @@ Output lands under `apps/mobile/dist-ios/` (gitignored):
   `CFBundleVersion` stamped from the build number.
 - `device.ipa` and `testflight.ipa` for the EAS targets.
 
+The simulator `.app` is a **Debug** build. It has no embedded `main.jsbundle`.
+A JavaScript UI needs Metro (`npx expo start`); opening the `.app` alone does
+not load the JS bundle. Unsigned Debug builds also surface keychain and
+entitlement errors in LogBox. Those LogBox messages are expected: there is no
+signing identity and no keychain entitlement on this path.
+
 Build numbers:
 
 - Local builds derive `CFBundleVersion` from `git rev-list --count HEAD`, so
   later commits always produce higher build numbers. Override with
-  `HITLY_IOS_BUILD_NUMBER`.
+  `HITLY_IOS_BUILD_NUMBER`. That `git rev-list --count HEAD` default is
+  unchanged. Before trusting the count, the script checks
+  `git rev-parse --is-shallow-repository`. On a shallow clone, with
+  `HITLY_IOS_BUILD_NUMBER` unset, it warns on stderr that the shallow clone
+  count is not the full history and names `HITLY_IOS_BUILD_NUMBER` as the
+  override.
 - EAS builds use `autoIncrement: true` in `apps/mobile/eas.json` for the
-  `preview` and `production` profiles; the short version stays
-  `expo.version` in `apps/mobile/app.json`.
+  `preview` and `production` profiles. `cli.appVersionSource` is `"local"`,
+  and the short version stays `expo.version` in `apps/mobile/app.json`.
+  With that local source, EAS `autoIncrement` on `preview` / `production`
+  may rewrite `apps/mobile/app.json` and leave the worktree dirty. The next
+  `scripts/build-ios.sh` run then refuses until that `app.json` change is
+  committed or `HITLY_ALLOW_DIRTY=1` is set. The script does not auto-commit
+  `app.json`.
 
 Other options: `HITLY_REPO_ROOT` (repo root override), `HITLY_ALLOW_DIRTY=1`,
-`HITLY_IOS_SIGNING_ENV`.
+`HITLY_IOS_SIGNING_ENV`, `HITLY_IOS_DESTINATION`, `HITLY_IOS_BUILD_NUMBER`,
+`DEVELOPER_DIR`.
 
 ## Push (unchanged client path)
 
