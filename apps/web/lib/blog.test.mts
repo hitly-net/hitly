@@ -269,13 +269,13 @@ test('feed route serves the RSS body with the right content type', async () => {
 
 test('blog:new scaffolds a draft-safe post, refuses overwrite, then cleans up', () => {
   const script = join(REPO_ROOT, 'scripts', 'new-blog-post.mjs')
-  const title = 'Zephyr Temporary Scaffold Check'
-  const file = join(BLOG_DIR, 'zephyr-temporary-scaffold-check.mdx')
+  const title = 'Temporary Scaffold Check'
+  const file = join(BLOG_DIR, 'temporary-scaffold-check.mdx')
   try {
     execFileSync('node', [script, title, '--draft'], { cwd: WEB_ROOT, stdio: 'pipe' })
     assert.ok(existsSync(file), 'scaffold did not write the file')
     const raw = readFileSync(file, 'utf8')
-    assert.match(raw, /^title: "Zephyr Temporary Scaffold Check"$/m)
+    assert.match(raw, /^title: "Temporary Scaffold Check"$/m)
     assert.match(raw, /^draft: true$/m)
     assert.match(raw, /^date: \d{4}-\d{2}-\d{2}$/m)
     // Overwrite must fail loudly.
