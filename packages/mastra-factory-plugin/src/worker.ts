@@ -36,12 +36,14 @@ function optionalString(value: unknown): string | undefined {
 /**
  * Backstop reconciliation between HITLy (authority) and the Factory session.
  *
- * HITLy pushes decisions to the resume route; this poller guarantees the
- * session still converges when a callback is lost (Factory restart, network
- * partition, exhausted retries). It only READS authoritative state and feeds
- * it through the same applyDecision matrix as the callback path — the poller
- * itself decides nothing, so expiry/pending can never be turned into
- * approval here either.
+ * HITLy pushes decisions to the resume route, but its callback retries last
+ * about a second — a Factory restart outlives them and the row lands in
+ * `failed_resume` with the human decision recorded. This poller guarantees
+ * the session still converges when a callback is lost (Factory restart,
+ * network partition, exhausted retries), including those `failed_resume`
+ * rows. It only READS authoritative state and feeds it through the same
+ * applyDecision matrix as the callback path — the poller itself decides
+ * nothing, so expiry/pending can never be turned into approval here either.
  */
 export class HitlyReconciler {
   private readonly deps: ReconcilerDeps
@@ -93,8 +95,14 @@ export class HitlyReconciler {
         continue
       }
 
-      if (state.status === 'pending' || state.status === 'failed_resume') {
-        // Still awaiting a human (or a retry HITLy owns). Nothing to do.
+      if (state.status === 'pending') {
+        // Still awaiting a human. Nothing to do; stay open for the next tick.
+        continue
+      }
+      if (state.status === 'failed_resume' && state.decision === null) {
+        // Delivery failed before HITLy recorded a decision, and HITLy does
+        // not auto-retry failed_resume — stay open so a late decision (or a
+        // manual Retry-Resume that records one) still converges.
         continue
       }
 

@@ -51,7 +51,8 @@ export interface HitlyPluginOptions {
       answer?: string
     }>
     getIntegrationConfig?(): Promise<{ gates: Record<Gate, boolean>; mergeAfterAccept: boolean }>
-    listPending?(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>>
+    /** Restart re-adoption feed: open gate approvals (pending + failed_resume) with create-time metadata. */
+  listPending?(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>>
   }
   seams: SessionTargetSeams
   applySeams?: ApplySeams
@@ -273,8 +274,9 @@ export class HitlyMastraFactoryPlugin {
    */
   async reconcileNow(): Promise<{ checked: number; applied: number; errors: number; configRefreshed: boolean }> {
     // After a Factory restart the in-process open set is empty; re-seed it
-    // from HITLy's pending list once so decisions made while we were down
-    // still converge.
+    // from HITLy's open list (pending + failed_resume rows, whose callbacks
+    // exhausted HITLy's ~1s retries) once, so decisions made while we were
+    // down still converge.
     if (!this.seededFromHitly && this.options.client.listPending) {
       this.seededFromHitly = true
       try {

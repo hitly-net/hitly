@@ -145,8 +145,10 @@ async function dispatchClosed(snapshot: ApprovalSnapshot, deps: ApplyDeps, statu
  * Apply a HITLy decision (or closure event) to the Factory session.
  *
  * Invariants (contract-tested):
- * - Only `decided` drives decisions; `expired`/`cancelled` drive closure;
- *   `pending` and `failed_resume` NEVER count as approval.
+ * - Only HITLy-authoritative decisions drive action: `decided`, or
+ *   `failed_resume` whose decision record is non-null (delivery failed, the
+ *   human decided). `pending` NEVER counts as approval; `expired`/`cancelled`
+ *   drive closure only.
  * - A review reject never merges, under any config. Merge only after an
  *   explicit accept AND mergeAfterAccept.
  * - An empty answer is never delivered; nothing is ever invented.
@@ -159,8 +161,12 @@ export async function applyDecision(snapshot: ApprovalSnapshot, deps: ApplyDeps)
   if (!snapshot.sessionId) {
     return { applied: false, reason: 'missing session identity — refusing to act' }
   }
-  if (snapshot.status === 'pending' || snapshot.status === 'failed_resume') {
-    return { applied: false, reason: `status ${snapshot.status} does not authorize any action` }
+  if (snapshot.status === 'pending') {
+    return { applied: false, reason: 'status pending does not authorize any action' }
+  }
+  if (snapshot.status === 'failed_resume' && snapshot.decision === null) {
+    // Delivery failed before HITLy recorded a decision — nothing to converge to.
+    return { applied: false, reason: 'failed_resume without a decision does not authorize any action' }
   }
   if (snapshot.decision === 'ignore' || snapshot.decision === 'cancel') {
     // Acknowledged no-op: the session keeps running untouched; the HITLy
@@ -173,8 +179,12 @@ export async function applyDecision(snapshot: ApprovalSnapshot, deps: ApplyDeps)
     return { applied: false, reason: 'decision already applied for this approval' }
   }
 
+  // A `failed_resume` row carries a real human decision whose callback
+  // delivery exhausted its retries (~1s of attempts). The authority read
+  // joins the decision record, so it is as safe to converge as `decided` —
+  // and shares its idempotency key, so a later manual Retry-Resume dedupes.
   const outcome =
-    snapshot.status === 'decided'
+    snapshot.status === 'decided' || (snapshot.status === 'failed_resume' && snapshot.decision !== null)
       ? await dispatchDecided(snapshot, deps)
       : await dispatchClosed(snapshot, deps, snapshot.status === 'expired' ? 'expired' : 'was cancelled')
 

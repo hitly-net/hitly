@@ -127,7 +127,7 @@ export class HitlyClient {
     return state
   }
 
-  /** Open gate approvals for restart reconciliation, with create-time metadata. */
+  /** Open gate approvals for restart reconciliation (unexpired pending + decided-but-undelivered failed_resume), with create-time metadata. */
   async listPending(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>> {
     const { status, body } = await this.request(`/api/v1/projects/${encodeURIComponent(this.projectId)}/integrations/mastra-factory/approvals`, {
       method: 'GET',

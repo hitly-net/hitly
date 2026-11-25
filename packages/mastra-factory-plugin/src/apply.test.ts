@@ -176,11 +176,52 @@ test('pending status is never applied — only decided/expired/cancelled drive a
   assert.equal(deps.calls.length, 0)
 })
 
-test('failed_resume never counts as approval', async () => {
-  const deps = fakeDeps({ mergeAfterAccept: true })
-  const outcome = await applyDecision(snapshot('review', { status: 'failed_resume', decision: 'accept', prUrl: 'https://github.com/hitly-net/hitly/pull/1' }), deps)
-  assert.equal(outcome.applied, false)
+test('failed_resume with a recorded decision converges like decided', async () => {
+  const deps = fakeDeps({ mergeAfterAccept: false })
+  const outcome = await applyDecision(
+    snapshot('review', { status: 'failed_resume', decision: 'accept', headSha: 'abc123', prUrl: 'https://github.com/hitly-net/hitly/pull/1' }),
+    deps,
+  )
+  assert.equal(outcome.applied, true)
+  assert.deepEqual(deps.calls.map((c) => c.kind), ['merge-ready', 'signal'])
   assert.equal(deps.mergeAttempts, 0)
+})
+
+test('failed_resume without a decision is never applied — no approval to converge to', async () => {
+  for (const gate of ['plan', 'review', 'ask_user'] as const) {
+    const deps = fakeDeps({ mergeAfterAccept: true })
+    const outcome = await applyDecision(snapshot(gate, { status: 'failed_resume', decision: null }), deps)
+    assert.equal(outcome.applied, false, gate)
+    assert.equal(deps.calls.length, 0, gate)
+    assert.equal(deps.mergeAttempts, 0, gate)
+  }
+})
+
+test('failed_resume reject never merges, even with mergeAfterAccept on', async () => {
+  const deps = fakeDeps({ mergeAfterAccept: true })
+  const outcome = await applyDecision(
+    snapshot('review', { status: 'failed_resume', decision: 'reject', prUrl: 'https://github.com/hitly-net/hitly/pull/1' }),
+    deps,
+  )
+  assert.equal(outcome.applied, true)
+  assert.equal(deps.mergeAttempts, 0)
+})
+
+test('failed_resume shares the (approvalId, decision) idempotency key with decided', async () => {
+  const appliedKeys: string[] = []
+  const deps = fakeDeps()
+  deps.alreadyApplied = async (key) => appliedKeys.includes(key)
+  deps.markApplied = async (key) => {
+    appliedKeys.push(key)
+  }
+  // Callback lands as decided first; a later poll sees the same decision on
+  // the same row (or vice versa via Retry-Resume) and must dedupe.
+  const first = await applyDecision(snapshot('plan', { decision: 'accept' }), deps)
+  const second = await applyDecision(snapshot('plan', { status: 'failed_resume', decision: 'accept' }), deps)
+  assert.equal(first.applied, true)
+  assert.equal(second.applied, false)
+  assert.match(second.reason ?? '', /already/i)
+  assert.equal(deps.calls.filter((c) => c.kind === 'parked').length, 1)
 })
 
 test('applyDecision is idempotent per (approvalId, decision)', async () => {

@@ -82,6 +82,37 @@ test('pending approvals are never applied and stay open for later ticks', async 
   assert.equal(h.calls, 2)
 })
 
+test('failed_resume with a recorded decision converges — HITLy has no auto-retry', async () => {
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'failed_resume', decision: 'accept', metadata: {} }),
+  })
+  const result = await h.reconciler.tick()
+  assert.equal(result.applied, 1)
+  assert.equal(h.snapshots.length, 1)
+  assert.equal(h.snapshots[0]!.status, 'failed_resume')
+  assert.equal(h.snapshots[0]!.decision, 'accept')
+  assert.deepEqual(h.closed, ['apv_1'])
+})
+
+test('failed_resume without a decision stays open until one exists', async () => {
+  let decided = false
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () =>
+      decided
+        ? { id: 'apv_1', status: 'failed_resume', decision: 'accept', metadata: {} }
+        : { id: 'apv_1', status: 'failed_resume', decision: null, metadata: {} },
+  })
+  await h.reconciler.tick()
+  assert.equal(h.snapshots.length, 0)
+  assert.deepEqual(h.closed, [])
+  decided = true
+  const second = await h.reconciler.tick()
+  assert.equal(second.applied, 1)
+  assert.deepEqual(h.closed, ['apv_1'])
+})
+
 test('expiry reaches the apply matrix as closure — the matrix decides, never the poller', async () => {
   const h = harness({
     approvals: [open('plan')],

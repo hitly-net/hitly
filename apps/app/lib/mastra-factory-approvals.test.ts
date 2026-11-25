@@ -1,9 +1,16 @@
-import { describe, it } from 'node:test'
+import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { NextResponse } from 'next/server'
+import { eq } from 'drizzle-orm'
+import { approvals, decisionRecords, projects, workspaces } from '@hitly/db/schema'
+import { db } from './db'
+import { newId } from './ids'
+import { encodeTenantJson } from './tenant-crypto'
 import {
+  getMastraFactoryApprovalState,
   handleMastraFactoryApprovalsList,
   handleMastraFactoryApprovalGet,
+  listOpenMastraFactoryApprovals,
   type MastraFactoryApprovalsDeps,
   type MastraFactoryApprovalState,
 } from './mastra-factory-approvals'
@@ -145,5 +152,114 @@ describe('GET /api/v1/projects/:id/integrations/mastra-factory/approvals/:approv
     const response = await handleMastraFactoryApprovalGet(get('approvals/apv_zzz', `Bearer ${KEY}`), 'prj_x', 'apv_zzz', d)
     assert.equal(response.status, 404)
     assert.ok(d.calls.includes('readState'))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Feed semantics (live Postgres): the failed_resume convergence contract.
+// ---------------------------------------------------------------------------
+
+const wspId = newId('wsp')
+const prjId = newId('prj')
+
+function gateEnvelope(gate: string) {
+  return { origin: { resumeHandle: { metadata: { 'net.hitly/gate': gate, 'net.hitly/factory/session-id': 'sess-1' } } } }
+}
+
+async function plant(args: {
+  id: string
+  status: 'pending' | 'decided' | 'cancelled' | 'failed_resume'
+  actionName: string
+  gate?: string
+  expiresAt?: Date | null
+  decision?: 'accept' | 'reject'
+}) {
+  await db!
+    .insert(approvals)
+    .values({
+      id: args.id.slice(0, 36),
+      workspaceId: wspId,
+      projectId: prjId,
+      plugin: 'mastra-factory',
+      status: args.status,
+      actionName: args.actionName,
+      envelope: await encodeTenantJson(wspId, args.gate ? gateEnvelope(args.gate) : { origin: {} }),
+      origin: {},
+      expiresAt: args.expiresAt === undefined ? new Date(Date.now() + 3_600_000) : args.expiresAt,
+      createdAt: new Date(),
+    })
+
+  if (args.decision) {
+    await db!
+      .insert(decisionRecords)
+      .values({
+        id: newId('dec').slice(0, 36),
+        workspaceId: wspId,
+        approvalId: args.id.slice(0, 36),
+        actorUserId: null,
+        decision: args.decision,
+        payload: await encodeTenantJson(wspId, { decision: args.decision }),
+        createdAt: new Date(),
+      })
+      
+  }
+}
+
+describe('mastra-factory feed and authority (live Postgres)', { skip: !db }, () => {
+  const ids = ['apr_pend_open', 'apr_pend_stale', 'apr_fr_decided', 'apr_fr_undecided', 'apr_decided', 'apr_nogate'].map(
+    (n) => `${n}_${Date.now()}`.slice(0, 36),
+  )
+  const [pendOpen, pendStale, frDecided, frUndecided, decided, nogate] = ids
+
+  before(async () => {
+    await db!.insert(workspaces).values({ id: wspId, name: 'MF Feed', slug: `mf-feed-${Date.now()}` })
+    await db!.insert(projects).values({
+      id: prjId,
+      workspaceId: wspId,
+      name: 'MF Feed Project',
+      plugin: 'mastra-factory',
+      credentials: {},
+      evidenceSinkType: 'none',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    const past = new Date(Date.now() - 60_000)
+    await plant({ id: pendOpen, status: 'pending', actionName: 'mastra-factory/plan', gate: 'plan' })
+    await plant({ id: pendStale, status: 'pending', actionName: 'mastra-factory/plan', gate: 'plan', expiresAt: past })
+    // A human decided while the Factory was down; retries exhausted. The
+    // deadline has since passed — it must STILL converge.
+    await plant({ id: frDecided, status: 'failed_resume', actionName: 'mastra-factory/review', gate: 'review', expiresAt: past, decision: 'accept' })
+    await plant({ id: frUndecided, status: 'failed_resume', actionName: 'mastra-factory/plan', gate: 'plan', expiresAt: past })
+    await plant({ id: decided, status: 'decided', actionName: 'mastra-factory/plan', gate: 'plan', decision: 'accept' })
+    await plant({ id: nogate, status: 'pending', actionName: 'some-other-plugin/action' })
+  })
+
+  after(async () => {
+    if (!db) return
+    await db.delete(approvals).where(eq(approvals.workspaceId, wspId))
+    await db.delete(decisionRecords).where(eq(decisionRecords.workspaceId, wspId))
+    await db.delete(projects).where(eq(projects.id, prjId))
+    await db.delete(workspaces).where(eq(workspaces.id, wspId))
+  })
+
+  it('feed carries unexpired pending AND decided-but-undelivered failed_resume rows, never the rest', async () => {
+    const { approvals: feed } = await listOpenMastraFactoryApprovals({ workspaceId: wspId, projectId: prjId })
+    const byId = new Map(feed.map((a) => [a.id, a]))
+    assert.equal(byId.has(pendOpen.slice(0, 36)), true, 'open pending belongs in the feed')
+    assert.equal(byId.has(frDecided.slice(0, 36)), true, 'decided-but-undelivered failed_resume must converge')
+    assert.equal(byId.has(frUndecided.slice(0, 36)), true, 'failed_resume without a decision stays in the feed until it converges')
+    assert.equal(byId.has(pendStale.slice(0, 36)), false, 'a past-deadline pending row is expiry, not reconciliation')
+    assert.equal(byId.has(decided.slice(0, 36)), false, 'already-delivered decisions are not reopened')
+    assert.equal(byId.has(nogate.slice(0, 36)), false, 'gate-less rows are not this plugin\'s approvals')
+    assert.equal(byId.get(frDecided.slice(0, 36))!.gate, 'review')
+    assert.equal(byId.get(frDecided.slice(0, 36))!.metadata['net.hitly/factory/session-id'], 'sess-1')
+  })
+
+  it('authority reports a failed_resume row with its recorded decision so the reconciler can converge it', async () => {
+    const state = await getMastraFactoryApprovalState({ workspaceId: wspId, projectId: prjId, approvalId: frDecided.slice(0, 36) })
+    assert.ok(state)
+    assert.equal(state.status, 'failed_resume')
+    assert.equal(state.decision, 'accept')
+    assert.equal(state.metadata['net.hitly/gate'], 'review')
   })
 })

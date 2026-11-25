@@ -10,7 +10,7 @@ import type { ResumeResponse } from '@hitly/core'
 import { buildSignatureHeaders, pickActiveSigningKey, type SigningKeyEntry } from './sign.ts'
 import { readCbAuthToken, redactSecrets } from './secrets.ts'
 
-/** Default in-process backoff schedule (ms). Full ~24h fan-out uses host failed_resume retries. */
+/** Default in-process backoff schedule (ms). Rows exhausting it land in `failed_resume`; convergence is the host's job (scheduled retry of the resume, or a reconciler that re-reads the recorded decision — e.g. @hitly/mastra-factory-plugin). */
 export const DEFAULT_BACKOFF_MS = [0, 200, 800] as const
 
 /**

@@ -55,7 +55,7 @@ async function decodeEnvelope(workspaceId: string, envelope: Record<string, unkn
   return (await decodeTenantJson(workspaceId, envelope)) as Record<string, unknown> | undefined
 }
 
-/** Open (pending, unexpired) mastra-factory approvals for the project, with gate + session identity. */
+/** Open mastra-factory approvals for the project — unexpired pending rows plus decided-but-undelivered (`failed_resume`) rows — with gate + session identity. */
 export async function listOpenMastraFactoryApprovals(args: { workspaceId: string; projectId: string }) {
   const now = new Date()
   const rows = await requireDb()
@@ -70,7 +70,10 @@ export async function listOpenMastraFactoryApprovals(args: { workspaceId: string
         eq(approvals.projectId, args.projectId),
         eq(approvals.workspaceId, args.workspaceId),
         inArrayOpen(),
-        or(isNull(approvals.expiresAt), gte(approvals.expiresAt, now)),
+        // The deadline only gates rows still awaiting a human; a
+        // failed_resume row already holds that human's decision, which must
+        // converge even after the deadline passed.
+        or(eq(approvals.status, 'failed_resume'), isNull(approvals.expiresAt), gte(approvals.expiresAt, now)),
       ),
     )
     .orderBy(desc(approvals.createdAt), desc(approvals.id))
@@ -89,9 +92,11 @@ export async function listOpenMastraFactoryApprovals(args: { workspaceId: string
 }
 
 function inArrayOpen() {
-  // AWAITING_HUMAN_APPROVAL_STATUSES is ['pending']; kept as the shared
-  // constant so a future widening of "awaiting human" flows through here too.
-  return inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES])
+  // Two feeds: rows still awaiting a human (AWAITING_HUMAN_APPROVAL_STATUSES
+  // is ['pending']) plus `failed_resume` rows — a human decided but the
+  // callback exhausted HITLy's ~1s retries, and HITLy has no auto-retry, so
+  // the plugin's reconciler is what converges them after a Factory restart.
+  return inArray(approvals.status, [...AWAITING_HUMAN_APPROVAL_STATUSES, 'failed_resume'])
 }
 
 /** Authoritative per-approval state (read-time expiry settled), or null when not in the project. */
