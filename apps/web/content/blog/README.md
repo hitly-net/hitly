@@ -44,7 +44,7 @@ length or a malformed `date` fails the build rather than shipping a broken page.
   verbatim quotes with the page linked). Regulator dates must be read from the
   official page — do not invent or approximate publication dates.
 - Allowed external domains (enforced by tests): `fca.org.uk`, `esma.europa.eu`,
-  `eba.europa.eu`, `eiopa.europa.eu`, `eur-lex.europa.eu`, `artificialintelligenceact.eu`,
+  `eba.europa.eu`, `eiopa.europa.eu`, `eur-lex.europa.eu`,
   `ec.europa.eu`, `europa.eu`, `digital-strategy.ec.europa.eu`. Internal links use
   site-relative paths (`/docs/trace`, not `https://hitly.net/docs/trace`).
 - No code, imports, or JSX in post bodies (enforced by tests): plain markdown,

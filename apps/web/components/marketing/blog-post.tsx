@@ -34,12 +34,6 @@ export function PostList() {
               <time dateTime={post.data.date}>{formatPostDate(post.data.date)}</time>
             </p>
             <p className="mt-2 leading-7 text-zinc-600 dark:text-zinc-400">{post.data.description}</p>
-            <a
-              href={post.url.replace(/\/$/, '')}
-              className="mt-2 inline-block text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-50"
-            >
-              Read the post
-            </a>
           </article>
         </li>
       ))}

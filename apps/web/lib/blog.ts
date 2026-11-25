@@ -55,7 +55,8 @@ export function postUrl(post: Pick<BlogPost, 'url'>): string {
  * tests. Items carry title, link, guid (permalink), description, dates.
  */
 export function buildRssFeed(): string {
-  const items = publishedPosts()
+  const posts = publishedPosts()
+  const items = posts
     .map((post) => {
       const link = postUrl(post)
       return [
@@ -65,11 +66,20 @@ export function buildRssFeed(): string {
         `      <guid isPermaLink="true">${escapeXml(link)}</guid>`,
         `      <description>${escapeXml(post.data.description)}</description>`,
         `      <pubDate>${escapeXml(toRfc822(post.data.date))}</pubDate>`,
-        `      <lastBuildDate>${escapeXml(toRfc822(postModified(post.data)))}</lastBuildDate>`,
         '    </item>',
       ].join('\n')
     })
     .join('\n')
+
+  // RSS 2.0 puts lastBuildDate on the channel, not on items: the most recent
+  // modification across the corpus (ISO dates compare correctly as strings).
+  const channelLines = [
+    '    <language>en-gb</language>',
+  ]
+  if (posts.length) {
+    const newest = posts.map((post) => postModified(post.data)).reduce((a, b) => (a > b ? a : b))
+    channelLines.push(`    <lastBuildDate>${escapeXml(toRfc822(newest))}</lastBuildDate>`)
+  }
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -78,7 +88,7 @@ export function buildRssFeed(): string {
     '    <title>HITLy™ Blog</title>',
     `    <link>${escapeXml(absoluteUrl(BLOG_INDEX_PATH))}</link>`,
     '    <description>Notes from the HITLy™ team on human oversight for AI agents: approvals, audit trails, and the regulators watching agentic AI.</description>',
-    '    <language>en-gb</language>',
+    ...channelLines,
     `    <atom:link href="${escapeXml(absoluteUrl(FEED_PATH))}" rel="self" type="application/rss+xml"/>`,
     items,
     '  </channel>',
@@ -92,6 +102,15 @@ const PUBLISHER = {
   name: 'HITLy',
   url: SITE_URL,
 } as const
+
+/**
+ * Serialize a JSON-LD document for embedding in a <script> tag. Escaping "<"
+ * as \u003c so that no string value can close the script element early,
+ * whatever the frontmatter says.
+ */
+export function jsonLdScript(data: Record<string, unknown>): string {
+  return JSON.stringify(data).replace(/</g, '\\u003c')
+}
 
 /** Schema.org BlogPosting for one post (rendered as a JSON-LD script tag). */
 export function blogPostJsonLd(post: BlogPost): Record<string, unknown> {

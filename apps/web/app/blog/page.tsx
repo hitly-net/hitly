@@ -1,6 +1,6 @@
 import { SiteFooter, SiteHeader } from '@/components/marketing/site-chrome'
 import { BlogDisclaimer, PostList } from '@/components/marketing/blog-post'
-import { blogIndexJsonLd, BLOG_INDEX_PATH } from '@/lib/blog'
+import { blogIndexJsonLd, BLOG_INDEX_PATH, jsonLdScript } from '@/lib/blog'
 import { absoluteUrl, marketingMeta } from '@/lib/site'
 import type { Metadata } from 'next'
 
@@ -39,7 +39,7 @@ export default function BlogIndexPage() {
       <SiteFooter />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(blogIndexJsonLd()) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(blogIndexJsonLd()) }}
       />
     </>
   )

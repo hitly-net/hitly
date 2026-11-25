@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { getMDXComponents } from '@/components/mdx'
 import { BlogDisclaimer } from '@/components/marketing/blog-post'
 import { SiteFooter, SiteHeader } from '@/components/marketing/site-chrome'
-import { blogPostJsonLd, blogPostMeta, formatPostDate } from '@/lib/blog'
+import { blogPostJsonLd, blogPostMeta, formatPostDate, jsonLdScript } from '@/lib/blog'
 import { blogSource, publishedPosts } from '@/lib/source'
 import type { Metadata } from 'next'
 
@@ -46,7 +46,7 @@ export default async function BlogPostPage(props: { params: Promise<{ slug?: str
       <SiteFooter />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(blogPostJsonLd(page)) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(blogPostJsonLd(page)) }}
       />
     </>
   )

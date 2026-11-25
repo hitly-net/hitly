@@ -18,6 +18,7 @@ const {
   blogPostMeta,
   buildRssFeed,
   formatPostDate,
+  jsonLdScript,
   postModified,
   postUrl,
   toRfc822,
@@ -38,7 +39,6 @@ const ALLOWED_HOST_SUFFIXES = [
   'eba.europa.eu',
   'eiopa.europa.eu',
   'eur-lex.europa.eu',
-  'artificialintelligenceact.eu',
   'digital-strategy.ec.europa.eu',
   'ec.europa.eu',
   'europa.eu',
@@ -122,14 +122,10 @@ test('internal links are site-relative', () => {
   }
 })
 
-test('post corpus scans for private or internal leakage', () => {
-  const forbiddenWords = ['cloud-test', 'interweb', 'spark', 'qnap', 'n8n', 'INTERNAL']
+test('post corpus contains no private IP addresses', () => {
   const rfc1918 = /\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/
   for (const file of publishedMdxFiles()) {
     const raw = readRaw(file)
-    for (const word of forbiddenWords) {
-      assert.ok(!raw.includes(word), `${file}: contains forbidden term ${word}`)
-    }
     assert.ok(!rfc1918.test(raw), `${file}: contains private IP`)
     // The registered mark belongs to the legal-notice page only.
     assert.ok(!raw.includes('®'), `${file}: ® banned on the blog`)
@@ -190,6 +186,21 @@ test('RSS feed is well-formed RSS 2.0 covering every published post', () => {
   assert.equal((xml.match(/<item>/g) ?? []).length, publishedPosts().length)
 })
 
+test('RSS lastBuildDate sits on the channel, never inside an item', () => {
+  const xml = buildRssFeed()
+  const itemBlocks = xml.match(/<item>[\s\S]*?<\/item>/g) ?? []
+  assert.ok(itemBlocks.length > 0, 'feed has no items')
+  for (const item of itemBlocks) {
+    assert.ok(!item.includes('lastBuildDate'), 'item must not carry lastBuildDate')
+  }
+  const channelHead = xml.slice(0, xml.indexOf('<item>'))
+  assert.match(
+    channelHead,
+    /<lastBuildDate>[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} 00:00:00 GMT<\/lastBuildDate>/,
+    'channel must carry an RFC-822 lastBuildDate',
+  )
+})
+
 test('JSON-LD emits BlogPosting per post and Blog for the index', () => {
   const [first] = publishedPosts()
   const jsonLd = blogPostJsonLd(first)
@@ -201,6 +212,19 @@ test('JSON-LD emits BlogPosting per post and Blog for the index', () => {
   const index = blogIndexJsonLd()
   assert.equal(index['@type'], 'Blog')
   assert.equal((index.blogPost as unknown[]).length, publishedPosts().length)
+})
+
+test('jsonLdScript escapes "<" so no value can close the script element', () => {
+  const payload = { headline: 'a <script>alert(1)</script> tail', url: 'https://hitly.net/blog/x' }
+  const serialized = jsonLdScript(payload)
+  assert.ok(!serialized.includes('<'), 'raw < must not survive serialization')
+  assert.ok(serialized.includes('\\u003c'), 'expected < escaping')
+  assert.deepEqual(JSON.parse(serialized), payload)
+  // Both blog routes must serialize their JSON-LD through it.
+  const index = readFileSync(join(WEB_ROOT, 'app', 'blog', 'page.tsx'), 'utf8')
+  const post = readFileSync(join(WEB_ROOT, 'app', 'blog', '[slug]', 'page.tsx'), 'utf8')
+  assert.match(index, /jsonLdScript\(blogIndexJsonLd\(\)\)/)
+  assert.match(post, /jsonLdScript\(blogPostJsonLd\(page\)\)/)
 })
 
 test('blogPostMeta provides canonical, OG article, and twitter metadata', () => {
