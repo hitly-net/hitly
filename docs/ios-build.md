@@ -11,14 +11,15 @@ with a clean `expo prebuild` on every run and restores
 
 | Target | What it produces | Credentials |
 | --- | --- | --- |
-| `simulator` (default) | Unsigned `.app` for the iOS simulator (local, via Xcode) | none |
-| `unsigned` | Signing-disabled device `.app` for local ad-hoc-style review (local, via Xcode) | none |
+| `simulator` (default) | Ad-hoc signed Debug `.app` for the iOS simulator (`CODE_SIGN_IDENTITY=-`, local, via Xcode) | none |
+| `unsigned` | Signing-disabled device `.app` for local review (local, via Xcode) | none |
 | `device` | Signed internal-distribution `.ipa` built on EAS (`preview` profile) | Expo credentials |
 | `testflight` | Store-profile `.ipa` for App Store Connect (EAS `production` profile) | Expo credentials |
 
-`simulator` and `unsigned` run locally with signing disabled: they work with
-no Apple credentials of any kind — no certificate, no provisioning profile,
-no `EXPO_TOKEN` — on any Mac with Xcode. `device` and `testflight` sign
+`simulator` and `unsigned` run locally with no Apple credentials of any kind —
+no Apple team, no certificate, no provisioning profile, no `EXPO_TOKEN` — on
+any Mac with Xcode. `simulator` is ad-hoc signed (`CODE_SIGN_IDENTITY=-`).
+`unsigned` stays signing-disabled. `device` and `testflight` sign
 through EAS; both fail fast —
 before any install, prebuild, or remote build starts — when the documented
 credentials are missing, and never print secret values.
@@ -117,14 +118,25 @@ Local path, for `simulator` and `unsigned`:
 4. `pod install` in `apps/mobile/ios` (prebuild is `--no-install`, so the
    `.xcworkspace` does not exist until this step). A failed `pod install`
    exits non-zero and the error names `pod install`.
-5. `xcodebuild` with `CODE_SIGNING_ALLOWED=NO`. Caller `CC`, `CXX`, and `LD`
-   are unset for that process so a foreign compiler cannot replace Apple
-   clang. `DEVELOPER_DIR` is forwarded verbatim when it is set.
+5. `xcodebuild`. Caller `CC`, `CXX`, and `LD` are unset for that process so a
+   foreign compiler cannot replace Apple clang. Caller `CODE_SIGNING_ALLOWED`
+   and `CODE_SIGN_IDENTITY` are unset as well, so a leftover environment
+   cannot override the settings below. `DEVELOPER_DIR` is forwarded verbatim
+   when it is set.
+   - `simulator` passes `CODE_SIGN_IDENTITY=-` (ad-hoc). It does not pass
+     `CODE_SIGNING_ALLOWED=NO`, and it does not need an Apple team.
+   - `unsigned` passes `CODE_SIGNING_ALLOWED=NO`.
 
 The simulator `xcodebuild` also passes a concrete `-destination` and
 `ONLY_ACTIVE_ARCH=YES`. The default destination is
 `platform=iOS Simulator,name=iPhone 16 Pro` (no OS version is pinned).
 Override it with `HITLY_IOS_DESTINATION`.
+
+After the simulator `.app` is copied to `dist-ios/simulator/`, the script
+runs `codesign -d --entitlements` on that shipped bundle (not only the
+`derived/` copy). The dump must contain `keychain-access-groups`. If it does
+not, the script exits non-zero and names the entitlement. This check runs
+before the `CFBundleVersion` stamp.
 
 Remote path, for `device` and `testflight`:
 `npx eas-cli@27.11.0 build --platform ios --profile <profile> --non-interactive`.
@@ -137,9 +149,18 @@ Output lands under `apps/mobile/dist-ios/` (gitignored):
 
 The simulator `.app` is a **Debug** build. It has no embedded `main.jsbundle`.
 A JavaScript UI needs Metro (`npx expo start`); opening the `.app` alone does
-not load the JS bundle. Unsigned Debug builds also surface keychain and
-entitlement errors in LogBox. Those LogBox messages are expected: there is no
-signing identity and no keychain entitlement on this path.
+not load the JS bundle. A packager-less Debug launch may still show a LogBox
+that no script URL was provided. That message is about Metro, not signing.
+
+The official simulator path is ad-hoc signed (`CODE_SIGN_IDENTITY=-`) so the
+`.app` embeds entitlements, including `keychain-access-groups` (needed by
+`expo-secure-store`). `codesign -d --entitlements` on the shipped
+`dist-ios/simulator/*.app` must show that key. A missing keychain entitlement
+on this path is a build failure. The simulator target does not need an Apple
+team, Apple ID, or `EXPO_TOKEN`.
+
+The `unsigned` target stays signing-disabled (`CODE_SIGNING_ALLOWED=NO`). It
+is not the official simulator path.
 
 Build numbers:
 

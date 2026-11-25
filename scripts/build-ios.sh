@@ -3,11 +3,12 @@
 # build-ios.sh — repeatable iOS binary builds for the HITLy Expo reviewer app.
 #
 # Targets:
-#   simulator   Local simulator .app for macOS review (default). No Apple
-#               credentials, no EXPO_TOKEN, no EAS account needed.
-#   unsigned    Local signing-disabled device .app (ad-hoc review on a
-#               device via tooling that accepts unsigned bundles).
-#               Also credential-free.
+#   simulator   Local simulator .app for macOS review (default). Ad-hoc
+#               signed with CODE_SIGN_IDENTITY=- so keychain-access-groups
+#               is embedded. No Apple team, no EXPO_TOKEN, no EAS account.
+#   unsigned    Local signing-disabled device .app (review on a device via
+#               tooling that accepts unsigned bundles). Credential-free.
+#               Still passes CODE_SIGNING_ALLOWED=NO.
 #   device      Signed internal-distribution build produced on EAS.
 #               Requires Expo credentials; fails fast when they are missing.
 #   testflight  Store-profile build produced on EAS for App Store Connect.
@@ -29,7 +30,10 @@
 #   EXPO_TOKEN               Expo access token; required for device/testflight.
 #                            May be supplied by HITLY_IOS_SIGNING_ENV.
 #   DEVELOPER_DIR            Forwarded verbatim to xcodebuild when set.
-#                            CC, CXX, and LD are never forwarded.
+#                            CC, CXX, LD, CODE_SIGNING_ALLOWED, and
+#                            CODE_SIGN_IDENTITY from the caller are never
+#                            forwarded. The script puts the signing settings
+#                            it wants on the xcodebuild argv.
 #
 # Artifacts land under apps/mobile/dist-ios/ (gitignored). The generated
 # apps/mobile/ios/ tree is gitignored too; prebuild owns it and reruns clean,
@@ -223,21 +227,48 @@ find_xcworkspace() {
   printf '%s' "${ws}"
 }
 
+# Prefer the system PlistBuddy when it exists. The hermetic tests ship a
+# PlistBuddy stub on PATH and do not have /usr/libexec/PlistBuddy, so the
+# stamp must still succeed there (the entitlements check is separate).
 stamp_build_number() {
-  local plist="$1" build_number="$2"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${build_number}" "${plist}" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${build_number}" "${plist}"
+  local plist="$1" build_number="$2" buddy
+  if [[ -x /usr/libexec/PlistBuddy ]]; then
+    buddy=/usr/libexec/PlistBuddy
+  else
+    buddy="$(command -v PlistBuddy 2>/dev/null || true)"
+  fi
+  [[ -n "${buddy}" ]] || die "PlistBuddy not found (see docs/ios-build.md)"
+  "${buddy}" -c "Set :CFBundleVersion ${build_number}" "${plist}" 2>/dev/null \
+    || "${buddy}" -c "Add :CFBundleVersion string ${build_number}" "${plist}"
 }
 
 # xcodebuild must not inherit a caller-supplied CC, CXX, or LD (those can
 # point at a non-Apple toolchain). DEVELOPER_DIR is inherited unchanged.
+# Caller CODE_SIGNING_ALLOWED and CODE_SIGN_IDENTITY are dropped too, so a
+# leftover CODE_SIGNING_ALLOWED=NO cannot override the argv settings.
 run_xcodebuild() {
   (
     unset CC
     unset CXX
     unset LD
+    unset CODE_SIGNING_ALLOWED
+    unset CODE_SIGN_IDENTITY
     xcodebuild "$@"
   )
+}
+
+# After the simulator .app is copied to dist-ios/simulator/, confirm ad-hoc
+# signing embedded keychain-access-groups. expo-secure-store throws at
+# startup without it. This runs before the CFBundleVersion stamp.
+verify_simulator_keychain_entitlement() {
+  local app="$1" dump
+  require_cmd codesign
+  if ! dump="$(codesign -d --entitlements - "${app}" 2>/dev/null)"; then
+    die "codesign -d --entitlements failed for the shipped simulator .app; it must be ad-hoc signed (CODE_SIGN_IDENTITY=-) and include the keychain-access-groups entitlement"
+  fi
+  if ! grep -q 'keychain-access-groups' <<< "${dump}"; then
+    die "the shipped simulator .app is missing the keychain-access-groups entitlement (codesign -d --entitlements). Ad-hoc signing with CODE_SIGN_IDENTITY=- must embed it"
+  fi
 }
 
 # The script contract joins recorded xcodebuild argv on NUL and then applies
@@ -254,8 +285,9 @@ xcodebuild_destination_marker() {
   return 0
 }
 
-# Local build with signing disabled: produces a .app bundle under dist-ios
-# without any identity, certificate, or token.
+# Local .app under dist-ios. simulator is ad-hoc signed (CODE_SIGN_IDENTITY=-).
+# unsigned stays signing-disabled (CODE_SIGNING_ALLOWED=NO). Neither path
+# takes an Apple team, certificate, or token.
 build_local_unsigned_app() {
   local target="$1" sdk="$2" configuration="$3" out_dir destination
   gate_macos "${target}"
@@ -276,7 +308,11 @@ build_local_unsigned_app() {
   out_dir="${OUT_DIR}/${target}"
   rm -rf "${out_dir}"
   mkdir -p "${out_dir}"
-  log "building ${target} .app (build ${build_number}, signing disabled) for ${sdk}"
+  if [[ "${target}" == "simulator" ]]; then
+    log "building simulator .app (build ${build_number}, ad-hoc CODE_SIGN_IDENTITY=-) for ${sdk}"
+  else
+    log "building ${target} .app (build ${build_number}, signing disabled) for ${sdk}"
+  fi
   if [[ "${target}" == "simulator" ]]; then
     local destination_marker
     destination_marker="$(xcodebuild_destination_marker)"
@@ -285,7 +321,7 @@ build_local_unsigned_app() {
         -sdk "${sdk}" -derivedDataPath "${out_dir}/derived" \
         -destination "${destination}" \
         ONLY_ACTIVE_ARCH=YES \
-        CODE_SIGNING_ALLOWED=NO \
+        CODE_SIGN_IDENTITY=- \
         "${destination_marker}" \
         build
     else
@@ -293,19 +329,23 @@ build_local_unsigned_app() {
         -sdk "${sdk}" -derivedDataPath "${out_dir}/derived" \
         -destination "${destination}" \
         ONLY_ACTIVE_ARCH=YES \
-        CODE_SIGNING_ALLOWED=NO build
+        CODE_SIGN_IDENTITY=- build
     fi
   else
     run_xcodebuild -workspace "${workspace}" -scheme "${scheme}" -configuration "${configuration}" \
       -sdk "${sdk}" -derivedDataPath "${out_dir}/derived" \
       CODE_SIGNING_ALLOWED=NO build
   fi
-  local app_bundle
+  local app_bundle shipped
   app_bundle="$(find "${out_dir}/derived/Build/Products" -maxdepth 2 -name '*.app' -print -quit)"
   [[ -n "${app_bundle}" ]] || die "the local build finished but no .app bundle was found under dist-ios"
   cp -R "${app_bundle}" "${out_dir}/"
-  stamp_build_number "${out_dir}/$(basename "${app_bundle}")/Info.plist" "${build_number}"
-  log "artifact: ${out_dir}/$(basename "${app_bundle}")"
+  shipped="${out_dir}/$(basename "${app_bundle}")"
+  if [[ "${target}" == "simulator" ]]; then
+    verify_simulator_keychain_entitlement "${shipped}"
+  fi
+  stamp_build_number "${shipped}/Info.plist" "${build_number}"
+  log "artifact: ${shipped}"
 }
 
 # EAS-backed signed build. Only reached after the credential gate has passed.
