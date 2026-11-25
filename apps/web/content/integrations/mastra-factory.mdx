@@ -1,0 +1,79 @@
+---
+title: Mastra Factory
+description: Route Mastra Factory plan, review, and ask-user gates through HITLy instead of the Studio chat.
+---
+
+[Mastra Factory](https://factory.mastra.ai) runs autonomous coding sessions that pause for humans at three moments: a **plan** waiting for acceptance, a **review verdict** waiting for acceptance before merge, and an **ask_user** question waiting for a typed answer. `@hitly/mastra-factory-plugin` opens those three moments as HITL<sub><i>y</i></sub> approvals, so reviewers decide in the HITL<sub><i>y</i></sub> inbox (web + mobile push) and the decision is applied back into the Factory session.
+
+## How it works with HITL<sub><i>y</i></sub>
+
+1. Create a HITL<sub><i>y</i></sub> project with plugin **Mastra Factory** and copy its API key.
+2. Mount the integration on your Factory host:
+
+```ts
+import { MastraFactory } from '@mastra/factory'
+import { createHitlyIntegration } from '@hitly/mastra-factory-plugin/factory-seams'
+import { parseRuntimeConfig } from '@hitly/mastra-factory-plugin'
+
+const integration = createHitlyIntegration({
+  config: parseRuntimeConfig(process.env),
+})
+
+const factory = new MastraFactory({
+  storage,
+  integrations: [integration],
+})
+```
+
+3. The integration observes every tool call. When a session calls `submit_plan`, `factory_record_review_verdict`, or `ask_user`, it creates one HITL<sub><i>y</i></sub> approval (create-once via `Idempotency-Key`) with the plan, verdict, or question as context.
+4. A reviewer decides in HITL<sub><i>y</i></sub>:
+   - **plan** — *Accept* resumes the parked tool call approved; *Reject* declines it with the reason; *Edit* declines it and delivers the edited plan verbatim into the session (fail-closed: an edited plan is never auto-approved).
+   - **review** — *Accept* records the PR as merge-ready and signals the session; *Reject* signals the findings. Merging only happens if merge-on-accept is explicitly enabled (see below).
+   - **ask_user** — *Respond* delivers the typed answer verbatim; *Reject* tells the session there is no answer. The plugin never invents one.
+5. HITL<sub><i>y</i></sub> POSTs the decision to the plugin's resume route on the Factory host (`/api/integrations/hitly/resume`). A reconciliation worker also polls HITL<sub><i>y</i></sub> so decisions still land if a callback is missed, and expiry/cancellation reaches the session as a decline — **expiry is never an approval**.
+
+## Setup
+
+On the Factory host, the plugin reads its bootstrap from the environment:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `HITLY_API_URL` | yes | HITL<sub><i>y</i></sub> base URL, e.g. `https://app.hitly.example` |
+| `HITLY_API_KEY` | yes | Project API key of the Mastra Factory project |
+| `HITLY_PROJECT_ID` | yes | Project id (`prj_...`) |
+| `HITLY_PUBLIC_URL` | yes | Public base URL of the Factory host — used to build `resumeUrl` |
+| `HITLY_CALLBACK_BEARER` | yes | Shared bearer the plugin requires on resume callbacks |
+| `HITLY_RESUME_SECRETS` | yes | Comma-separated HMAC secrets for verifying callbacks (rotate by adding the new one) |
+| `HITLY_GATE_PLAN` | no | `false` disables the plan gate (default `true`) |
+| `HITLY_GATE_REVIEW` | no | `false` disables the review gate (default `true`) |
+| `HITLY_GATE_ASK_USER` | no | `false` disables the ask-user gate (default `true`) |
+| `HITLY_MERGE_AFTER_ACCEPT` | no | `true` allows squash-merge on review accept (default `false`) |
+| `HITLY_GITHUB_TOKEN` | no | GitHub token for the (opt-in) squash merge. Without it, review accept only records merge-ready |
+| `HITLY_POLL_INTERVAL_MS` | no | Reconciliation poll interval, default `30000` |
+
+Gate toggles and merge-on-accept have a second switch in the HITL<sub><i>y</i></sub> project **Config** tab (visible on Mastra Factory projects). The plugin fetches that state from `GET /api/v1/projects/:id/integrations/mastra-factory` with its project key; HITL<sub><i>y</i></sub> is the source of truth, and the env values are the fallback if the fetch fails. A gate opens its request either way — the plugin fails toward *a human sees it*, never toward auto-approval.
+
+## Callback security
+
+Resume callbacks from HITL<sub><i>y</i></sub> must carry:
+
+- `Authorization: Bearer <HITLY_CALLBACK_BEARER>`
+- `X-HITLy-Timestamp`, `X-HITLy-Event-Id`, `X-HITLy-Key-Id`, and `X-HITLy-Signature` — the same signature scheme as the [HTTP plugin](/integrations/http): `HMAC-SHA256(timestamp + "." + rawBody)`, 5-minute window, event-id dedupe so retries are applied once.
+
+The plugin verifies bearer and signature **before** parsing the body, then re-reads the approval's authoritative state from HITL<sub><i>y</i></sub> before acting — a forged or stale callback changes nothing.
+
+## Merging
+
+There is no merge tool exposed to agents and no auto-merge. Merge requires **both** switches on:
+
+1. `HITLY_MERGE_AFTER_ACCEPT=true` (plus a `HITLY_GITHUB_TOKEN`) on the Factory host, and
+2. *Merge on review accept* enabled in the HITL<sub><i>y</i></sub> project's Config tab.
+
+Even then the plugin re-checks the pull request head SHA at merge time: if the branch moved after the verdict was accepted, the merge is refused and the session is told to re-review. `pending`, `expired`, and `cancelled` are never treated as approval anywhere in the flow.
+
+## Troubleshooting
+
+- **No approvals appear** — check the plugin's `diagnostics()` output (exposed on the integration) and confirm `HITLY_API_URL` / `HITLY_API_KEY` / `HITLY_PROJECT_ID` point at a project created with plugin **Mastra Factory**. A project created with another plugin id will reject ingest with a plugin-mismatch error.
+- **Decisions don't reach the session** — the resume route lives on the Factory host at `<HITLY_PUBLIC_URL>/api/integrations/hitly/resume`; HITL<sub><i>y</i></sub> must be able to reach it. If it can't, the reconciliation worker still applies decisions within one `HITLY_POLL_INTERVAL_MS` cycle.
+- **401 on callbacks** — the bearer or every secret in `HITLY_RESUME_SECRETS` disagrees with the project's signing secret in HITL<sub><i>y</i></sub>. Add the current secret to the comma-separated list and redeploy.
+- **Sessions still asking in Studio** — a gate was disabled (`HITLY_GATE_*=false`) or the tool call came from a session without a bound work item; disabled gates stay entirely inside Factory.
