@@ -30,6 +30,7 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "changeset": "changeset",
+    "blog:new": "node scripts/new-blog-post.mjs",
     "version-packages": "changeset version"
   },
   "devDependencies": {

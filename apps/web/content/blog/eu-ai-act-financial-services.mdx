@@ -1,0 +1,44 @@
+---
+title: "The EU AI Act's oversight and record-keeping duties for AI in financial services"
+description: "Articles 12, 14 and 26 of the EU AI Act put concrete duties on deployers of high-risk AI: logs, human oversight, retention. What finance teams should note now."
+date: 2026-11-25
+tags: ["regulation", "eu-ai-act", "audit"]
+---
+
+Most coverage of the EU [AI Act](https://eur-lex.europa.eu/eli/reg/2024/1689/oj) (Regulation (EU) 2024/1689) leads with banned practices and conformity assessments. For the teams actually running AI in banks, insurers, and investment firms, the operative duties are quieter and more operational: Article 12 says your high-risk system must produce logs, Article 14 says a human must genuinely oversee it, and Article 26 says you — the deployer — must keep the logs and staff the oversight. If you are piloting AI agents in a European financial institution, these three articles are where the rubber meets the road.
+
+## What the articles actually require
+
+**Article 12 — record-keeping.** Providers must design technically for high-risk AI systems to record events automatically over the system's lifetime. The logs are meant to support identifying risks, post-market monitoring, and — crucially for deployers — the oversight duties in Article 26. The design obligation sits with providers; in an agent stack that often means the model or agent platform you buy, but the requirement to *use* those logs lands on you.
+
+**Article 14 — human oversight.** Oversight must be effective: assigned to people who understand the system, can monitor it, correctly interpret output, and — the part worth stealing for design reviews — can decide not to use, disregard, override or reverse a system's output. "Human in the loop" that can only click yes is not oversight. For agent deployments this maps to real approval gates with real veto power, which is exactly the product decision behind HITLy's [approval inbox](/docs/inbox): an agent action that no human approved simply does not execute, and [governance rules](/docs/governance) decide who may approve what.
+
+**Article 19 — documentation.** Providers of high-risk systems keep technical documentation demonstrating compliance. Deployers should expect to ask for it, and to be able to show they understood it.
+
+**Article 26 — deployer duties.** Deployers use systems per the instructions, assign oversight to competent staff with the necessary authority and support, monitor operation, and inform providers of incidents. On logs specifically: deployers keep the automatically generated logs for at least six months, and deployers that are financial institutions keep them as part of the documentation they maintain under EU financial services law — so the AI Act's retention floor can be raised by the sectoral rules you already live under.
+
+## The timeline moved — check it again
+
+The application schedule was amended by the **Digital Omnibus on AI** (Regulation (EU) 2026/1744, in force 27 July 2026). The dates that now matter, per Article 113 as amended:
+
+| What | Applies from |
+| --- | --- |
+| Prohibited practices (Article 5) | 2 February 2025 |
+| General-purpose AI model obligations | 2 August 2025 |
+| General application, incl. transparency (Article 50) | 2 August 2026 |
+| High-risk obligations, Annex III systems (Art 6(2)) | 2 December 2027 |
+| High-risk obligations, Annex I product systems (Art 6(1)) | 2 August 2028 |
+
+Whether an agentic deployment is "high-risk" turns on whether it falls in an Annex III category (creditworthiness and insurance pricing are the familiar finance entries), so classify before you calendar. The Commission's [AI Act explorer](https://artificialintelligenceact.eu/) tracks the consolidated text and dates; treat a blog post — including this one — as a pointer to it, not a substitute. And note the horizon cuts both ways: the high-risk regime is scheduled for 2027, but general duties already in force do not care that your agent project is "early".
+
+## The ESAs add a sector-specific layer
+
+In July 2026 the three European Supervisory Authorities (EBA, EIOPA, ESMA) published a [joint statement on ICT risks from frontier AI models](https://www.esma.europa.eu/press-news/esma-news/eba-eiopa-and-esma-call-enhanced-governance-and-consistent-supervision) (JC 2026/25). Its asks to financial entities: cross-sectoral, risk-based supervision; robust governance and risk-management frameworks for the cyber risks frontier models bring (including how third-party model providers are treated under DORA oversight of critical ICT third-party providers). The paper is framed around cyber risk rather than agent conduct, but it reinforces the same supervisory instinct as the FCA's agentic-AI statement: know your dependencies, govern them formally, keep evidence.
+
+## What this means for your audit trail
+
+Strip away the article numbers and the Act asks three reconstructable questions of every high-risk deployment: who was watching, what did they see, and what did they decide. Logs that the system wrote automatically. Oversight by named people with real authority. Retention that survives the audit.
+
+That is a fair description of one half of what HITLy™ does: consequential agent actions wait for a human decision in the inbox, and every proposal, approval, rejection, and timeout lands in a durable [trace](/docs/trace) you can query afterwards. What it deliberately does not do is answer the legal questions — whether your system is high-risk, what Article 14 oversight is adequate for your use case, or how long your sectoral rules require you to keep anything. Those determinations belong to your compliance function and your lawyers; HITLy is here to make the operational evidence exist when they do.
+
+*Sources: Regulation (EU) 2024/1689 ([EUR-Lex](https://eur-lex.europa.eu/eli/reg/2024/1689/oj)); Regulation (EU) 2026/1744 ([EUR-Lex](https://eur-lex.europa.eu/eli/reg/2026/1744/oj)); ESMA press release on the ESAs' frontier-AI statement, July 2026.*

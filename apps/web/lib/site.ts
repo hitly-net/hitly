@@ -1,4 +1,4 @@
-import { integrationsSource, source } from '@/lib/source'
+import { integrationsSource, publishedPosts, source } from '@/lib/source'
 import type { Metadata, MetadataRoute } from 'next'
 
 /** Canonical public origin. Everything SEO-facing is built from this. */
@@ -8,6 +8,7 @@ export const SITE_URL = 'https://hitly.net'
 export const MARKETING_ROUTES = [
   '/',
   '/pricing',
+  '/blog',
   '/privacy',
   '/terms',
   '/aup',
@@ -34,8 +35,16 @@ export function docsPaths(): string[] {
   )
 }
 
+/**
+ * Indexable published blog posts. Drafts stay out of the sitemap (and the
+ * pages themselves 404 — see app/blog/[slug]/page.tsx).
+ */
+export function blogPaths(): string[] {
+  return publishedPosts().map((post) => post.url.replace(/\/$/, ''))
+}
+
 export function buildSitemap(): MetadataRoute.Sitemap {
-  const urls = [...MARKETING_ROUTES, ...docsPaths()]
+  const urls = [...MARKETING_ROUTES, ...docsPaths(), ...blogPaths()]
   return urls.map((path) => ({ url: absoluteUrl(path), changeFrequency: 'monthly' }))
 }
 
