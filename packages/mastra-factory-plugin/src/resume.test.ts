@@ -5,15 +5,14 @@ import { handleResumeRequest, type ResumeDeps } from './resume.ts'
 import type { PluginRuntimeConfig } from './types.ts'
 
 const SECRET = 'whsec_test_123'
-const BEARER = 'cb_bearer_secret'
+const CB_TOKEN = 'cbtoken_apv_1'
 
 const config: PluginRuntimeConfig = {
   hitlyBaseUrl: 'https://hitly.example.com',
   hitlyApiKey: 'hk_test_1',
   projectId: 'proj-1',
   publicBaseUrl: 'https://factory.example.com',
-  callbackBearer: BEARER,
-  resumeSecrets: [SECRET],
+  webhookSigningSecrets: [SECRET],
   gates: { plan: true, review: true, ask_user: true },
   mergeAfterAccept: false,
   pollIntervalMs: 30000,
@@ -40,7 +39,7 @@ function makeRequest(body: unknown, opts: { bearer?: string | null; secret?: str
   const timestamp = opts.timestamp ?? NOW
   const secret = opts.secret ?? SECRET
   const headers = new Headers({ 'content-type': 'application/json' })
-  if (opts.bearer !== null) headers.set('authorization', `Bearer ${opts.bearer ?? BEARER}`)
+  if (opts.bearer !== null) headers.set('authorization', `Bearer ${opts.bearer ?? CB_TOKEN}`)
   headers.set(HEADER_TIMESTAMP, String(timestamp))
   headers.set(HEADER_SIGNATURE, signBody(secret, timestamp, rawBody))
   headers.set(HEADER_EVENT_ID, opts.eventId === null ? '' : (opts.eventId ?? (body as { event_id?: string }).event_id ?? 'evt_x'))
@@ -58,6 +57,8 @@ function fakeDeps(overrides: Partial<ResumeDeps> = {}): ResumeDeps & { dispatche
       check: (id) => seen.has(id),
       remember: (id) => seen.add(id),
     },
+    // Per-approval cbAuthToken store: only apv_1 was created with CB_TOKEN.
+    bearerFor: (approvalId) => (approvalId === 'apv_1' ? CB_TOKEN : undefined),
     fetchApprovalState: async (id) => ({
       id,
       status: 'decided',
@@ -128,7 +129,7 @@ test('stale timestamp beyond the 5-minute window is rejected 401', async () => {
 })
 
 test('missing signature headers are rejected 401', async () => {
-  const headers = new Headers({ authorization: `Bearer ${BEARER}` })
+  const headers = new Headers({ authorization: `Bearer ${CB_TOKEN}` })
   const deps = fakeDeps()
   const res = await handleResumeRequest({ headers, rawBody: JSON.stringify(decidedEvent()), config, deps }, NOW)
   assert.equal(res.status, 401)
@@ -151,11 +152,21 @@ test('second secret in the rotated list verifies (comma-separated env rotation)'
   const res = await handleResumeRequest({
     headers: req.headers,
     rawBody: req.rawBody,
-    config: { ...config, resumeSecrets: [SECRET, 'whsec_rotated'] },
+    config: { ...config, webhookSigningSecrets: [SECRET, 'whsec_rotated'] },
     deps,
   }, NOW)
   assert.equal(res.status, 200)
   assert.equal(deps.dispatched.length, 1)
+})
+
+test('a bearer valid for another approval is rejected 401', async () => {
+  // Per-approval binding: apv_2 has no cbAuthToken in the store, so the
+  // (correctly signed, well-formed) callback for it must not dispatch.
+  const req = makeRequest(decidedEvent({ id: 'apv_2', event_id: 'evt_other' }))
+  const deps = fakeDeps()
+  const res = await handleResumeRequest({ headers: req.headers, rawBody: req.rawBody, config, deps }, NOW)
+  assert.equal(res.status, 401)
+  assert.equal(deps.dispatched.length, 0)
 })
 
 test('authoritative HITLy status overrides the callback claim: pending is not decided', async () => {

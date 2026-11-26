@@ -1,7 +1,10 @@
+import { randomBytes } from 'node:crypto'
 import type { ApprovalRequest, Gate, GateSession, PluginRuntimeConfig } from './types.ts'
 
 export const GATE_METADATA_KEY = 'net.hitly/gate'
-export const RESUME_PATH = '/api/integrations/hitly/resume'
+// `/api` is reserved by @mastra/server (1.85+) — a plugin route mounted
+// there crashes the host server at startup. `/custom` is the open namespace.
+export const RESUME_PATH = '/custom/integrations/hitly/resume'
 
 export const METADATA_KEYS = {
   gate: 'net.hitly/gate',
@@ -151,8 +154,15 @@ export function buildApprovalRequest(args: {
     idempotencyKey: `hitly-mf:${session.sessionId}:${toolCallId}`,
     metadata,
     allowedActions: ALLOWED_ACTIONS[gate],
+    // Per-request callback bearer: HITLy echoes this back as
+    // `Authorization: Bearer <token>` on resume callbacks (plugin-http
+    // stores it on the resume handle and never echoes it elsewhere), so the
+    // route can bind each callback to the approval that requested it.
+    cbAuthToken: randomBytes(32).toString('hex'),
   }
-  if (gate === 'plan' || gate === 'review') request.reasonRequired = true
+  // plugin-http validates reasonRequired as an array of non-empty answer
+  // values — a boolean `true` is rejected with 400 at ingest.
+  if (gate === 'plan' || gate === 'review') request.reasonRequired = ['reject']
   if (gate === 'ask_user') {
     const { question } = askUserTexts(input)
     if (question) {

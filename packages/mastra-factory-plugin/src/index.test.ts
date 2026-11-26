@@ -12,8 +12,7 @@ const baseEnv = {
   HITLY_API_KEY: 'hk_test_1',
   HITLY_PROJECT_ID: 'proj-1',
   HITLY_PUBLIC_URL: 'https://factory.example.com',
-  HITLY_CALLBACK_BEARER: 'cb_secret',
-  HITLY_RESUME_SECRETS: 'whsec_a',
+  HITLY_WEBHOOK_SIGNING_SECRETS: 'whsec_a',
 }
 
 function fakeClient(): HitlyClientLike & { created: Array<{ body: unknown; key: string }> } {
@@ -68,7 +67,9 @@ test('routes(ctx) registers the resume endpoint at the documented path', () => {
   const { plugin } = makePlugin()
   const routes = plugin.routes!({} as never)
   assert.equal(routes.length >= 1, true)
-  assert.equal(routes.some((r) => r.path === '/api/integrations/hitly/resume'), true)
+  assert.equal(routes.some((r) => r.path === '/custom/integrations/hitly/resume'), true)
+  // `/api` is reserved by @mastra/server (1.85+): mounting there crashes the host.
+  assert.equal(routes.some((r) => r.path.startsWith('/api')), false)
 })
 
 test('submit_plan tool call opens a plan approval with gate metadata and create-once key', async () => {
@@ -84,8 +85,11 @@ test('submit_plan tool call opens a plan approval with gate metadata and create-
   assert.equal(meta['net.hitly/factory/session-id'], 'sess-1')
   assert.equal(meta['net.hitly/factory/tool-call-id'], 'tc-1')
   assert.equal(typeof payload.resumeUrl, 'string')
-  assert.match(String(payload.resumeUrl), /^https:\/\/factory\.example\.com\/api\/integrations\/hitly\/resume$/)
+  assert.match(String(payload.resumeUrl), /^https:\/\/factory\.example\.com\/custom\/integrations\/hitly\/resume$/)
   assert.match(key, /sess-1.*tc-1/)
+  // Per-request callback bearer: HITLy echoes this back on the resume callback.
+  assert.equal(typeof payload.cbAuthToken, 'string')
+  assert.ok(String(payload.cbAuthToken).length >= 32)
 })
 
 test('same tool call observed twice creates only ONE approval (in-process dedupe + create-once key)', async () => {

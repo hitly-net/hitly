@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { httpPlugin, CB_AUTH_TOKEN_KEY } from '@hitly/plugin-http'
 import { detectGate, buildApprovalRequest, GATE_METADATA_KEY, RESUME_PATH } from './gates.ts'
 import type { GateSession } from './types.ts'
 
@@ -16,8 +17,7 @@ const baseConfig = {
   hitlyApiKey: 'hk_test_1',
   projectId: 'proj-1',
   publicBaseUrl: 'https://factory.example.com',
-  callbackBearer: 'cb-secret',
-  resumeSecrets: ['sec-a'],
+  webhookSigningSecrets: ['whsec_a'],
   gates: { plan: true, review: true, ask_user: true },
   mergeAfterAccept: false,
   githubToken: undefined as string | undefined,
@@ -66,7 +66,10 @@ test('idempotency key is deterministic per session+toolCall and stable across re
     output: undefined,
     config: baseConfig,
   }
-  assert.deepEqual(buildApprovalRequest(args), buildApprovalRequest(args))
+  // cbAuthToken is per-request random; everything else must be reproducible.
+  const { cbAuthToken: _a, ...first } = buildApprovalRequest(args)
+  const { cbAuthToken: _b, ...second } = buildApprovalRequest(args)
+  assert.deepEqual(first, second)
 })
 
 test('ask_user approval carries the question and respond-allowed actions only', () => {
@@ -115,4 +118,42 @@ test('plan gate allows accept/reject/edit but never respond', () => {
   assert.equal(req.allowedActions?.reject, true)
   assert.equal(req.allowedActions?.edit, true)
   assert.equal(req.allowedActions?.respond, false)
+})
+
+test('plan and review requests carry a per-request cbAuthToken and array reasonRequired', () => {
+  const make = (gate: 'plan' | 'review') =>
+    buildApprovalRequest({
+      gate,
+      toolCallId: `tc-${gate}`,
+      session,
+      input: gate === 'plan' ? { content: 'x' } : { verdict: 'approve', body: 'LGTM' },
+      output: undefined,
+      config: baseConfig,
+    })
+  const plan = make('plan')
+  const review = make('review')
+  for (const req of [plan, review]) {
+    assert.equal(typeof req.cbAuthToken, 'string')
+    assert.ok((req.cbAuthToken ?? '').length >= 32, 'cbAuthToken must be a high-entropy token')
+    assert.deepEqual(req.reasonRequired, ['reject'], 'must be an array of answer values, not a boolean')
+  }
+  assert.notEqual(plan.cbAuthToken, review.cbAuthToken, 'tokens are per-request, not reused')
+})
+
+test('plan and review create bodies pass the real plugin-http ingest validator', () => {
+  // Regression: reasonRequired was sent as boolean `true`, which the
+  // plugin-http validator rejects with 400 on every plan/review create.
+  for (const gate of ['plan', 'review'] as const) {
+    const request = buildApprovalRequest({
+      gate,
+      toolCallId: `tc-validator-${gate}`,
+      session,
+      input: gate === 'plan' ? { content: 'x' } : { verdict: 'approve', body: 'LGTM' },
+      output: undefined,
+      config: baseConfig,
+    })
+    const envelope = httpPlugin.ingest(structuredClone(request))
+    assert.equal(envelope.origin.runId, `factory:sess-1:tc-validator-${gate}`)
+    assert.equal(envelope.origin.resumeHandle?.[CB_AUTH_TOKEN_KEY], request.cbAuthToken, 'HITLy must store the cbAuthToken it will echo as bearer')
+  }
 })

@@ -7,8 +7,7 @@ const baseEnv = {
   HITLY_API_KEY: 'hk_test_1',
   HITLY_PROJECT_ID: 'proj-1',
   HITLY_PUBLIC_URL: 'https://factory.example.com',
-  HITLY_CALLBACK_BEARER: 'cb_secret',
-  HITLY_RESUME_SECRETS: 'whsec_a,whsec_b',
+  HITLY_WEBHOOK_SIGNING_SECRETS: 'whsec_a,whsec_b',
 }
 
 test('parses the documented env contract', () => {
@@ -17,24 +16,28 @@ test('parses the documented env contract', () => {
   assert.equal(config.hitlyApiKey, 'hk_test_1')
   assert.equal(config.projectId, 'proj-1')
   assert.equal(config.publicBaseUrl, 'https://factory.example.com')
-  assert.equal(config.callbackBearer, 'cb_secret')
-  assert.deepEqual(config.resumeSecrets, ['whsec_a', 'whsec_b'])
+  assert.deepEqual(config.webhookSigningSecrets, ['whsec_a', 'whsec_b'])
 })
 
-test('resume secrets list tolerates whitespace and empty entries', () => {
-  const config = parseRuntimeConfig({ ...baseEnv, HITLY_RESUME_SECRETS: ' whsec_a , ,whsec_b,' })
-  assert.deepEqual(config.resumeSecrets, ['whsec_a', 'whsec_b'])
+test('webhook signing secrets list tolerates whitespace and empty entries', () => {
+  const config = parseRuntimeConfig({ ...baseEnv, HITLY_WEBHOOK_SIGNING_SECRETS: ' whsec_a , ,whsec_b,' })
+  assert.deepEqual(config.webhookSigningSecrets, ['whsec_a', 'whsec_b'])
 })
 
-test('single-secret legacy env var is accepted', () => {
-  const { HITLY_RESUME_SECRETS: _drop, ...rest } = baseEnv
-  const config = parseRuntimeConfig({ ...rest, HITLY_RESUME_SECRET: 'whsec_only' })
-  assert.deepEqual(config.resumeSecrets, ['whsec_only'])
+test('single-secret env var is accepted', () => {
+  const { HITLY_WEBHOOK_SIGNING_SECRETS: _drop, ...rest } = baseEnv
+  const config = parseRuntimeConfig({ ...rest, HITLY_WEBHOOK_SIGNING_SECRET: 'whsec_only' })
+  assert.deepEqual(config.webhookSigningSecrets, ['whsec_only'])
 })
 
 test('missing required bootstrap values throw with the var names', () => {
   const { HITLY_API_KEY: _drop, ...rest } = baseEnv
   assert.throws(() => parseRuntimeConfig(rest), /HITLY_API_KEY/)
+})
+
+test('missing webhook signing secrets throws with the var name', () => {
+  const { HITLY_WEBHOOK_SIGNING_SECRETS: _drop, ...rest } = baseEnv
+  assert.throws(() => parseRuntimeConfig(rest), /HITLY_WEBHOOK_SIGNING_SECRETS/)
 })
 
 test('gates default to ON; explicit false turns a gate off', () => {

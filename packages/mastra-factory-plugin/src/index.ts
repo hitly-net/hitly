@@ -150,6 +150,10 @@ export class HitlyMastraFactoryPlugin {
   private readonly seenEvents = new Map<string, number>()
   private readonly appliedDecisions = new Set<string>()
   private readonly openApprovals = new Map<string, OpenApproval>()
+  /** approvalId → cbAuthToken generated at create, verified on resume callbacks. */
+  private readonly cbAuthTokens = new Map<string, string>()
+  /** runId → generated token held between create start and create resolve. */
+  private readonly pendingCbAuthTokens = new Map<string, string>()
   private seededFromHitly = false
   private reconciler?: HitlyReconciler
 
@@ -185,6 +189,7 @@ export class HitlyMastraFactoryPlugin {
         check: (eventId) => this.seenEvents.has(eventId),
         remember: (eventId) => this.remember(this.seenEvents, eventId),
       },
+      bearerFor: (approvalId) => this.cbAuthTokens.get(approvalId),
       fetchApprovalState: async (approvalId) => {
         if (!this.options.client.getApproval) throw Object.assign(new Error('no approval read path'), { status: 502 })
         return this.options.client.getApproval(approvalId)
@@ -228,10 +233,16 @@ export class HitlyMastraFactoryPlugin {
         pr,
         config: this.options.config,
       })
+      // Hold the generated cbAuthToken from create start; once HITLy assigns
+      // the approval id it is re-keyed for resume-callback verification.
+      if (request.cbAuthToken) this.pendingCbAuthTokens.set(request.runId, request.cbAuthToken)
       void Promise.resolve(
         this.options.client.createApproval(request as unknown as Record<string, unknown>, request.idempotencyKey!),
       ).then(
         (ref) => {
+          const token = this.pendingCbAuthTokens.get(request.runId)
+          this.pendingCbAuthTokens.delete(request.runId)
+          if (token) this.cbAuthTokens.set(ref.id, token)
           this.openApprovals.set(ref.id, {
             approvalId: ref.id,
             gate,
@@ -240,6 +251,7 @@ export class HitlyMastraFactoryPlugin {
           this.options.log?.('info', 'hitly: gate approval opened', { gate, approvalId: ref.id, sessionId: session.sessionId })
         },
         (error: unknown) => {
+          this.pendingCbAuthTokens.delete(request.runId)
           // Do NOT keep the dedupe entry: allow a later observation (or the
           // reconciliation worker) to retry. HITLy create-once keeps retries safe.
           this.seenToolCalls.delete(dedupeKey)
@@ -301,6 +313,7 @@ export class HitlyMastraFactoryPlugin {
       listOpen: () => [...this.openApprovals.values()],
       closeOpen: (approvalId) => {
         this.openApprovals.delete(approvalId)
+        this.cbAuthTokens.delete(approvalId)
       },
       getApproval: async (approvalId) => {
         if (!this.options.client.getApproval) throw Object.assign(new Error('no approval read path'), { status: 502 })

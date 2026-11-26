@@ -20,8 +20,8 @@ function normalizeUrl(value: string): string {
 }
 
 function parseSecrets(env: Record<string, string | undefined>): string[] {
-  const list = env.HITLY_RESUME_SECRETS
-  const single = env.HITLY_RESUME_SECRET
+  const list = env.HITLY_WEBHOOK_SIGNING_SECRETS
+  const single = env.HITLY_WEBHOOK_SIGNING_SECRET
   const source = list?.trim() ? list : single ?? ''
   const secrets = source
     .split(',')
@@ -29,7 +29,7 @@ function parseSecrets(env: Record<string, string | undefined>): string[] {
     .filter((s) => s.length > 0)
   if (secrets.length === 0) {
     throw new Error(
-      '@hitly/mastra-factory-plugin: missing required env var HITLY_RESUME_SECRETS (or HITLY_RESUME_SECRET)',
+      '@hitly/mastra-factory-plugin: missing required env var HITLY_WEBHOOK_SIGNING_SECRETS (or HITLY_WEBHOOK_SIGNING_SECRET)',
     )
   }
   return secrets
@@ -40,8 +40,7 @@ export function parseRuntimeConfig(env: Record<string, string | undefined>): Plu
   const hitlyApiKey = required(env, 'HITLY_API_KEY')
   const projectId = required(env, 'HITLY_PROJECT_ID')
   const publicBaseUrl = normalizeUrl(required(env, 'HITLY_PUBLIC_URL'))
-  const callbackBearer = required(env, 'HITLY_CALLBACK_BEARER')
-  const resumeSecrets = parseSecrets(env)
+  const webhookSigningSecrets = parseSecrets(env)
 
   const gates: Record<Gate, boolean> = {
     plan: parseBoolean(env.HITLY_GATE_PLAN, true),
@@ -62,8 +61,7 @@ export function parseRuntimeConfig(env: Record<string, string | undefined>): Plu
     hitlyApiKey,
     projectId,
     publicBaseUrl,
-    callbackBearer,
-    resumeSecrets,
+    webhookSigningSecrets,
     gates,
     mergeAfterAccept: parseBoolean(env.HITLY_MERGE_AFTER_ACCEPT, false),
     githubToken,
