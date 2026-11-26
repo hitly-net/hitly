@@ -41,6 +41,8 @@ export interface RemoteIntegrationConfig {
  *      callback's claim; carries the gate + session identity metadata)
  * - GET  /api/v1/projects/:id/integrations/mastra-factory/approvals
  *      (restart-seed feed: open gate approvals with create-time metadata)
+ * - POST /api/v1/projects/:id/integrations/mastra-factory/approvals/:approvalId/resume-ack
+ *      (host receipt: settle a converged failed_resume row to decided)
  * - GET  /api/v1/projects/:id/integrations/mastra-factory (gate config)
  *
  * The integration-namespace reads (not the generic requester list) are the
@@ -143,6 +145,19 @@ export class HitlyClient {
         decision: typeof item.decision === 'string' ? item.decision : null,
         metadata: typeof item.metadata === 'object' && item.metadata !== null ? (item.metadata as Record<string, unknown>) : {},
       }))
+  }
+
+  /**
+   * Host receipt for a converged `failed_resume` decision: HITLy settles the
+   * row to `decided` so it leaves the restart-seed feed and never replays.
+   * Idempotent — re-acking a settled row is a plain success.
+   */
+  async ackResume(approvalId: string): Promise<void> {
+    const { status, body } = await this.request(
+      `/api/v1/projects/${encodeURIComponent(this.projectId)}/integrations/mastra-factory/approvals/${encodeURIComponent(approvalId)}/resume-ack`,
+      { method: 'POST' },
+    )
+    if (status !== 200) throw HitlyClient.errorFrom(status, body)
   }
 
   async getIntegrationConfig(): Promise<RemoteIntegrationConfig> {

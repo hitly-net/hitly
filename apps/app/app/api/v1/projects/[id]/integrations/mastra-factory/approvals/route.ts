@@ -17,9 +17,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   return handleMastraFactoryApprovalsList(request, id, {
     authenticate: authenticateProjectKey,
     applyRestReadLimit: async (subject) => await applyRestLimit('read', apiKeyRestSubject(subject)),
+    applyRestWriteLimit: async (subject) => await applyRestLimit('write', apiKeyRestSubject(subject)),
     applyFailedAuth: (request) => applyFailedAuthLimit(request),
     listOpen: async (projectId, workspaceId) =>
       withTenant(workspaceId, () => listOpenMastraFactoryApprovals({ workspaceId, projectId })),
     readState: async () => null,
+    ack: async () => ({ error: 'Not found', status: 404 as const }),
   })
 }

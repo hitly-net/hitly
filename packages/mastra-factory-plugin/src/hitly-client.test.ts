@@ -111,6 +111,21 @@ test('listPending tolerates a malformed body without throwing', async () => {
   assert.deepEqual(list, [])
 })
 
+test('ackResume POSTs the host receipt to the resume-ack endpoint', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({ status: 200, body: { id: 'apv_1', status: 'decided' } }))
+  const client = new HitlyClient({ ...config, fetchImpl })
+  await client.ackResume('apv_1')
+  assert.match(calls[0]!.url, /\/api\/v1\/projects\/proj-1\/integrations\/mastra-factory\/approvals\/apv_1\/resume-ack$/)
+  assert.equal(calls[0]!.init.method, 'POST')
+  assert.equal(new Headers(calls[0]!.init.headers).get('authorization'), 'Bearer hk_test_1')
+})
+
+test('ackResume throws on non-200 so the reconciler can log a lost ack', async () => {
+  const { fetchImpl } = stubFetch(() => ({ status: 503, body: { error: 'unavailable' } }))
+  const client = new HitlyClient({ ...config, fetchImpl })
+  await assert.rejects(() => client.ackResume('apv_1'), /503|unavailable/i)
+})
+
 test('server errors throw with status for retry/backoff decisions', async () => {
   const { fetchImpl } = stubFetch(() => ({ status: 503, body: { error: 'unavailable' } }))
   const client = new HitlyClient({ ...config, fetchImpl })

@@ -24,6 +24,7 @@ interface Harness {
   open: OpenApproval[]
   snapshots: ApprovalSnapshot[]
   closed: string[]
+  acks: string[]
   calls: number
   reconciler: HitlyReconciler
 }
@@ -32,11 +33,14 @@ function harness(options: {
   approvals: OpenApproval[]
   state(id: string): Promise<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>
   refresh?: () => Promise<void>
+  apply?(snapshot: ApprovalSnapshot): Promise<{ applied: boolean; reason?: string }>
+  ackFails?: boolean
 }): Harness {
   const h = {} as Harness
   h.open = [...options.approvals]
   h.snapshots = []
   h.closed = []
+  h.acks = []
   h.calls = 0
   h.reconciler = new HitlyReconciler({
     listOpen: () => h.open,
@@ -49,9 +53,15 @@ function harness(options: {
       return options.state(id)
     },
     refreshConfig: options.refresh,
-    apply: async (snapshot) => {
-      h.snapshots.push(snapshot)
-      return { applied: true }
+    apply:
+      options.apply ??
+      (async (snapshot) => {
+        h.snapshots.push(snapshot)
+        return { applied: true }
+      }),
+    ackResume: async (id) => {
+      if (options.ackFails) throw new Error('503 ack unavailable')
+      h.acks.push(id)
     },
   })
   return h
@@ -107,9 +117,80 @@ test('failed_resume without a decision stays open until one exists', async () =>
   await h.reconciler.tick()
   assert.equal(h.snapshots.length, 0)
   assert.deepEqual(h.closed, [])
+  assert.deepEqual(h.acks, [])
   decided = true
   const second = await h.reconciler.tick()
   assert.equal(second.applied, 1)
+  assert.deepEqual(h.closed, ['apv_1'])
+})
+
+test('a converged failed_resume decision is acked so the row leaves the feed', async () => {
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'failed_resume', decision: 'accept', metadata: {} }),
+  })
+  await h.reconciler.tick()
+  assert.deepEqual(h.acks, ['apv_1'])
+  // A second tick has nothing left to do — the close removed it locally and
+  // the ack removed it server-side, so no further replay is possible.
+  const second = await h.reconciler.tick()
+  assert.equal(second.applied, 0)
+  assert.deepEqual(h.acks, ['apv_1'])
+})
+
+test('rows that never needed delivery are not acked', async () => {
+  // `decided` means the callback already succeeded — no receipt to send.
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'decided', decision: 'accept', metadata: {} }),
+  })
+  await h.reconciler.tick()
+  assert.deepEqual(h.acks, [])
+})
+
+test('replay against an already-answered parked call counts as delivered and settles', async () => {
+  // A failed_resume whose callback actually landed (or that a previous
+  // process converged) makes answerParkedCall throw "Nothing is waiting on
+  // that tool call any more". That is delivery proven, not an error —
+  // otherwise a plan gate would error on every tick and every restart.
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'failed_resume', decision: 'accept', metadata: {} }),
+    apply: async () => {
+      throw new Error('Nothing is waiting on that tool call any more: the run that asked has ended or it was already answered.')
+    },
+  })
+  const result = await h.reconciler.tick()
+  assert.equal(result.applied, 1)
+  assert.equal(result.errors, 0)
+  assert.deepEqual(h.closed, ['apv_1'])
+  assert.deepEqual(h.acks, ['apv_1'])
+})
+
+test('an unrelated apply failure on a failed_resume row is not swallowed and is not acked', async () => {
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'failed_resume', decision: 'accept', metadata: {} }),
+    apply: async () => {
+      throw new Error('storage backend exploded')
+    },
+  })
+  const result = await h.reconciler.tick()
+  assert.equal(result.applied, 0)
+  assert.equal(result.errors, 1)
+  assert.deepEqual(h.closed, [])
+  assert.deepEqual(h.acks, [])
+})
+
+test('a lost ack never fails the tick — the apply is already delivered', async () => {
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'failed_resume', decision: 'accept', metadata: {} }),
+    ackFails: true,
+  })
+  const result = await h.reconciler.tick()
+  assert.equal(result.applied, 1)
+  assert.equal(result.errors, 0)
   assert.deepEqual(h.closed, ['apv_1'])
 })
 

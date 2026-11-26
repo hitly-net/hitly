@@ -190,6 +190,40 @@ test('decisions made while the Factory was down are applied on the first reconci
   assert.equal(parked.length, 1)
 })
 
+test('a second process re-converging a failed_resume row counts it delivered, acks it, and stops replaying', async () => {
+  // The B4 loop: process A converged the decision (or the "lost" callback
+  // actually landed), but the HITLy row stayed failed_resume. Process B
+  // re-seeds it, answerParkedCall throws "Nothing is waiting on that tool
+  // call any more" — previously a permanent error loop. Now: delivered.
+  const parked: unknown[] = []
+  const acked: string[] = []
+  const client = {
+    createApproval: async () => ({ id: 'unused', status: 'pending' }),
+    listPending: async () => [{ id: 'apv_fr', status: 'failed_resume', decision: 'accept', metadata: SEED_METADATA }],
+    getApproval: async (id: string) => ({ id, status: 'failed_resume', decision: 'accept', metadata: SEED_METADATA }),
+    ackResume: async (id: string) => void acked.push(id),
+  }
+  const plugin = new HitlyMastraFactoryPlugin({
+    config: parseRuntimeConfig(baseEnv),
+    client: client as unknown as HitlyPluginOptions['client'],
+    seams: fakeSeams,
+    applySeams: {
+      answerParked: async () => {
+        parked.push(1)
+        throw new Error('Nothing is waiting on that tool call any more: the run that asked has ended or it was already answered.')
+      },
+      signalSession: async () => {},
+    },
+  })
+  const first = await plugin.reconcileNow()
+  assert.equal(first.applied, 1)
+  assert.equal(first.errors, 0)
+  assert.deepEqual(acked, ['apv_fr'])
+  const second = await plugin.reconcileNow()
+  assert.equal(second.applied, 0)
+  assert.equal(parked.length, 1)
+})
+
 test('seeded gate-less or identity-less rows are skipped, never applied', async () => {
   const parked: unknown[] = []
   const client = {

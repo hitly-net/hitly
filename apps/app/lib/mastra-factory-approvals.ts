@@ -3,6 +3,7 @@ import { AWAITING_HUMAN_APPROVAL_STATUSES, isDecision, type Decision } from '@hi
 import { approvals, decisionRecords } from '@hitly/db/schema'
 import { settleExpiredApproval } from './approvals'
 import { effectiveApprovalStatus } from './approval-expiry'
+import { logProjectEvent } from './events'
 import { requireDb, withTenant } from './tenant'
 import { decodeTenantJson } from './tenant-crypto'
 import { NextResponse } from 'next/server'
@@ -144,21 +145,80 @@ export async function getMastraFactoryApprovalState(args: {
   return state
 }
 
+export type MastraFactoryAckResult = { status: string } | { error: string; status: 404 | 409 }
+
+/**
+ * Settle a `failed_resume` row the host has converged: the plugin calls this
+ * after it has applied the recorded decision, so the row leaves the open
+ * feed instead of replaying `decided` on every future restart. Only a row
+ * whose latest decision record is a real decision may settle this way —
+ * decision-less `failed_resume` rows stay open for a late decision or a
+ * manual Retry-Resume. Re-acking a `decided` row is an idempotent success.
+ */
+export async function ackMastraFactoryResume(args: {
+  workspaceId: string
+  projectId: string
+  approvalId: string
+}): Promise<MastraFactoryAckResult> {
+  const database = requireDb()
+  const rows = await database
+    .select({ id: approvals.id, status: approvals.status })
+    .from(approvals)
+    .where(
+      and(
+        eq(approvals.id, args.approvalId),
+        eq(approvals.projectId, args.projectId),
+        eq(approvals.workspaceId, args.workspaceId),
+      ),
+    )
+    .limit(1)
+  const row = rows[0]
+  if (!row) return { error: 'Not found', status: 404 }
+  if (row.status === 'decided') return { status: 'decided' }
+  if (row.status !== 'failed_resume') return { error: 'Approval is not in failed_resume', status: 409 }
+
+  const decisionRows = await database
+    .select({ decision: decisionRecords.decision })
+    .from(decisionRecords)
+    .where(and(eq(decisionRecords.approvalId, row.id), eq(decisionRecords.workspaceId, args.workspaceId)))
+    .orderBy(desc(decisionRecords.createdAt))
+    .limit(1)
+  const latest = decisionRows[0]
+  if (!latest || !isDecision(latest.decision)) return { error: 'No decision to acknowledge', status: 409 }
+
+  await database
+    .update(approvals)
+    .set({ status: 'decided', updatedAt: new Date() })
+    .where(and(eq(approvals.id, row.id), eq(approvals.workspaceId, args.workspaceId)))
+  await logProjectEvent({
+    workspaceId: args.workspaceId,
+    projectId: args.projectId,
+    approvalId: row.id,
+    type: 'resumed',
+    message: `Host acknowledged resume (decision ${latest.decision})`,
+    payload: { decision: latest.decision, ack: true, previousStatus: 'failed_resume' },
+  })
+  return { status: 'decided' }
+}
+
 export interface MastraFactoryApprovalsDeps {
   authenticate: (
     apiKey: string,
     projectId: string,
   ) => Promise<{ project: { plugin: string; workspaceId: string } } | null>
   applyRestReadLimit: (subject: string) => Promise<NextResponse | null>
+  applyRestWriteLimit: (subject: string) => Promise<NextResponse | null>
   applyFailedAuth: (request: Request) => Promise<NextResponse | null>
   listOpen: (projectId: string, workspaceId: string) => Promise<{ approvals: MastraFactoryOpenApproval[] }>
   readState: (projectId: string, workspaceId: string, approvalId: string) => Promise<MastraFactoryApprovalState | null>
+  ack: (projectId: string, workspaceId: string, approvalId: string) => Promise<MastraFactoryAckResult>
 }
 
 async function authenticateKeyedProject(
   request: Request,
   projectId: string,
   deps: MastraFactoryApprovalsDeps,
+  applyLimit: (subject: string) => Promise<NextResponse | null> = deps.applyRestReadLimit,
 ): Promise<{ failure: NextResponse } | { project: { plugin: string; workspaceId: string } }> {
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
   if (!apiKey) return { failure: NextResponse.json({ error: 'Missing API key' }, { status: 401 }) } as const
@@ -171,7 +231,7 @@ async function authenticateKeyedProject(
     const failed = await deps.applyFailedAuth(request)
     return { failure: failed ?? NextResponse.json({ error: 'Invalid API key or project' }, { status: 401 }) } as const
   }
-  const limited = await deps.applyRestReadLimit(apiKey)
+  const limited = await applyLimit(apiKey)
   if (limited) return { failure: limited } as const
   if (authn.project.plugin !== 'mastra-factory') {
     return { failure: NextResponse.json({ error: 'Not found' }, { status: 404 }) } as const
@@ -207,4 +267,23 @@ export async function handleMastraFactoryApprovalGet(
   const state = await deps.readState(projectId, auth.project.workspaceId, approvalId)
   if (!state) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json(state)
+}
+
+/**
+ * POST /api/v1/projects/:id/integrations/mastra-factory/approvals/:approvalId/resume-ack —
+ * the host's receipt that it converged a `failed_resume` decision. Settles
+ * the row to `decided` so it leaves the restart feed; a second process
+ * replaying against an already-converged row gets an idempotent success.
+ */
+export async function handleMastraFactoryResumeAck(
+  request: Request,
+  projectId: string,
+  approvalId: string,
+  deps: MastraFactoryApprovalsDeps,
+) {
+  const auth = await authenticateKeyedProject(request, projectId, deps, deps.applyRestWriteLimit)
+  if ('failure' in auth) return auth.failure
+  const result = await deps.ack(projectId, auth.project.workspaceId, approvalId)
+  if ('error' in result) return NextResponse.json({ error: result.error }, { status: result.status })
+  return NextResponse.json({ id: approvalId, status: result.status })
 }

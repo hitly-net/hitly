@@ -52,7 +52,9 @@ export interface HitlyPluginOptions {
     }>
     getIntegrationConfig?(): Promise<{ gates: Record<Gate, boolean>; mergeAfterAccept: boolean }>
     /** Restart re-adoption feed: open gate approvals (pending + failed_resume) with create-time metadata. */
-  listPending?(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>>
+    listPending?(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>>
+    /** Host receipt that a failed_resume decision was converged; settles the row to decided. */
+    ackResume?(approvalId: string): Promise<void>
   }
   seams: SessionTargetSeams
   applySeams?: ApplySeams
@@ -311,6 +313,11 @@ export class HitlyMastraFactoryPlugin {
           }
         : undefined,
       apply: (snapshot) => applyDecision(snapshot, this.buildApplyDeps()),
+      ackResume: this.options.client.ackResume
+        ? async (approvalId) => {
+            await this.options.client.ackResume!(approvalId)
+          }
+        : undefined,
       log: this.options.log,
     })
     return this.reconciler.tick()

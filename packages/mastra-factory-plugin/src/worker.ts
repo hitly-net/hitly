@@ -3,6 +3,13 @@ import type { ApprovalSnapshot, Gate } from './types.ts'
 
 const VALID_GATES: readonly Gate[] = ['plan', 'review', 'ask_user']
 
+/**
+ * answerParkedCall throws this when the parked call is already answered (or
+ * its run ended) — see @mastra/factory approval-tools. On the reconciler
+ * path it means "already delivered", not "failed".
+ */
+const NOTHING_WAITING_ON_TOOL_CALL = /nothing is waiting on that tool call/i
+
 export interface OpenApproval {
   approvalId: string
   gate: Gate
@@ -26,6 +33,8 @@ export interface ReconcilerDeps {
   getApproval(approvalId: string): Promise<ReconcilerApprovalState>
   refreshConfig?(): Promise<void>
   apply(snapshot: ApprovalSnapshot): Promise<{ applied: boolean; reason?: string }>
+  /** Host receipt that settled a converged failed_resume row on HITLy (optional; best-effort). */
+  ackResume?(approvalId: string): Promise<void>
   log?(level: string, message: string, meta?: Record<string, unknown>): void
 }
 
@@ -44,6 +53,8 @@ function optionalString(value: unknown): string | undefined {
  * rows. It only READS authoritative state and feeds it through the same
  * applyDecision matrix as the callback path — the poller itself decides
  * nothing, so expiry/pending can never be turned into approval here either.
+ * After converging a `failed_resume` decision it POSTs a resume-ack receipt
+ * so the row settles to `decided` and stops replaying on every restart.
  */
 export class HitlyReconciler {
   private readonly deps: ReconcilerDeps
@@ -107,19 +118,49 @@ export class HitlyReconciler {
       }
 
       const snapshot = this.snapshot(entry, state, gate)
+      const settle = state.status === 'failed_resume' && state.decision !== null
       try {
         const outcome = await this.deps.apply(snapshot)
         if (outcome.applied) applied += 1
+        await this.settleOnHitly(entry.approvalId, settle)
         this.deps.closeOpen(entry.approvalId)
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (NOTHING_WAITING_ON_TOOL_CALL.test(message)) {
+          // Replay against an already-answered parked call — the "lost"
+          // callback actually landed, or a previous process converged it.
+          // The decision is fully delivered: count it, settle the HITLy row,
+          // and stop replaying (otherwise a plan gate errors every tick).
+          applied += 1
+          await this.settleOnHitly(entry.approvalId, settle)
+          this.deps.closeOpen(entry.approvalId)
+          continue
+        }
         errors += 1
         this.deps.log?.('error', 'hitly reconcile: apply failed, will retry', {
           approvalId: entry.approvalId,
-          error: error instanceof Error ? error.message : String(error),
+          error: message,
         })
       }
     }
     return { checked, applied, errors, configRefreshed }
+  }
+
+  /**
+   * Tell HITLy a failed_resume decision was converged so the row settles to
+   * `decided` and leaves the restart feed. Best-effort: a lost ack only means
+   * a future restart replays the apply, which is idempotent and tolerated.
+   */
+  private async settleOnHitly(approvalId: string, needed: boolean): Promise<void> {
+    if (!needed || !this.deps.ackResume) return
+    try {
+      await this.deps.ackResume(approvalId)
+    } catch (error) {
+      this.deps.log?.('warn', 'hitly reconcile: resume-ack failed; row stays open on HITLy', {
+        approvalId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   private snapshot(entry: OpenApproval, state: ReconcilerApprovalState, gate: Gate): ApprovalSnapshot {

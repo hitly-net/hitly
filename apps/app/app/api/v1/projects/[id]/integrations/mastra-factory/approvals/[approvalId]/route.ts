@@ -14,9 +14,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   return handleMastraFactoryApprovalGet(request, id, approvalId, {
     authenticate: authenticateProjectKey,
     applyRestReadLimit: async (subject) => await applyRestLimit('read', apiKeyRestSubject(subject)),
+    applyRestWriteLimit: async (subject) => await applyRestLimit('write', apiKeyRestSubject(subject)),
     applyFailedAuth: (request) => applyFailedAuthLimit(request),
     listOpen: async () => ({ approvals: [] }),
     readState: async (projectId, workspaceId, approvalId) =>
       withTenant(workspaceId, () => getMastraFactoryApprovalState({ workspaceId, projectId, approvalId })),
+    ack: async () => ({ error: 'Not found', status: 404 as const }),
   })
 }
