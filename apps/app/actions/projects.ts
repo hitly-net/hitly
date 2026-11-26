@@ -19,6 +19,7 @@ import { guardProjectAdminChange } from '@/lib/member-guard'
 import { newId } from '@/lib/ids'
 import { insertNewProject, insertNewProjectApiKey, rotateProjectApiKeyRecord } from '@/lib/project-create'
 import { parseProjectConfig, saveProjectConfig } from '@/lib/project-config'
+import { saveMastraFactoryConfig } from '@/lib/mastra-factory-config'
 import {
   deleteProject as deleteProjectRecord,
   mutationBlockedForProjectStatus,
@@ -152,6 +153,28 @@ export async function updateProjectConfig(
     const result = await saveProjectConfig(projectId, parsed)
     if ('error' in result) return { status: 'error', error: result.error }
     revalidatePath(`/projects/${projectId}`)
+    revalidatePath(`/projects/${projectId}/config`)
+    return { status: 'saved' }
+  })
+}
+
+export async function saveMastraFactoryConfigAction(
+  projectId: string,
+  _prev: ProjectConfigSaveState,
+  formData: FormData,
+): Promise<ProjectConfigSaveState> {
+  return withAppTenant(async () => {
+    await requireProjectAdmin(projectId)
+    const error = await saveMastraFactoryConfig(projectId, {
+      gates: {
+        plan: (await formFlag(formData, 'gatePlan')) ?? true,
+        review: (await formFlag(formData, 'gateReview')) ?? true,
+        ask_user: (await formFlag(formData, 'gateAskUser')) ?? true,
+      },
+      mergeAfterAccept: (await formFlag(formData, 'mergeAfterAccept')) ?? false,
+    })
+    if (error) return { status: 'error', error: error.error }
+    await logProjectEvent({ projectId, type: 'config', message: 'Updated Mastra Factory gate config' })
     revalidatePath(`/projects/${projectId}/config`)
     return { status: 'saved' }
   })

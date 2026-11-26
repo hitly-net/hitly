@@ -1,6 +1,6 @@
 import type { AnswerSchema } from './answer-schema.ts'
 
-export const PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes', 'openshell'] as const
+export const PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes', 'openshell', 'mastra-factory'] as const
 
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
@@ -9,7 +9,7 @@ export type PluginId = (typeof PLUGIN_IDS)[number]
  * stays valid, so existing projects and approvals keep loading and displaying.
  * OpenShell is no longer listed as an integration.
  */
-export const LISTED_PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes'] as const satisfies readonly PluginId[]
+export const LISTED_PLUGIN_IDS = ['mastra', 'http', 'langgraph', 'temporal', 'hermes', 'mastra-factory'] as const satisfies readonly PluginId[]
 
 export type ListedPluginId = (typeof LISTED_PLUGIN_IDS)[number]
 

@@ -32,6 +32,12 @@ import { db, pool } from './db'
 import { newId } from './ids'
 import { generateApiKey, hashApiKey } from './keys'
 import { parseProjectConfig, saveProjectConfig } from './project-config'
+import {
+  DEFAULT_MASTRA_FACTORY_CONFIG,
+  parseMastraFactoryConfig,
+  readMastraFactoryConfig,
+  saveMastraFactoryConfig,
+} from './mastra-factory-config'
 import { insertNewProject, insertNewProjectApiKey, rotateProjectApiKeyRecord } from './project-create'
 import { rotateProjectResumeSecret } from './resume-secret'
 import { requireDb, withTenant } from './tenant'
@@ -119,6 +125,38 @@ describe('creating a project', () => {
         .where(and(eq(projectMemberships.projectId, projectId), eq(projectMemberships.userId, userId)))
       assert.equal(admins[0]?.role, 'admin')
     }
+  })
+
+  it('mastra-factory gate config round-trips and fails closed to defaults', async () => {
+    const projectId = await create('mastra-factory', 'Factory gates')
+    // Defaults before anything is saved: gates all on, merge strictly opt-in.
+    const fresh = await withTenant(workspaceId, () => readMastraFactoryConfig(projectId))
+    assert.deepEqual(fresh, DEFAULT_MASTRA_FACTORY_CONFIG)
+    const saved = await withTenant(workspaceId, () =>
+      saveMastraFactoryConfig(projectId, {
+        gates: { plan: false, review: true, ask_user: false },
+        mergeAfterAccept: true,
+      }),
+    )
+    assert.equal(saved, undefined)
+    const after = await withTenant(workspaceId, () => readMastraFactoryConfig(projectId))
+    assert.deepEqual(after, { gates: { plan: false, review: true, ask_user: false }, mergeAfterAccept: true })
+    // Garbage stored by a rogue writer falls back per-field, never crashes.
+    assert.deepEqual(parseMastraFactoryConfig({ mastraFactory: { gates: { plan: 'yes' } } }), {
+      gates: { plan: true, review: true, ask_user: true },
+      mergeAfterAccept: false,
+    })
+  })
+
+  it('refuses to save gate config on a non-mastra-factory project', async () => {
+    const projectId = await create('http', 'Plain http')
+    const result = await withTenant(workspaceId, () =>
+      saveMastraFactoryConfig(projectId, { gates: { plan: true, review: true, ask_user: true }, mergeAfterAccept: true }),
+    )
+    assert.match(String(result?.error), /Mastra Factory/)
+    const [row] = await database.select().from(projects).where(eq(projects.id, projectId))
+    const credentials = await decodeTenantJson(workspaceId, row.credentials)
+    assert.equal(credentials.mastraFactory, undefined)
   })
 })
 

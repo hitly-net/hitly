@@ -1,0 +1,54 @@
+{
+  "name": "@hitly/mastra-factory-plugin",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "homepage": "https://hitly.net/integrations/mastra-factory",
+  "bugs": {
+    "url": "https://github.com/hitly-net/hitly/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hitly-net/hitly.git",
+    "directory": "packages/mastra-factory-plugin"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "hitly": {
+    "role": "sdk"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts",
+    "./factory-seams": "./src/factory-seams.ts"
+  },
+  "scripts": {
+    "test": "tsx --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hitly/core": "*",
+    "@hitly/plugin-http": "*"
+  },
+  "peerDependencies": {
+    "@mastra/core": ">=0.0.0",
+    "@mastra/factory": ">=0.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@mastra/core": {
+      "optional": true
+    },
+    "@mastra/factory": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@mastra/core": "1.86.0",
+    "@mastra/factory": "0.31.0",
+    "@mastra/libsql": "1.32.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.2"
+  }
+}
