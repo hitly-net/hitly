@@ -9,7 +9,9 @@ import { RESUME_PATH, METADATA_KEYS } from './gates.ts'
 import { HitlyConnectionRegistry, parseEnvFallback } from './connections.ts'
 import { signBody, HEADER_SIGNATURE, HEADER_TIMESTAMP, HEADER_EVENT_ID, HEADER_KEY_ID } from '@hitly/plugin-http'
 import { parseRuntimeConfig } from './config.ts'
+import { applyDecision } from './apply.ts'
 import type { Gate } from './types.ts'
+import { createMemoryGateStateStore, gateStateKey, type GateStateStore } from './gate-state.ts'
 
 const baseEnv = {
   HITLY_API_URL: 'https://hitly.example.com',
@@ -120,6 +122,7 @@ test('submit_plan tool call opens a plan approval with gate metadata and create-
   const { plugin, client } = makePlugin()
   const { args } = toolEvent('submit_plan', { plan: 'do the thing' })
   await plugin.postToolObserver!(args as never)
+  await plugin.drainObserverQueue()
   assert.equal(client.created.length, 1)
   const { body, key } = client.created[0]!
   const payload = body as Record<string, unknown>
@@ -140,7 +143,9 @@ test('same tool call observed twice creates only ONE approval (in-process dedupe
   const { plugin, client } = makePlugin()
   const { args } = toolEvent('submit_plan', { plan: 'x' })
   await plugin.postToolObserver!(args as never)
+  await plugin.drainObserverQueue()
   await plugin.postToolObserver!(args as never)
+  await plugin.drainObserverQueue()
   assert.equal(client.created.length, 1)
 })
 
@@ -148,6 +153,7 @@ test('factory_record_review_verdict opens a review approval carrying the head SH
   const { plugin, client } = makePlugin()
   const { args } = toolEvent('factory_record_review_verdict', { verdict: 'approve' }, { output: { headSha: 'abc123', prUrl: 'https://github.com/hitly-net/hitly/pull/1' } })
   await plugin.postToolObserver!(args as never)
+  await plugin.drainObserverQueue()
   const payload = client.created[0]!.body as { metadata: Record<string, string> }
   assert.equal(payload.metadata['net.hitly/gate'], 'review')
   assert.equal(payload.metadata['net.hitly/factory/head-sha'], 'abc123')
@@ -158,6 +164,7 @@ test('ask_user opens an ask_user approval with the question in the prompt', asyn
   const { plugin, client } = makePlugin()
   const { args } = toolEvent('ask_user', { question: 'Which API version?', options: [{ label: 'v1' }, { label: 'v2' }] })
   await plugin.postToolObserver!(args as never)
+  await plugin.drainObserverQueue()
   const payload = client.created[0]!.body as Record<string, unknown>
   const meta = payload.metadata as Record<string, string>
   assert.equal(meta['net.hitly/gate'], 'ask_user')
@@ -169,6 +176,7 @@ test('non-gate tools open nothing', async () => {
   for (const tool of ['execute_command', 'view', 'write_file', 'web_search']) {
     const { args } = toolEvent(tool)
     await plugin.postToolObserver!(args as never)
+    await plugin.drainObserverQueue()
   }
   assert.equal(client.created.length, 0)
 })
@@ -180,6 +188,7 @@ test('failed tool calls (error) open nothing — a crashed gate tool is not a ga
     toolContext: { toolName: 'submit_plan', input: {}, error: new Error('boom'), context: requestContext, toolCallId: 'tc-1' },
     requestContext,
   } as never)
+  await plugin.drainObserverQueue()
   assert.equal(client.created.length, 0)
 })
 
@@ -187,6 +196,7 @@ test('disabled gate tools open nothing (env toggle)', async () => {
   const { plugin, client } = makePlugin({ env: { ...baseEnv, HITLY_GATE_PLAN: 'false' } })
   const { args } = toolEvent('submit_plan', { plan: 'x' })
   await plugin.postToolObserver!(args as never)
+  await plugin.drainObserverQueue()
   assert.equal(client.created.length, 0)
 })
 
@@ -425,6 +435,7 @@ function makeRegistryPlugin(opts: { useEnvConfig?: boolean; envFallback?: string
 async function openPlanApproval(t: ReturnType<typeof makeRegistryPlugin>) {
   const { args } = toolEvent('submit_plan', { plan: 'per-factory plan' })
   await t.plugin.postToolObserver!(args as never)
+  await t.plugin.drainObserverQueue()
 }
 
 function resumeRequest(
@@ -690,4 +701,322 @@ test('registry: settings routes mount only when a registry is wired', () => {
   }
   const legacy = makePlugin().plugin.routes!({} as never)
   assert.ok(!legacy.some((r) => r.path.startsWith('/web/integrations/hitly/settings')))
+})
+
+// ---------------------------------------------------------------------------
+// Factory-side resolution of a mirrored gate (#212).
+//
+// The mirrored HITLy item must not stay pending once somebody answers the
+// gate on a Factory surface: the second observer pass (the tool's resumed
+// completion) closes it as decided-elsewhere, and a late HITLy decision on
+// that gate is reported as a conflict instead of silently reaching the agent.
+// ---------------------------------------------------------------------------
+
+interface RichClientOptions {
+  /** Status HITLy reports when the plugin tries to cancel a decided item. */
+  cancelStatus?: number
+  /** Authority returned by getApproval (what HITLy actually holds). */
+  authority?: { status: string; decision: string | null; metadata?: Record<string, string> }
+  cancelThrows?: Error
+}
+
+function richClient(options: RichClientOptions = {}) {
+  const created: Array<{ body: Record<string, unknown>; key: string }> = []
+  const cancels: Array<{ approvalId: string; reason?: string }> = []
+  const notes: Array<{ approvalId: string; note: string }> = []
+  let approvalId = 'apv_1'
+  const client = {
+    created,
+    cancels,
+    notes,
+    get approvalId() {
+      return approvalId
+    },
+    createApproval: async (body: Record<string, unknown>, key: string) => {
+      created.push({ body, key })
+      approvalId = `apv_${created.length}`
+      return { id: approvalId, status: 'pending' }
+    },
+    cancelApproval: async (id: string, reason?: string) => {
+      if (options.cancelThrows) throw options.cancelThrows
+      if (options.cancelStatus && options.cancelStatus !== 200) {
+        throw Object.assign(new Error('Approval is not awaiting a decision'), { status: options.cancelStatus })
+      }
+      cancels.push({ approvalId: id, reason })
+    },
+    getApproval: async (id: string) => ({
+      id,
+      status: options.authority?.status ?? 'pending',
+      decision: options.authority?.decision ?? null,
+      metadata: options.authority?.metadata ?? {},
+    }),
+    annotateApproval: async (id: string, note: string) => {
+      notes.push({ approvalId: id, note })
+      return { recorded: true }
+    },
+  }
+  return client
+}
+
+function planResumeOutput(action: 'approved' | 'rejected') {
+  return {
+    toolId: 'submit_plan',
+    content: action === 'approved' ? 'Plan approved by the user.' : 'Plan rejected by the user.',
+    isError: false,
+    submittedPlan: { title: 'Do the thing', path: '.artifacts/plans/x.md', plan: 'steps', action },
+  }
+}
+
+function harness(options: { client?: ReturnType<typeof richClient>; gateStore?: GateStateStore; applySeams?: HitlyPluginOptions['applySeams'] } = {}) {
+  const client = options.client ?? richClient()
+  const gateStore = options.gateStore ?? createMemoryGateStateStore()
+  const plugin = new HitlyMastraFactoryPlugin({
+    config: parseRuntimeConfig(baseEnv),
+    client: client as unknown as HitlyPluginOptions['client'],
+    seams: fakeSeams,
+    gateStore,
+    applySeams: options.applySeams ?? { answerParked: async () => {}, signalSession: async () => {} },
+  })
+  return { plugin, client, gateStore }
+}
+
+test('Factory-side plan approval closes the mirrored HITLy item as decided-elsewhere', async () => {
+  const { plugin, client, gateStore } = harness()
+  const suspend = toolEvent('submit_plan', { plan: 'do the thing' })
+  await plugin.postToolObserver(suspend.args as never)
+  await plugin.drainObserverQueue()
+  assert.equal(client.created.length, 1, 'suspend pass mirrors the parked call')
+  assert.equal(plugin.diagnostics().openApprovals, 1)
+
+  const resume = toolEvent('submit_plan', { plan: 'do the thing' }, { output: planResumeOutput('approved') })
+  await plugin.postToolObserver(resume.args as never)
+  await plugin.drainObserverQueue()
+
+  assert.equal(client.cancels.length, 1, 'the HITLy item is cancelled, not left pending')
+  assert.equal(client.cancels[0]!.approvalId, 'apv_1')
+  assert.match(String(client.cancels[0]!.reason), /Decided in Mastra Factory: approved/)
+  const record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.status, 'factory_resolved')
+  assert.equal(record!.factoryDecision, 'approved')
+  assert.equal(record!.factoryChannel, 'unknown')
+  assert.ok(record!.cancelledAt, 'the cancel is recorded so it is not retried')
+  assert.equal(plugin.diagnostics().openApprovals, 0, 'the reconciler stops tracking a closed gate')
+})
+
+test('a Factory-side plan rejection cancels too and names the decision in the reason', async () => {
+  const { plugin, client } = harness()
+  await plugin.postToolObserver(toolEvent('submit_plan', { plan: 'x' }).args as never)
+  await plugin.drainObserverQueue()
+  await plugin.postToolObserver(
+    toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('rejected') }).args as never,
+  )
+  await plugin.drainObserverQueue()
+  assert.equal(client.cancels.length, 1)
+  assert.match(String(client.cancels[0]!.reason), /Decided in Mastra Factory: rejected/)
+})
+
+test('a late HITLy decision on a Factory-decided gate is a conflict and never reaches the agent', async () => {
+  const parked: unknown[] = []
+  const { plugin, gateStore } = harness({
+    applySeams: { answerParked: async (args) => void parked.push(args), signalSession: async () => {} },
+  })
+  await plugin.postToolObserver(toolEvent('submit_plan', { plan: 'x' }).args as never)
+  await plugin.drainObserverQueue()
+  await plugin.postToolObserver(
+    toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('approved') }).args as never,
+  )
+  await plugin.drainObserverQueue()
+
+  const outcome = await applyDecision(
+    { id: 'apv_1', status: 'decided', decision: 'accept', gate: 'plan', sessionId: 'sess-1', toolCallId: 'tc-1', metadata: {} },
+    plugin.buildApplyDeps(),
+  )
+  assert.equal(outcome.applied, false)
+  assert.equal(outcome.conflict, true)
+  assert.equal(parked.length, 0, 'the agent is never told the plan was approved from HITLy')
+  const record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.status, 'conflict', 'the clash is recorded on the gate')
+  assert.equal(record!.conflict!.factoryDecision, 'approved')
+  assert.equal(record!.conflict!.hitlyDecision, 'accept')
+})
+
+test('a HITLy decision applied first is not mistaken for a Factory decision', async () => {
+  const parked: unknown[] = []
+  const { plugin, client, gateStore } = harness({
+    applySeams: { answerParked: async (args) => void parked.push(args), signalSession: async () => {} },
+  })
+  await plugin.postToolObserver(toolEvent('submit_plan', { plan: 'x' }).args as never)
+  await plugin.drainObserverQueue()
+
+  // HITLy decides first: the decision is applied, the parked call answers, and
+  // the tool then completes — the resumed pass must not cancel anything.
+  const outcome = await applyDecision(
+    { id: 'apv_1', status: 'decided', decision: 'accept', gate: 'plan', sessionId: 'sess-1', toolCallId: 'tc-1', metadata: {} },
+    plugin.buildApplyDeps(),
+  )
+  assert.equal(outcome.applied, true)
+  assert.equal(parked.length, 1)
+
+  await plugin.postToolObserver(
+    toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('approved') }).args as never,
+  )
+  await plugin.drainObserverQueue()
+  assert.equal(client.cancels.length, 0, 'our own approve is not a decision made elsewhere')
+  const record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.status, 'hitly_applied')
+})
+
+test('a gate answered in Factory before it was ever mirrored stays remembered', async () => {
+  const { plugin, client, gateStore } = harness()
+  await plugin.postToolObserver(
+    toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('approved') }).args as never,
+  )
+  await plugin.drainObserverQueue()
+  assert.equal(client.created.length, 0, 'nothing is mirrored for an already-answered call')
+  const record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.status, 'factory_resolved')
+
+  // A late HITLy decision on the same call is still refused, even though no
+  // HITLy item was ever created by this process.
+  const parked: unknown[] = []
+  const outcome = await applyDecision(
+    { id: 'apv_1', status: 'decided', decision: 'accept', gate: 'plan', sessionId: 'sess-1', toolCallId: 'tc-1', metadata: {} },
+    plugin.buildApplyDeps(),
+  )
+  assert.equal(outcome.applied, false)
+  assert.equal(outcome.conflict, true)
+  assert.equal(parked.length, 0)
+  void gateStore
+})
+
+test('mid-air: HITLy decided first, so the cancel 409s and the clash is reported, not swallowed', async () => {
+  const { plugin, client, gateStore } = harness({
+    client: richClient({ cancelStatus: 409, authority: { status: 'decided', decision: 'accept' } }),
+  })
+  await plugin.postToolObserver(toolEvent('submit_plan', { plan: 'x' }).args as never)
+  await plugin.drainObserverQueue()
+  await plugin.postToolObserver(
+    toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('rejected') }).args as never,
+  )
+  await plugin.drainObserverQueue()
+
+  assert.equal(client.cancels.length, 0, 'the cancel was rejected by HITLy')
+  assert.equal(client.notes.length, 1, 'the conflict is annotated on the HITLy item')
+  assert.match(client.notes[0]!.note, /HITLy/)
+  const record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.status, 'conflict')
+  assert.equal(record!.conflict!.hitlyDecision, 'accept')
+  assert.equal(record!.conflict!.factoryDecision, 'rejected')
+  assert.equal(plugin.diagnostics().openApprovals, 0)
+})
+
+test('a Factory-answered ask_user closes the mirrored question', async () => {
+  const { plugin, client } = harness()
+  await plugin.postToolObserver(toolEvent('ask_user', { question: 'Which API version?' }).args as never)
+  await plugin.drainObserverQueue()
+  await plugin.postToolObserver(
+    toolEvent('ask_user', { question: 'Which API version?' }, { output: { content: 'User answered: v2', isError: false } }).args as never,
+  )
+  await plugin.drainObserverQueue()
+  assert.equal(client.cancels.length, 1)
+  assert.match(String(client.cancels[0]!.reason), /Decided in Mastra Factory: answered/)
+})
+
+test('the suspend and resume passes may arrive concurrently: the call is mirrored once and closed once', async () => {
+  const { plugin, client, gateStore } = harness()
+  const suspend = toolEvent('submit_plan', { plan: 'x' })
+  const resume = toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('approved') })
+  // Not awaited in sequence: the resume pass must queue behind the suspend pass
+  // rather than racing it and concluding there is nothing open to close.
+  await Promise.all([plugin.postToolObserver(suspend.args as never), plugin.postToolObserver(resume.args as never)])
+  await plugin.drainObserverQueue()
+  assert.equal(client.created.length, 1)
+  assert.equal(client.cancels.length, 1)
+  const record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.status, 'factory_resolved')
+})
+
+test('the host can name the surface that decided, for the audit trail', async () => {
+  const client = richClient()
+  const gateStore = createMemoryGateStateStore()
+  const plugin = new HitlyMastraFactoryPlugin({
+    config: parseRuntimeConfig(baseEnv),
+    client: client as unknown as HitlyPluginOptions['client'],
+    seams: fakeSeams,
+    gateStore,
+    applySeams: { answerParked: async () => {}, signalSession: async () => {} },
+    resolveFactoryDecisionChannel: () => 'ui',
+  })
+  await plugin.postToolObserver(toolEvent('submit_plan', { plan: 'x' }).args as never)
+  await plugin.drainObserverQueue()
+  await plugin.postToolObserver(
+    toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('approved') }).args as never,
+  )
+  await plugin.drainObserverQueue()
+  const record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.factoryChannel, 'ui')
+  assert.match(String(client.cancels[0]!.reason), /channel: ui/)
+})
+
+test('a cancel that keeps failing is retried by the reconciler instead of being forgotten', async () => {
+  let attempts = 0
+  const client = richClient()
+  client.cancelApproval = async () => {
+    attempts += 1
+    if (attempts === 1) throw new Error('ECONNRESET')
+  }
+  const { plugin, gateStore } = harness({ client })
+  await plugin.postToolObserver(toolEvent('submit_plan', { plan: 'x' }).args as never)
+  await plugin.drainObserverQueue()
+  await plugin.postToolObserver(
+    toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('approved') }).args as never,
+  )
+  await plugin.drainObserverQueue()
+  let record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.status, 'factory_resolved')
+  assert.equal(record!.cancelledAt, undefined, 'still open: the cancel never landed')
+  assert.equal(plugin.diagnostics().openApprovals, 1, 'the reconciler keeps it in the open set')
+
+  await plugin.reconcileNow()
+  record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.ok(record!.cancelledAt, 'the second attempt landed')
+  assert.equal(plugin.diagnostics().openApprovals, 0)
+})
+
+test('a later observer pass retries a cancel that previously failed', async () => {
+  let attempts = 0
+  const client = richClient()
+  client.cancelApproval = async () => {
+    attempts += 1
+    if (attempts === 1) throw new Error('ECONNRESET')
+  }
+  const { plugin, gateStore } = harness({ client })
+  await plugin.postToolObserver(toolEvent('submit_plan', { plan: 'x' }).args as never)
+  await plugin.drainObserverQueue()
+  const resume = toolEvent('submit_plan', { plan: 'x' }, { output: planResumeOutput('approved') })
+  await plugin.postToolObserver(resume.args as never)
+  await plugin.drainObserverQueue()
+  let record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(record!.cancelledAt, undefined, 'the first cancel attempt failed')
+
+  // The same tool call observed again (a further pass) closes it without
+  // waiting for the reconciliation poll.
+  await plugin.postToolObserver(resume.args as never)
+  await plugin.drainObserverQueue()
+  record = await gateStore.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.ok(record!.cancelledAt, 'the retry landed')
+  assert.equal(attempts, 2, 'one failed attempt, one successful retry')
+})
+
+test('a review verdict is mirrored but has no Factory-side resolution to detect', async () => {  const { plugin, client } = harness()
+  await plugin.postToolObserver(
+    toolEvent('factory_record_review_verdict', { verdict: 'approve' }, { output: { prUrl: 'https://github.com/hitly-net/hitly/pull/9' } }).args as never,
+  )
+  await plugin.drainObserverQueue()
+  assert.equal(client.created.length, 1)
+  await plugin.postToolObserver(
+    toolEvent('factory_record_review_verdict', { verdict: 'approve' }, { output: { content: 'Verdict recorded.' } }).args as never,
+  )
+  await plugin.drainObserverQueue()
+  assert.equal(client.cancels.length, 0, 'a recorded verdict is not somebody answering the gate')
 })

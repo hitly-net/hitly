@@ -43,6 +43,10 @@ export interface RemoteIntegrationConfig {
  *      (restart-seed feed: open gate approvals with create-time metadata)
  * - POST /api/v1/projects/:id/integrations/mastra-factory/approvals/:approvalId/resume-ack
  *      (host receipt: settle a converged failed_resume row to decided)
+ * - POST /api/v1/approvals/:id/cancel
+ *      (requester cancel: close a gate the Factory surface already decided)
+ * - POST /api/v1/approvals/:id/annotations
+ *      (best-effort conflict note; #213 — absent until it lands)
  * - GET  /api/v1/projects/:id/integrations/mastra-factory (gate config)
  *
  * The integration-namespace reads (not the generic requester list) are the
@@ -158,6 +162,43 @@ export class HitlyClient {
       { method: 'POST' },
     )
     if (status !== 200) throw HitlyClient.errorFrom(status, body)
+  }
+
+  /**
+   * Requester cancel — the plugin's way to close a gate nobody in HITLy will
+   * answer any more (the tool call was decided in the Factory surface).
+   *
+   * POST /api/v1/approvals/:id/cancel with the same project API key that created
+   * the item. HITLy answers 409 once the item is no longer awaiting a decision,
+   * which is how a mid-air HITLy decision shows up here: the caller reads it as
+   * "someone in HITLy already decided" and records a conflict.
+   */
+  async cancelApproval(approvalId: string, reason?: string): Promise<void> {
+    const { status, body } = await this.request(`/api/v1/approvals/${encodeURIComponent(approvalId)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify(reason ? { reason } : {}),
+    })
+    if (status !== 200 && status !== 201 && status !== 204) throw HitlyClient.errorFrom(status, body)
+  }
+
+  /**
+   * Best-effort audit note on an approval the plugin will not apply (a late
+   * HITLy decision on a gate the Factory already resolved).
+   *
+   * The annotation endpoint is #213; until it exists HITLy answers 404 and the
+   * conflict stays plugin-side only, so this never throws — a missing or failing
+   * annotation must not change what happens to the decision.
+   */
+  async annotateApproval(approvalId: string, note: string): Promise<{ recorded: boolean }> {
+    try {
+      const { status, body } = await this.request(
+        `/api/v1/approvals/${encodeURIComponent(approvalId)}/annotations`,
+        { method: 'POST', body: JSON.stringify({ note }) },
+      )
+      return { recorded: status === 200 || status === 201 || status === 204 }
+    } catch {
+      return { recorded: false }
+    }
   }
 
   async getIntegrationConfig(): Promise<RemoteIntegrationConfig> {

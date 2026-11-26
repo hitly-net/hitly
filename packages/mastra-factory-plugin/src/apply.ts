@@ -1,3 +1,4 @@
+import { gateStateKey, type GateRecord, type GateStateStore } from './gate-state.ts'
 import type { ApplyOutcome, ApprovalSnapshot, Gate } from './types.ts'
 
 export interface ApplyDeps {
@@ -17,6 +18,13 @@ export interface ApplyDeps {
   recordEvent(eventId: string): Promise<void>
   alreadyApplied(key: string): Promise<boolean>
   markApplied(key: string): Promise<void>
+  /**
+   * Per-gate memory. When present, a decision on a gate the Factory surface
+   * already resolved is reported as a conflict instead of being applied — and
+   * a decision that DOES reach the session is recorded, so the observer never
+   * re-mirrors a closed gate.
+   */
+  gateStore?: GateStateStore
 }
 
 const VALID_GATES: readonly Gate[] = ['plan', 'review', 'ask_user']
@@ -153,6 +161,8 @@ async function dispatchClosed(snapshot: ApprovalSnapshot, deps: ApplyDeps, statu
  *   explicit accept AND mergeAfterAccept.
  * - An empty answer is never delivered; nothing is ever invented.
  * - Idempotent per (approvalId, decision-or-closure).
+ * - A gate the Factory surface already resolved is never applied from HITLy:
+ *   it is reported as a conflict (`conflict: true`, terminal for delivery).
  */
 export async function applyDecision(snapshot: ApprovalSnapshot, deps: ApplyDeps): Promise<ApplyOutcome> {
   if (!VALID_GATES.includes(snapshot.gate)) {
@@ -179,6 +189,20 @@ export async function applyDecision(snapshot: ApprovalSnapshot, deps: ApplyDeps)
     return { applied: false, reason: 'decision already applied for this approval' }
   }
 
+  const gateKey = gateStateKey(snapshot.sessionId, snapshot.toolCallId, snapshot.gate)
+  const stored = deps.gateStore ? await deps.gateStore.load(gateKey) : null
+  if (stored?.status === 'factory_resolved') {
+    if (snapshot.status === 'cancelled' && stored.cancelledAt) {
+      // The lifecycle echo of the plugin's own requester cancel (the Factory
+      // decided this gate and we closed the HITLy item). Nothing to deliver.
+      return { applied: false, reason: 'closed by the plugin after a Factory-side decision' }
+    }
+    return recordConflict(snapshot, deps, stored, gateKey)
+  }
+  if (stored?.status === 'conflict') {
+    return { applied: false, conflict: true, reason: 'conflict already recorded for this gate' }
+  }
+
   // A `failed_resume` row carries a real human decision whose callback
   // delivery exhausted its retries (~1s of attempts). The authority read
   // joins the decision record, so it is as safe to converge as `decided` —
@@ -190,6 +214,62 @@ export async function applyDecision(snapshot: ApprovalSnapshot, deps: ApplyDeps)
 
   if (outcome.applied) {
     await deps.markApplied(key)
+    if (deps.gateStore) {
+      await deps.gateStore.save({
+        ...recordFromSnapshot(snapshot, gateKey),
+        status: 'hitly_applied',
+        hitlyDecision: snapshot.decision ?? snapshot.status,
+        updatedAt: new Date().toISOString(),
+      })
+    }
   }
   return outcome
+}
+
+function recordFromSnapshot(snapshot: ApprovalSnapshot, key: string): GateRecord {
+  return {
+    key,
+    sessionId: snapshot.sessionId!,
+    toolCallId: snapshot.toolCallId,
+    gate: snapshot.gate,
+    orgId: snapshot.orgId,
+    approvalId: snapshot.id,
+    status: 'open',
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+/**
+ * Both sides acted on one gate. The Factory answered the tool call first, so
+ * this HITLy decision has nowhere to land — applying it would either throw
+ * inside `answerParked` or hand the agent a second, contradictory verdict.
+ * Record it, report it, and stop replaying: `conflict` is terminal for
+ * delivery without being counted as delivered.
+ */
+async function recordConflict(
+  snapshot: ApprovalSnapshot,
+  deps: ApplyDeps,
+  stored: GateRecord,
+  key: string,
+): Promise<ApplyOutcome> {
+  const hitlyDecision = snapshot.decision ?? snapshot.status
+  const detectedAt = new Date().toISOString()
+  const detail =
+    `HITLy recorded "${hitlyDecision}" for a ${snapshot.gate} gate that Mastra Factory ` +
+    `had already resolved as "${stored.factoryDecision ?? 'unknown'}"` +
+    `${stored.factoryChannel ? ` (channel: ${stored.factoryChannel})` : ''}. The HITLy decision was not applied.`
+  await deps.gateStore?.save({
+    ...stored,
+    status: 'conflict',
+    hitlyDecision,
+    conflict: {
+      hitlyDecision,
+      factoryDecision: stored.factoryDecision,
+      factoryChannel: stored.factoryChannel,
+      detectedAt,
+      detail,
+    },
+    updatedAt: detectedAt,
+  })
+  return { applied: false, conflict: true, reason: detail }
 }
