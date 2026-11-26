@@ -22,6 +22,14 @@ type ClientOptions = {
   platform?: 'ios' | 'android'
   /** App version shown in `x-hitly-client` (server truncates/validates). */
   appVersion?: string
+  /**
+   * Called when a request that carried this client's bearer token comes back
+   * 401 (expired or revoked session), before the call rejects — so the owner
+   * can clear its stored session and route to sign-in instead of painting the
+   * server's "Unauthorized" text. Never called for token-less requests
+   * (health, signup status, sign-in, sign-up).
+   */
+  onUnauthorized?: () => void
 }
 
 async function readError(response: Response) {
@@ -62,7 +70,10 @@ export function createHitlyClient(options: ClientOptions) {
       ...init,
       headers: { ...headers(), ...(init?.headers as Record<string, string> | undefined) },
     })
-    if (!response.ok) throw new Error(await readError(response))
+    if (!response.ok) {
+      if (response.status === 401 && options.token) options.onUnauthorized?.()
+      throw new Error(await readError(response))
+    }
     return (await response.json()) as T
   }
 

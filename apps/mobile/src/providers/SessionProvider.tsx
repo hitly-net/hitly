@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Platform } from 'react-native'
 import Constants from 'expo-constants'
 import { createHitlyClient, probeInstance } from '../api/hitly-client'
@@ -87,6 +87,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     else await deleteItem(WORKSPACE_KEY)
   }, [])
 
+  // Token the currently rendered session holds. A 401 may only clear the
+  // session if it belongs to that same token: a stale in-flight request from
+  // before a re-sign-in must not wipe the session the user re-established.
+  const tokenRef = useRef<string | null>(token)
+  tokenRef.current = token
+
+  /** Drop token, user, selected workspace and workspace list (keeps instance). */
+  const clearSession = useCallback(async () => {
+    await persistAuth(null, null)
+    await persistWorkspace(null)
+    setWorkspaces([])
+  }, [persistAuth, persistWorkspace])
+
   const setPendingLink = useCallback(async (link: AttentionLink | null) => {
     setPendingLinkState(link)
     if (link) await setItem(PENDING_KEY, JSON.stringify(link))
@@ -107,8 +120,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       workspaceId,
       platform: Platform.OS === 'android' ? 'android' : 'ios',
       ...(appVersion ? { appVersion } : {}),
+      onUnauthorized: () => {
+        // Expired/revoked session: drop it so AuthGate/(tabs) redirect to
+        // sign-in. Guarded on token identity so a stale in-flight 401 cannot
+        // clear a session the user re-established in the meantime.
+        if (tokenRef.current === token) void clearSession()
+      },
     })
-  }, [instance, token, workspaceId])
+  }, [instance, token, workspaceId, clearSession])
 
   const refreshWorkspaces = useCallback(
     async (api = client) => {
@@ -187,10 +206,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   )
 
   const signOut = useCallback(async () => {
-    await persistAuth(null, null)
-    await persistWorkspace(null)
-    setWorkspaces([])
-  }, [persistAuth, persistWorkspace])
+    await clearSession()
+  }, [clearSession])
 
   const setWorkspace = useCallback(
     async (id: string) => {
