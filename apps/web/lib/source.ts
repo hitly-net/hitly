@@ -1,4 +1,5 @@
-import { docs, integrations } from '@/.source/server'
+import { blog, docs, integrations } from '@/.source/server'
+import { toFumadocsSource } from 'fumadocs-mdx/runtime/server'
 import { loader } from 'fumadocs-core/source'
 import type * as PageTree from 'fumadocs-core/page-tree'
 
@@ -46,6 +47,24 @@ export const integrationsSource = loader({
     transformers: [nestIndexFolder('/integrations', 'Integrations')],
   },
 })
+
+/** Blog posts, served at /blog. Kept out of the docs sidebar (getNavTree). */
+export const blogSource = loader({
+  baseUrl: '/blog',
+  // defineCollections `doc` type exports a plain entry array (no Builder);
+  // toFumadocsSource adapts it for fumadocs-core's loader.
+  source: toFumadocsSource(blog, []),
+})
+
+export type BlogPost = NonNullable<ReturnType<typeof blogSource.getPage>>
+
+/** Drafts excluded, newest first. Everything index/feed-facing uses this. */
+export function publishedPosts(): BlogPost[] {
+  return blogSource
+    .getPages()
+    .filter((page) => page.data.draft !== true)
+    .sort((a, b) => (b.data.date > a.data.date ? 1 : b.data.date < a.data.date ? -1 : 0))
+}
 
 /** One sidebar: Docs and Integrations as nested folders, used by both layouts. */
 export function getNavTree(): PageTree.Root {

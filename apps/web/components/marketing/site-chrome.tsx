@@ -24,6 +24,7 @@ export const LEGAL_FOOTER_LINKS = [
 const links = [
   { href: '/docs', label: 'Docs' },
   { href: '/integrations', label: 'Integrations' },
+  { href: '/blog', label: 'Blog' },
 ]
 
 export function SiteHeader() {
