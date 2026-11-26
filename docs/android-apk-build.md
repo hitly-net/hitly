@@ -64,7 +64,24 @@ Steps the script runs: `yarn install --frozen-lockfile`, stage `google-services.
 when provided, `expo prebuild -p android --clean`, restage the file in the generated
 `android/` tree, patch the generated `android/app/build.gradle` (release signing from
 env, `versionCode`), set `reactNativeArchitectures` (default `arm64-v8a,x86_64`),
-`./gradlew assembleRelease`, then `apksigner verify`.
+`./gradlew assembleRelease`, then `apksigner verify` and the launcher-resource gate
+below.
+
+## Launcher-resource gate
+
+A release APK that ships without generated launcher icons installs with the stock
+Android robot and is easy to mistake for "working" (issue #205). After signing, the
+script fails the build unless the APK actually contains the brand artwork:
+
+- launcher bitmaps (`res/mipmap-*/ic_launcher.png`)
+- the adaptive icon (`res/mipmap-anydpi-v26/ic_launcher.xml`)
+- the adaptive foreground layer (`res/drawable-*/ic_launcher_foreground.png`)
+- the Android 13 themed monochrome layer (`res/drawable-*/ic_launcher_monochrome.png`)
+
+The layers must come from `apps/mobile/assets/icons/` via `app.json`
+(`expo.icon` + `expo.android.adaptiveIcon`); their geometry is guarded by
+`apps/mobile/src/app-icons.test.ts`. If the gate fails, fix prebuild's icon
+inputs — do not weaken the gate.
 
 Output: `apps/mobile/dist-android/hitly-<versionName>-<sha8>.apk`, plus the APK SHA-256 and
 signer fingerprint on stdout.

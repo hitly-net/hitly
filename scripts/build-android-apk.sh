@@ -151,8 +151,24 @@ if [[ -n "${HITLY_ANDROID_EXPECTED_CERT_SHA256:-}" ]]; then
   want="$(echo "$HITLY_ANDROID_EXPECTED_CERT_SHA256" | tr -d ':' | tr 'A-F' 'a-f')"
   [[ "$CERT" == "$want" ]] || die "signer $CERT does not match HITLY_ANDROID_EXPECTED_CERT_SHA256"
 fi
+
+# Launcher-resource gate: the #205 symptom was a release APK shipping with the
+# stock Android robot because prebuild's icon generation silently produced
+# nothing. Fail the build unless the brand artwork is actually inside the APK.
+command -v unzip >/dev/null 2>&1 || die "unzip is required to verify launcher resources"
+APK_ENTRIES="$(unzip -Z1 "$APK" || true)"
+echo "$APK_ENTRIES" | grep -Eq '^res/mipmap-[^/]+/ic_launcher(_round)?\.(png|webp)$' \
+  || die "APK has no launcher bitmaps (res/mipmap-*/ic_launcher.png); expo prebuild icon generation failed"
+echo "$APK_ENTRIES" | grep -Eq '^res/mipmap-anydpi-v26/ic_launcher\.xml$' \
+  || die "APK has no adaptive icon (res/mipmap-anydpi-v26/ic_launcher.xml); check android.adaptiveIcon in app.json"
+echo "$APK_ENTRIES" | grep -Eq '^res/drawable-[^/]+/ic_launcher_foreground\.png$' \
+  || die "APK has no adaptive foreground layer (res/drawable-*/ic_launcher_foreground.png)"
+echo "$APK_ENTRIES" | grep -Eq '^res/drawable-[^/]+/ic_launcher_monochrome\.png$' \
+  || die "APK has no themed monochrome layer (res/drawable-*/ic_launcher_monochrome.png)"
+
 echo "==> APK:         $APK"
 echo "==> version:     $VERSION_NAME ($VERSION_CODE)"
+echo "==> launcher:    ic_launcher mipmaps + adaptive layers verified in APK"
 echo "==> commit:      $(git -C "$REPO_ROOT" rev-parse HEAD)"
 echo "==> APK sha256:  $(sha256sum "$APK" | cut -d' ' -f1)"
 echo "==> signer cert sha256: $CERT"
