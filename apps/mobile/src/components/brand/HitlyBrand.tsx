@@ -1,4 +1,4 @@
-import { Text, View, StyleSheet } from 'react-native'
+import { Image, Text, View, StyleSheet } from 'react-native'
 import { colors } from '../../theme'
 
 export function HitlyWordmark({
@@ -26,24 +26,15 @@ export function HitlyWordmark({
   )
 }
 
-export function HitlyH({ size = 28 }: { size?: number }) {
-  const bar = size * 0.11
-  const inset = size * 0.26
+/** The current brand mark: H-and-check app icon as a rounded tile. */
+export function HitlyBrandTile({ size = 48 }: { size?: number }) {
   return (
-    <View
+    <Image
+      source={require('../../../assets/icons/app-icon.png')}
+      style={{ width: size, height: size, borderRadius: size * 0.18 }}
+      resizeMode="cover"
       accessibilityLabel="HITLy"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size * 0.22,
-        backgroundColor: colors.accent,
-        justifyContent: 'center',
-      }}
-    >
-      <View style={{ position: 'absolute', left: inset, top: size * 0.22, width: bar, height: size * 0.56, backgroundColor: colors.accentFg }} />
-      <View style={{ position: 'absolute', right: inset, top: size * 0.22, width: bar, height: size * 0.56, backgroundColor: colors.accentFg }} />
-      <View style={{ position: 'absolute', left: inset, top: size * 0.445, width: size - inset * 2, height: bar, backgroundColor: colors.accentFg }} />
-    </View>
+    />
   )
 }
 

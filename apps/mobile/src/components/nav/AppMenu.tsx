@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { colors } from '../../theme'
 import { useSession } from '../../providers/SessionProvider'
 import { useMenu } from '../../providers/MenuProvider'
-import { HitlyMark, HitlyWordmark } from '../brand/HitlyBrand'
+import { HitlyBrandTile, HitlyWordmark } from '../brand/HitlyBrand'
 
 const ITEMS = [
   { href: '/', label: 'Home' },
@@ -34,7 +34,7 @@ export function AppMenu() {
       <View style={styles.wrap}>
         <SafeAreaView style={styles.panel} edges={['top', 'bottom', 'left']}>
           <View style={styles.brand}>
-            <HitlyMark size={48} />
+            <HitlyBrandTile size={48} />
             <HitlyWordmark size={20} />
           </View>
           {ITEMS.map((item) => {
