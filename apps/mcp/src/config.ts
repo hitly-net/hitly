@@ -63,6 +63,12 @@ export interface McpConfig {
    * query error it counts in process and logs one line.
    */
   rateDatabaseUrl?: string
+  /**
+   * Base URL of the OAuth authorization server that mints delegated access
+   * tokens (HITLY_MCP_OAUTH_ISSUER; HITLY Cloud). Advertised in the protected
+   * resource metadata; defaults to apiUrl when unset.
+   */
+  oauthIssuerUrl?: string
   capabilities: Set<HostCapability>
 }
 
@@ -127,6 +133,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     rateLimit: parseRate(env.HITLY_MCP_RATE_LIMIT, DEFAULT_RATE_LIMIT, 'HITLY_MCP_RATE_LIMIT', 0),
     rateWindowMs: parseRate(env.HITLY_MCP_RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_WINDOW_MS, 'HITLY_MCP_RATE_LIMIT_WINDOW_MS', 1),
     rateDatabaseUrl: env.HITLY_MCP_DATABASE_URL?.trim() || undefined,
+    oauthIssuerUrl: env.HITLY_MCP_OAUTH_ISSUER?.trim() ? trimUrl(env.HITLY_MCP_OAUTH_ISSUER) : undefined,
     capabilities,
   }
 }

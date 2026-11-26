@@ -99,7 +99,8 @@ test('unauthenticated traffic does not consume a key budget, and HITLY_MCP_RATE_
   const h = await startHarness({ env: { HITLY_MCP_RATE_LIMIT: '1' } })
   try {
     for (let i = 0; i < 4; i++) assert.equal((await postMcp(h.url, null)).status, 401, 'missing keys are refused as 401, never 429')
-    assert.equal((await postMcp(h.url, 'Bearer-nope-not-a-key')).status, 401)
+    // Malformed credentials are refused before verification and before the limiter.
+    assert.equal((await postMcp(h.url, 'nope!!')).status, 401)
     assert.equal((await postMcp(h.url, TEST_KEY)).status, 200, 'first authenticated request still allowed')
     assert.equal((await postMcp(h.url, TEST_KEY)).status, 429, 'limit of 1 really applied')
   } finally {

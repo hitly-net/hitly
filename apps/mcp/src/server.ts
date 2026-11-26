@@ -7,6 +7,7 @@ import { clientIdFor, createLogger, type Logger } from './logger.ts'
 import { createRateLimiter, type McpRateAcquire } from './rate-limit.ts'
 import { hostHeaderAllowed, isLoopbackBind, originAllowed } from './security.ts'
 import { registerTools } from './tools.ts'
+import { extractBearer, protectedResourceMetadata, PROTECTED_RESOURCE_PATH, verifyDelegatedToken, type TokenVerification } from './oauth.ts'
 
 export const SERVER_NAME = 'hitly'
 export const SERVER_VERSION = '0.0.1'
@@ -24,10 +25,12 @@ export interface ServerDeps {
    * built in main.ts). Defaults to the per-process fixed-window limiter.
    */
   rateAcquire?: McpRateAcquire
+  /**
+   * Verify a delegated OAuth access token with the host (tests). Defaults to
+   * `verifyDelegatedToken` against `config.apiUrl`.
+   */
+  verifyToken?: (token: string) => Promise<TokenVerification>
 }
-
-/** Project API keys look like `hitly_<base64url>`; resume tokens (`hitly_resume_…`) are not API keys. */
-const API_KEY_PATTERN = /^hitly_[A-Za-z0-9_-]{16,128}$/
 
 /** Where a plain browser visit to the MCP endpoint is sent. */
 export const MCP_DOCS_URL = 'https://hitly.net/docs/mcp'
@@ -48,12 +51,15 @@ export function isBrowserVisit(req: IncomingMessage): boolean {
 }
 
 export function extractApiKey(header: string | undefined): { key: string } | { error: 'missing' | 'invalid' } {
-  if (!header) return { error: 'missing' }
-  const match = /^Bearer\s+(\S+)\s*$/i.exec(header)
-  if (!match) return { error: 'invalid' }
-  const key = match[1]
-  if (!API_KEY_PATTERN.test(key) || key.startsWith('hitly_resume_')) return { error: 'invalid' }
-  return { key }
+  const bearer = extractBearer(header)
+  if ('error' in bearer) return bearer
+  if (bearer.kind === 'apikey') return { key: bearer.key }
+  return { error: 'invalid' }
+}
+
+function bearerChallenge(config: McpConfig): string {
+  const base = 'Bearer realm="hitly-mcp"'
+  return config.publicUrl ? `${base}, resource_metadata="${config.publicUrl}${PROTECTED_RESOURCE_PATH}"` : base
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
@@ -143,6 +149,15 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         res.writeHead(302, { location: MCP_DOCS_URL, 'cache-control': 'no-store' }).end()
         return
       }
+      if (url.pathname === PROTECTED_RESOURCE_PATH && req.method === 'GET') {
+        const metadata = protectedResourceMetadata(config)
+        if (!metadata) {
+          sendJson(res, 404, { error: 'Not found' })
+          return
+        }
+        sendJson(res, 200, metadata, { 'www-authenticate': bearerChallenge(config) })
+        return
+      }
       // The endpoint answers at /mcp and /mcp/ alike (the browser redirect
       // above already treats them as one); everything else is unknown.
       const mcpPath = url.pathname === `${MCP_PATH}/` ? MCP_PATH : url.pathname
@@ -168,29 +183,45 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         jsonRpcError(res, 403, -32003, 'Forbidden: Origin not allowed')
         return
       }
-      const auth = extractApiKey(req.headers.authorization)
+      const auth = extractBearer(req.headers.authorization)
       if ('error' in auth) {
         req.resume()
         logger.log({ event: 'auth', status: auth.error === 'missing' ? 'missing_key' : 'invalid_key' })
         jsonRpcError(res, 401, -32001, auth.error === 'missing' ? 'Missing API key' : 'Invalid API key', {
-          'www-authenticate': 'Bearer realm="hitly-mcp"',
+          'www-authenticate': bearerChallenge(config),
         })
         return
       }
-      const budget = await rateAcquire(clientIdFor(auth.key))
+      const budget = await rateAcquire(clientIdFor(auth.kind === 'apikey' ? auth.key : auth.token))
       if (!budget.ok) {
         req.resume()
         const retryAfterSec = Math.max(1, Math.ceil(budget.retryAfterMs / 1000))
-        logger.log({ event: 'rate_limit', clientId: clientIdFor(auth.key), status: 'rate_limited' })
+        logger.log({ event: 'rate_limit', clientId: clientIdFor(auth.kind === 'apikey' ? auth.key : auth.token), status: 'rate_limited' })
         jsonRpcError(res, 429, -32005, 'Rate limit exceeded; retry later', { 'retry-after': String(retryAfterSec) })
         return
+      }
+      // A delegated token is verified with the host before anything else runs.
+      // The presented credential itself — key or token — is what downstream
+      // calls carry; the host re-checks tokens per request, so no secret
+      // needs to be swapped in or held by the MCP server.
+      const apiKey = auth.kind === 'apikey' ? auth.key : auth.token
+      if (auth.kind === 'token') {
+        const verified = await (deps.verifyToken ?? ((token) => verifyDelegatedToken(config, token, deps.fetchImpl)))(auth.token)
+        if (!verified.ok) {
+          req.resume()
+          logger.log({ event: 'auth', status: verified.status === 502 ? 'host_unreachable' : 'invalid_token' })
+          jsonRpcError(res, verified.status === 502 ? 502 : 401, -32001, verified.status === 502 ? 'HITLy host unreachable' : 'Invalid access token', {
+            'www-authenticate': bearerChallenge(config),
+          })
+          return
+        }
       }
       const parsed = await readBody(req)
       if (!parsed.ok) {
         jsonRpcError(res, parsed.status, -32700, parsed.message)
         return
       }
-      const server = buildMcpServer(config, auth.key, deps, logger)
+      const server = buildMcpServer(config, apiKey, deps, logger)
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
       res.on('close', () => {
         void transport.close()
