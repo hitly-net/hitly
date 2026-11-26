@@ -17,7 +17,7 @@ import { ingestApproval, authenticateProjectKey } from './approvals'
 import { createOncePolicy } from './create-once'
 import { createRateAcquire, hashIngestSubject, resolveDecision, withRetryAfter, type RateAcquire } from './rate-limit'
 import { applyFailedAuthLimit, type RestLimitAcquire } from './rest-limit'
-import { isWellFormedApiKey } from './keys'
+import { isWellFormedBearer } from './keys'
 
 /** Per-API-key ingest budget before the shared-database limiter answers 429. */
 export const INGEST_LIMIT = 120
@@ -54,7 +54,7 @@ export async function handleIngestPost(request: Request, deps: IngestRouteDeps =
     // create a per-key row. Both count against the per-client-address
     // failed-auth budget; the standard 401 then comes from ingestApproval
     // below, unchanged. Only an authenticated key is counted per key (hash).
-    if (isWellFormedApiKey(apiKey)) {
+    if (isWellFormedBearer(apiKey)) {
       const authn = await authenticate(apiKey)
       if (authn) {
         const budget = await resolveDecision(acquire, hashIngestSubject(apiKey), INGEST_WINDOW_MS)

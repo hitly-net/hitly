@@ -112,6 +112,13 @@ export interface HitlyEdition {
   onWorkspaceCreated?(workspaceId: string): Promise<void>
   resolveProjectApiKey?(hashedKey: string): Promise<ResolvedProjectApiKey | null>
   /**
+   * Cloud: verify an OAuth access token presented as a bearer credential
+   * (delegated MCP access, e.g. the Grok marketplace connector) and resolve
+   * it to the same shape as a project API key. The token itself is the
+   * credential — no recoverable secret is stored. OSS omits this.
+   */
+  resolveDelegatedToken?(rawToken: string): Promise<ResolvedProjectApiKey | null>
+  /**
    * Enterprise dedicated-DB seam. Waitlist always returns null (shared Postgres).
    * When a tenant pays for isolation, Cloud returns that workspace's connection string.
    */

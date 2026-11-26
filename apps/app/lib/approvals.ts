@@ -35,7 +35,7 @@ import {
 } from './tier-enforcement'
 import { getPlugin } from './plugins'
 import { envelopeMetadata, stripOriginSecrets } from './origin'
-import { hashApiKey } from './keys'
+import { hashApiKey, isWellFormedApiKey } from './keys'
 import { logProjectEvent } from './events'
 import { notifyAssignee } from './notify'
 import { parseRuleActions, parseRuleMatch, ruleMatches } from './rules'
@@ -58,6 +58,16 @@ import { buildHitlRead } from './hitl-response'
 import { clampListLimit, olderThanListCursor, takeListPage, type ListCursor } from './list-cursor'
 
 export async function authenticateProjectKey(rawKey: string, projectId?: string) {
+  // Delegated OAuth access tokens (MCP marketplace connectors, e.g. Grok)
+  // carry their own claims; the Cloud edition verifies and resolves them to
+  // the grant's anchor key row. Anything shaped like an API key (including
+  // malformed `hitly_` guesses) never enters this branch.
+  if (edition.resolveDelegatedToken && !isWellFormedApiKey(rawKey)) {
+    const resolved = await edition.resolveDelegatedToken(rawKey)
+    if (!resolved) return null
+    if (projectId && resolved.key.projectId !== projectId) return null
+    return resolved
+  }
   const hashed = hashApiKey(rawKey)
   if (edition.resolveProjectApiKey) {
     const resolved = await edition.resolveProjectApiKey(hashed)

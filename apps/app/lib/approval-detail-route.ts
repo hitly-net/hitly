@@ -4,7 +4,7 @@ import type { getApprovalDetail } from './approval-detail'
 import type { getApprovalForOrigin } from './approvals'
 import { authenticateProjectKey } from './approvals'
 import { applyFailedAuthLimit, applyRestLimit, apiKeyRestSubject, type RestLimitAcquire } from './rest-limit'
-import { isWellFormedApiKey } from './keys'
+import { isWellFormedBearer } from './keys'
 
 type RequireApiWorkspaceFn = typeof requireApiWorkspace
 type GetApprovalDetailFn = typeof getApprovalDetail
@@ -37,7 +37,7 @@ export function createApprovalDetailGet(deps: {
   return async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
     const { id } = await context.params
     const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-    if (apiKey && isWellFormedApiKey(apiKey)) {
+    if (apiKey && isWellFormedBearer(apiKey)) {
       const authn = deps.authenticate ? await deps.authenticate(apiKey) : await authenticateProjectKey(apiKey)
       if (authn) {
         // Count per key as soon as the key authenticates, BEFORE the read,
@@ -64,7 +64,7 @@ export function createApprovalDetailGet(deps: {
     // authenticate (401) — a 429 from the session's own read budget or a 503
     // (auth not configured) is not a failed login. Same shape as cancel's
     // `sessionResponse.status === 401` gate.
-    const malformedBearer = apiKey ? !isWellFormedApiKey(apiKey) : false
+    const malformedBearer = apiKey ? !isWellFormedBearer(apiKey) : false
 
     const ctx = await deps.requireApiWorkspace()
     if (!ctx.ok) {

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { listRequesterPending, authenticateProjectKey } from '@/lib/approvals'
 import { handleIngestPost } from '@/lib/ingest-route'
 import { applyFailedAuthLimit, applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
-import { isWellFormedApiKey } from '@/lib/keys'
+import { isWellFormedBearer } from '@/lib/keys'
 import { parseCursorParam, parseLimitParam } from '@/lib/list-cursor'
 
 export async function POST(request: Request) {
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   // unknown keys are counted per client address in the failed-auth budget,
   // so guesses can never mint per-key rows. The unauthenticated reply below
   // is produced by listRequesterPending itself, unchanged.
-  if (isWellFormedApiKey(apiKey)) {
+  if (isWellFormedBearer(apiKey)) {
     const authn = await authenticateProjectKey(apiKey)
     if (authn) {
       const limited = await applyRestLimit('read', apiKeyRestSubject(apiKey))
