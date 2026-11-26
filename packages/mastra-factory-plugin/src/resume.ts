@@ -31,6 +31,8 @@ export interface ResumeDispatch {
 
 export interface ResumeDeps {
   dedupe: SeenEventStore
+  /** Expected callback bearer for this approval (the cbAuthToken sent at create). Undefined → reject. */
+  bearerFor(approvalId: string): string | undefined
   fetchApprovalState(approvalId: string): Promise<ApprovalAuthorityState>
   apply(cmd: ResumeDispatch): Promise<{ applied: boolean; reason?: string }>
   log?(level: string, message: string, meta?: Record<string, unknown>): void
@@ -43,9 +45,12 @@ function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
 
-function bearerOk(headers: Headers, expected: string): boolean {
+function bearerOf(headers: Headers): string {
   const header = headers.get('authorization') ?? ''
-  const value = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+  return header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+}
+
+function bearerEquals(value: string, expected: string | undefined): boolean {
   if (!value || !expected) return false
   const a = Buffer.from(value, 'utf8')
   const b = Buffer.from(expected, 'utf8')
@@ -56,12 +61,15 @@ function bearerOk(headers: Headers, expected: string): boolean {
  * HITLy decided/answered callback receiver.
  *
  * Auth order (all failures are 401, nothing dispatched):
- *  1. Bearer token (project cb_auth_token) — rejects anonymous probes.
- *  2. HMAC-SHA256 signature over `timestamp.rawBody`, 5-min skew window,
- *     verifying against every configured rotation secret.
- *  3. Event-id dedupe — duplicates are ACKED with 200 (stops HITLy retries)
+ *  1. Bearer token present — rejects anonymous probes before any parsing.
+ *  2. Bearer equals the per-approval cbAuthToken sent at create time
+ *     (resolved from the body's approval id; unknown approvals reject).
+ *  3. HMAC-SHA256 signature over `timestamp.rawBody`, 5-min skew window,
+ *     verifying against every configured project webhook signing secret
+ *     (rotation = overlap window).
+ *  4. Event-id dedupe — duplicates are ACKED with 200 (stops HITLy retries)
  *     but never re-dispatched.
- *  4. HITLy is the AUTHORITY: the callback's claim is re-checked against
+ *  5. HITLy is the AUTHORITY: the callback's claim is re-checked against
  *     GET /api/v1/approvals/:id. pending/expired/cancelled/failed_resume
  *     never dispatch — a callback can never upgrade state into approval.
  */
@@ -73,7 +81,8 @@ export async function handleResumeRequest(args: {
 }, nowSeconds?: number): Promise<Response> {
   const { headers, rawBody, config, deps } = args
 
-  if (!bearerOk(headers, config.callbackBearer)) {
+  // Cheap anti-probe gate: no bearer at all → 401 before touching the body.
+  if (!bearerOf(headers)) {
     deps.log?.('warn', 'hitly resume: bearer rejected')
     return json(401, { error: 'unauthorized' })
   }
@@ -94,7 +103,14 @@ export async function handleResumeRequest(args: {
     return json(400, { error: 'missing_event_fields' })
   }
 
-  const signatureVerified = config.resumeSecrets.some((secret) => {
+  // Per-approval binding: HITLy echoes the cbAuthToken we generated at
+  // create time. A bearer that is valid for another (or no) approval fails.
+  if (!bearerEquals(bearerOf(headers), deps.bearerFor(approvalId))) {
+    deps.log?.('warn', 'hitly resume: bearer rejected', { approvalId })
+    return json(401, { error: 'unauthorized' })
+  }
+
+  const signatureVerified = config.webhookSigningSecrets.some((secret) => {
     const result = verifyHttpSignature({
       secret,
       rawBody,

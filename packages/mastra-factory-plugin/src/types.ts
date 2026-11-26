@@ -25,10 +25,12 @@ export interface PluginRuntimeConfig {
   projectId: string
   /** Public origin of the Factory host — resume callbacks target this. */
   publicBaseUrl: string
-  /** Bearer token HITLy presents to our resume route (project cb_auth_token). */
-  callbackBearer: string
-  /** HMAC secrets (comma-separated env; rotation = overlap window). */
-  resumeSecrets: string[]
+  /**
+   * HITLy project webhook signing secrets (whsec_…, comma-separated env;
+   * rotation = overlap window). HITLy signs resume callbacks with these —
+   * NOT with the origin→HITLy resume secret.
+   */
+  webhookSigningSecrets: string[]
   /** Env-level gate toggles. HITLy project config is authoritative when reachable. */
   gates: Record<Gate, boolean>
   /** Opt-in squash merge after explicit review accept. Default false. */
@@ -83,7 +85,10 @@ export interface ApprovalRequest {
   idempotencyKey?: string
   metadata?: Record<string, string>
   allowedActions?: Partial<Record<'accept' | 'reject' | 'edit' | 'respond' | 'ignore' | 'cancel', boolean>>
-  reasonRequired?: boolean
+  /** Array of non-empty answer values (plugin-http ingest contract). */
+  reasonRequired?: string[]
+  /** Per-request bearer HITLy echoes on resume callbacks. */
+  cbAuthToken?: string
   expiresAt?: string
   args?: unknown
 }

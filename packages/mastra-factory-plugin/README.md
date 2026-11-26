@@ -17,7 +17,7 @@ const factory = new MastraFactory({
 })
 ```
 
-Required env: `HITLY_API_URL`, `HITLY_API_KEY`, `HITLY_PROJECT_ID`, `HITLY_PUBLIC_URL`, `HITLY_CALLBACK_BEARER`, `HITLY_RESUME_SECRETS` (comma-separated). Optional: gate toggles, `HITLY_MERGE_AFTER_ACCEPT`, `HITLY_GITHUB_TOKEN`, `HITLY_POLL_INTERVAL_MS`. See [the integration guide](https://hitly.net/integrations/mastra-factory).
+Required env: `HITLY_API_URL`, `HITLY_API_KEY`, `HITLY_PROJECT_ID`, `HITLY_PUBLIC_URL`, `HITLY_WEBHOOK_SIGNING_SECRETS` (comma-separated `whsec_…` — the HITLy project webhook signing secrets that sign resume callbacks; `HITLY_WEBHOOK_SIGNING_SECRET` for a single secret). Optional: gate toggles, `HITLY_MERGE_AFTER_ACCEPT`, `HITLY_GITHUB_TOKEN`, `HITLY_POLL_INTERVAL_MS`. See [the integration guide](https://hitly.net/integrations/mastra-factory).
 
 ## HITLy server
 
@@ -28,7 +28,7 @@ Required env: `HITLY_API_URL`, `HITLY_API_KEY`, `HITLY_PROJECT_ID`, `HITLY_PUBLI
 - No merge tool is exposed to agents. Merge requires both the host flag (`HITLY_MERGE_AFTER_ACCEPT` + `HITLY_GITHUB_TOKEN`) and the HITLy project toggle, re-checks the PR head SHA, and only ever runs from the HITLy-accepted review-verdict path.
 - `pending`, `expired`, and `cancelled` are never approval. An expired plan declines the parked call; expiry never merges.
 - `ask_user` answers are delivered verbatim via a session signal; the plugin never fabricates an answer.
-- Resume callbacks are verified (bearer + HMAC signature + timestamp window + event-id dedupe) and the authoritative approval state is re-read from HITLy before anything is applied.
+- Resume callbacks are verified (per-approval cbAuthToken bearer + HMAC signature with the project webhook signing secret + timestamp window + event-id dedupe) and the authoritative approval state is re-read from HITLy before anything is applied. The resume route mounts under `/custom` (`/api` is reserved by `@mastra/server`).
 
 ## Layout
 
