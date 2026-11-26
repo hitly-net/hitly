@@ -234,3 +234,60 @@ test('x-hitly-client header carries platform and appVersion when provided', asyn
   await plain.presented('apr_1')
   assert.equal(capturedHeaders?.['x-hitly-client'], undefined)
 })
+
+test('401 on an authenticated call fires onUnauthorized and still rejects', async () => {
+  const mockFetch = async (_url: string, init?: RequestInit) => {
+    assert.equal((init?.headers as Record<string, string>)?.authorization, 'Bearer test-token')
+    return { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) } as Response
+  }
+  globalThis.fetch = mockFetch as typeof fetch
+
+  let fired = 0
+  const client = createHitlyClient({
+    baseUrl: 'http://localhost:3001',
+    token: 'test-token',
+    onUnauthorized: () => {
+      fired += 1
+    },
+  })
+  await assert.rejects(() => client.workspace(), { message: /Unauthorized/ })
+  assert.equal(fired, 1, 'onUnauthorized must fire exactly once for the 401')
+})
+
+test('401 without a token (sign-in) does not fire onUnauthorized', async () => {
+  const mockFetch = async (_url: string, init?: RequestInit) => {
+    assert.equal((init?.headers as Record<string, string>)?.authorization, undefined)
+    return { ok: false, status: 401, json: async () => ({ error: 'Invalid email or password' }) } as Response
+  }
+  globalThis.fetch = mockFetch as typeof fetch
+
+  let fired = 0
+  const client = createHitlyClient({
+    baseUrl: 'http://localhost:3001',
+    onUnauthorized: () => {
+      fired += 1
+    },
+  })
+  await assert.rejects(() => client.signIn('a@b.c', 'wrong-password'), { message: /Invalid email or password/ })
+  assert.equal(fired, 0, 'bad credentials must not clear a good session')
+})
+
+test('non-401 errors on an authenticated call do not fire onUnauthorized', async () => {
+  let status = 403
+  const mockFetch = async () =>
+    ({ ok: false, status, json: async () => ({ error: 'nope' }) }) as unknown as Response
+  globalThis.fetch = mockFetch as typeof fetch
+
+  let fired = 0
+  const client = createHitlyClient({
+    baseUrl: 'http://localhost:3001',
+    token: 'test-token',
+    onUnauthorized: () => {
+      fired += 1
+    },
+  })
+  await assert.rejects(() => client.workspace(), { message: /nope/ })
+  status = 500
+  await assert.rejects(() => client.workspace(), { message: /nope/ })
+  assert.equal(fired, 0, 'only 401 means the session is gone')
+})
