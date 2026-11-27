@@ -25,8 +25,10 @@ export function isWellFormedApiKey(raw: string): boolean {
  * matches (that space belongs to API keys, including revoked/malformed ones,
  * so they keep failing as keys, not as tokens).
  */
+export const DELEGATED_TOKEN_MAX_LENGTH = 1024
+
 export function isWellFormedDelegatedToken(raw: string): boolean {
-  if (raw.startsWith('hitly_') || raw.length < 20 || raw.length > 512) return false
+  if (raw.startsWith('hitly_') || raw.length < 20 || raw.length > DELEGATED_TOKEN_MAX_LENGTH) return false
   return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(raw)
 }
 

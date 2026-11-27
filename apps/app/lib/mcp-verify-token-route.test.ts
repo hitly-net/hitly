@@ -18,9 +18,10 @@ import {
   VERIFY_TOKEN_SECRET_HEADER,
   extractBearer,
   verifyDelegatedToken,
+  DELEGATED_TOKEN_MAX_LENGTH as MCP_TOKEN_MAX_LENGTH,
 } from '../../mcp/src/oauth.ts'
 import type { McpConfig } from '../../mcp/src/config.ts'
-import { isWellFormedDelegatedToken } from './keys'
+import { isWellFormedDelegatedToken, DELEGATED_TOKEN_MAX_LENGTH as APP_TOKEN_MAX_LENGTH } from './keys'
 import { handleMcpVerifyTokenFactory } from './mcp-verify-token-route'
 import type { RateLimitDecision } from './rate-limit'
 
@@ -198,5 +199,29 @@ describe('verify-token contract (real MCP client ⇄ real route factory)', () =>
     // be rejected upstream (or vice versa).
     assert.deepEqual(extractBearer(`Bearer ${VALID_TOKEN}`), { kind: 'token', token: VALID_TOKEN })
     assert.deepEqual(extractBearer(`Bearer ${'K'.repeat(40)}`), { error: 'invalid' })
+  })
+})
+
+describe('shared token-size cap (review B4)', () => {
+  it('both sides share one cap and accept realistically sized production JWTs', () => {
+    assert.equal(MCP_TOKEN_MAX_LENGTH, APP_TOKEN_MAX_LENGTH)
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+    const token = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({
+      iss: 'https://cloud.hitly.net',
+      sub: '0f1e2d3c-4b5a-4978-8675-6453f2e1d0c9',
+      aud: 'https://mcp.hitly.net',
+      exp: 1_800_000_000,
+      iat: 1_799_996_400,
+      jti: '9a8b7c6d-5e4f-4a1b-9c8d-7e6f5a4b3c2d',
+      workspace_id: '3f2e1d0c-9b8a-4765-9483-7261504f3e2d',
+      project_id: '7a6b5c4d-3e2f-4109-8765-4321fedcba09',
+      key_id: 'key_mcp_0123456789abcdef0123456789abcdef',
+      client_id: 'grok-bot',
+      scope: 'hitly.mcp',
+    })}.sig_1234567890abcdefghijklmnopqrstuvwxyzABCDEFG`
+    // Production tokens measure ~580–600 chars; both gates must accept them.
+    assert.ok(token.length >= 550 && token.length <= APP_TOKEN_MAX_LENGTH, `unexpected length ${token.length}`)
+    assert.deepEqual(extractBearer(`Bearer ${token}`), { kind: 'token', token })
+    assert.equal(isWellFormedDelegatedToken(token), true)
   })
 })

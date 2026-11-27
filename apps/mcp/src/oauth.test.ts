@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { extractBearer, protectedResourceMetadata, verifyDelegatedToken, MCP_SCOPE, VERIFY_TOKEN_SECRET_HEADER } from './oauth.ts'
+import { extractBearer, protectedResourceMetadata, verifyDelegatedToken, MCP_SCOPE, VERIFY_TOKEN_SECRET_HEADER, DELEGATED_TOKEN_MAX_LENGTH } from './oauth.ts'
 import { loadConfig } from './config.ts'
 import { startHarness, TEST_KEY, baseApproval, structured } from './test-helpers.ts'
 
@@ -61,13 +61,13 @@ test('verifyDelegatedToken trusts only an explicit host acceptance', async () =>
   assert.deepEqual(unreachable, { ok: false, status: 502 })
 })
 
-test('delegated token gate is the host gate: three base64url segments, 20-512 chars', () => {
+test('delegated token gate is the host gate: three base64url segments, 20-1024 chars', () => {
   // Session bearers (Better Auth ids: 40 base64url chars, no dots) must never
   // classify as delegated tokens — same rule as isWellFormedDelegatedToken.
   assert.deepEqual(extractBearer(`Bearer ${'K'.repeat(40)}`), { error: 'invalid' })
   // Too short, too long, or hitly_-prefixed junk stays invalid.
   assert.deepEqual(extractBearer('Bearer abc.de.f'), { error: 'invalid' })
-  assert.deepEqual(extractBearer(`Bearer ${'a'.repeat(510)}.b.c`), { error: 'invalid' })
+  assert.deepEqual(extractBearer(`Bearer ${'a'.repeat(1030)}.b.c`), { error: 'invalid' })
   assert.deepEqual(extractBearer('Bearer hitly_no.dots.here'), { error: 'invalid' })
   // A realistic compact JWT classifies as a delegated token.
   assert.deepEqual(extractBearer(`Bearer ${'a'.repeat(30)}.${'b'.repeat(30)}.${'c'.repeat(30)}`), {
@@ -165,4 +165,38 @@ test('delegated token: host trouble surfaces as 502, never as acceptance', async
   } finally {
     await h.close()
   }
+})
+
+/** A delegated JWT with production-shaped claims: uuid ids, anchor key id, iss/aud URLs. */
+function realisticDelegatedToken(): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+  const header = b64({ alg: 'HS256', typ: 'JWT' })
+  const payload = b64({
+    iss: 'https://cloud.hitly.net',
+    sub: '0f1e2d3c-4b5a-4978-8675-6453f2e1d0c9',
+    aud: 'https://mcp.hitly.net',
+    exp: 1_800_000_000,
+    iat: 1_799_996_400,
+    jti: '9a8b7c6d-5e4f-4a1b-9c8d-7e6f5a4b3c2d',
+    workspace_id: '3f2e1d0c-9b8a-4765-9483-7261504f3e2d',
+    project_id: '7a6b5c4d-3e2f-4109-8765-4321fedcba09',
+    key_id: 'key_mcp_0123456789abcdef0123456789abcdef',
+    client_id: 'grok-bot',
+    scope: 'hitly.mcp',
+  })
+  return `${header}.${payload}.sig_1234567890abcdefghijklmnopqrstuvwxyzABCDEFG`
+}
+
+test('a realistically sized production JWT classifies as a delegated token', () => {
+  const token = realisticDelegatedToken()
+  // Review B4: production tokens measure 579–597 chars; the old 512 cap
+  // rejected every one of them before any host round-trip.
+  assert.ok(token.length >= 550 && token.length <= DELEGATED_TOKEN_MAX_LENGTH, `unexpected length ${token.length}`)
+  assert.deepEqual(extractBearer(`Bearer ${token}`), { kind: 'token', token })
+})
+
+test('a credential beyond the shared token cap is refused as malformed', () => {
+  const oversized = `${'a'.repeat(400)}.${'b'.repeat(400)}.${'c'.repeat(300)}`
+  assert.ok(oversized.length > DELEGATED_TOKEN_MAX_LENGTH)
+  assert.deepEqual(extractBearer(`Bearer ${oversized}`), { error: 'invalid' })
 })

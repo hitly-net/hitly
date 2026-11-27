@@ -30,14 +30,16 @@ export const MCP_SCOPE = 'hitly.mcp'
 
 /**
  * Delegated access tokens are compact JWTs from the HITLy Cloud auth server:
- * three non-empty base64url segments, 20–512 chars, never `hitly_…`. The
- * host applies the identical gate (`isWellFormedDelegatedToken`), so a
- * session bearer (Better Auth ids carry no dots) can never be classified as
- * a delegated token on either side.
+ * three non-empty base64url segments, 20–1024 chars, never `hitly_…`. The
+ * host applies the identical gate (`isWellFormedDelegatedToken` in
+ * apps/app/lib/keys.ts, same DELEGATED_TOKEN_MAX_LENGTH — pinned equal in
+ * tests), so a session bearer (Better Auth ids carry no dots) can never be
+ * classified as a delegated token on either side. The cap must stay above
+ * realistic production JWTs (uuid ids + iss/aud URLs measure ~580–600 chars).
  */
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
 const TOKEN_MIN_LENGTH = 20
-const TOKEN_MAX_LENGTH = 512
+export const DELEGATED_TOKEN_MAX_LENGTH = 1024
 
 /** Host endpoint that verifies delegated tokens (contract with the app route). */
 export const VERIFY_TOKEN_PATH = '/api/v1/mcp/verify-token'
@@ -69,7 +71,7 @@ export function extractBearer(header: string | undefined): Bearer {
   if (credential.startsWith('hitly_')) return { error: 'invalid' } // a malformed key stays 'invalid', not a token
   if (
     credential.length >= TOKEN_MIN_LENGTH &&
-    credential.length <= TOKEN_MAX_LENGTH &&
+    credential.length <= DELEGATED_TOKEN_MAX_LENGTH &&
     TOKEN_PATTERN.test(credential)
   ) {
     return { kind: 'token', token: credential }
