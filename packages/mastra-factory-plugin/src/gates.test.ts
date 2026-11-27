@@ -51,7 +51,7 @@ test('plan approval request carries plan body, gate metadata, resumeUrl, plugin'
   assert.equal(req.metadata?.[GATE_METADATA_KEY], 'plan')
   assert.equal(req.metadata?.['net.hitly/factory/session-id'], 'sess-1')
   assert.match(req.contextMarkdown ?? '', /Do the thing/)
-  assert.ok(req.resumeUrl?.endsWith(RESUME_PATH), 'resumeUrl must point at the mounted resume route')
+  assert.ok(req.resumeUrl?.endsWith(`${RESUME_PATH}/proj-f-1`), 'resumeUrl must carry the factory segment of the per-factory resume route')
   assert.ok(req.resumeUrl?.startsWith('https://factory.example.com'))
   assert.equal(req.runId, 'factory:sess-1:tc-1')
   assert.equal(req.idempotencyKey, 'hitly-mf:sess-1:tc-1')

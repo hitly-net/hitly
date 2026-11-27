@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseRuntimeConfig, DEFAULT_POLL_INTERVAL_MS } from './config.ts'
+import { parseRuntimeConfig, parseDeploymentConfig, DEFAULT_POLL_INTERVAL_MS } from './config.ts'
 
 const baseEnv = {
   HITLY_API_URL: 'https://hitly.example.com',
@@ -66,4 +66,37 @@ test('github token is optional; absent it disables merge attempts', () => {
 test('trailing slashes in URLs are normalized (no double-slash API paths)', () => {
   const config = parseRuntimeConfig({ ...baseEnv, HITLY_API_URL: 'https://hitly.example.com/' })
   assert.equal(config.hitlyBaseUrl, 'https://hitly.example.com')
+})
+
+test('deployment config without env fallback needs only HITLY_PUBLIC_URL', () => {
+  const deployment = parseDeploymentConfig({ HITLY_PUBLIC_URL: 'https://factory.example.com/' })
+  assert.deepEqual(deployment.envFallback, { mode: 'none' })
+  assert.equal(deployment.config.publicBaseUrl, 'https://factory.example.com')
+  assert.equal(deployment.config.hitlyApiKey, '')
+  assert.equal(deployment.config.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS)
+})
+
+test('deployment config still requires HITLY_PUBLIC_URL with no fallback', () => {
+  assert.throws(() => parseDeploymentConfig({}), /HITLY_PUBLIC_URL/)
+})
+
+test('deployment config keeps the optional github token without fallback', () => {
+  const deployment = parseDeploymentConfig({ HITLY_PUBLIC_URL: 'https://f.example.com', HITLY_GITHUB_TOKEN: 'ghp_x' })
+  assert.equal(deployment.config.githubToken, 'ghp_x')
+})
+
+test('env fallback=all requires the full credential contract', () => {
+  assert.throws(
+    () => parseDeploymentConfig({ HITLY_PUBLIC_URL: 'https://f.example.com', HITLY_ENV_FALLBACK: 'all' }),
+    /HITLY_API_URL/,
+  )
+  const deployment = parseDeploymentConfig({ ...baseEnv, HITLY_ENV_FALLBACK: 'ALL' })
+  assert.deepEqual(deployment.envFallback, { mode: 'all' })
+  assert.equal(deployment.config.hitlyApiKey, 'hk_test_1')
+})
+
+test('env fallback list parses factory project ids', () => {
+  const deployment = parseDeploymentConfig({ ...baseEnv, HITLY_ENV_FALLBACK: ' fproj_1 , fproj_2 ,' })
+  assert.equal(deployment.envFallback.mode, 'list')
+  assert.deepEqual([...(deployment.envFallback as { factoryProjectIds: Set<string> }).factoryProjectIds], ['fproj_1', 'fproj_2'])
 })

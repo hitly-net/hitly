@@ -6,6 +6,16 @@ export const GATE_METADATA_KEY = 'net.hitly/gate'
 // there crashes the host server at startup. `/custom` is the open namespace.
 export const RESUME_PATH = '/custom/integrations/hitly/resume'
 
+/** Per-factory callback path (#211): the factoryProjectId segment routes the resume. */
+export function resumePathFor(factoryProjectId?: string): string {
+  return factoryProjectId ? `${RESUME_PATH}/${factoryProjectId}` : RESUME_PATH
+}
+
+/** Deterministic create-once key: stable across observer retries. */
+export function idempotencyKeyFor(session: GateSession, toolCallId: string): string {
+  return `hitly-mf:${session.sessionId}:${toolCallId}`
+}
+
 export const METADATA_KEYS = {
   gate: 'net.hitly/gate',
   sessionId: 'net.hitly/factory/session-id',
@@ -39,6 +49,27 @@ const ACTION_NAMES: Record<Gate, string> = {
 
 export interface HitlyClientLike {
   createApproval(body: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string; status: string }>
+  getApproval?(
+    id: string,
+  ): Promise<{
+    id: string
+    status: string
+    decision: string | null
+    metadata: Record<string, unknown>
+    reason?: string
+    editedArgs?: Record<string, unknown>
+    response?: string
+    answer?: string
+  }>
+  getIntegrationConfig?(): Promise<{ gates: Record<Gate, boolean>; mergeAfterAccept: boolean }>
+  /** Restart re-adoption feed: open gate approvals (pending + failed_resume) with create-time metadata. */
+  listPending?(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>>
+  /** Host receipt that a failed_resume decision was converged; settles the row to decided. */
+  ackResume?(approvalId: string): Promise<void>
+}
+
+export function isGateTool(toolName: string): boolean {
+  return toolName in GATE_TOOLS
 }
 
 export function detectGate(toolName: string, gates: Record<Gate, boolean>): Gate | null {
@@ -150,8 +181,8 @@ export function buildApprovalRequest(args: {
     runId: `factory:${session.sessionId}:${toolCallId}`,
     actionName: ACTION_NAMES[gate],
     contextMarkdown: contextMarkdown(gate, session, input, pr),
-    resumeUrl: `${config.publicBaseUrl}${RESUME_PATH}`,
-    idempotencyKey: `hitly-mf:${session.sessionId}:${toolCallId}`,
+    resumeUrl: `${config.publicBaseUrl}${resumePathFor(session.factoryProjectId)}`,
+    idempotencyKey: idempotencyKeyFor(session, toolCallId),
     metadata,
     allowedActions: ALLOWED_ACTIONS[gate],
     // Per-request callback bearer: HITLy echoes this back as

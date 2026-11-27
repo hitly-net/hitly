@@ -1,4 +1,5 @@
 import type { Gate, PluginRuntimeConfig } from './types.ts'
+import { parseEnvFallback, type EnvFallback } from './connections.ts'
 
 export const DEFAULT_POLL_INTERVAL_MS = 30_000
 
@@ -48,12 +49,7 @@ export function parseRuntimeConfig(env: Record<string, string | undefined>): Plu
     ask_user: parseBoolean(env.HITLY_GATE_ASK_USER, true),
   }
 
-  const pollIntervalMsRaw = env.HITLY_POLL_INTERVAL_MS?.trim()
-  const pollIntervalMs = pollIntervalMsRaw ? Number(pollIntervalMsRaw) : DEFAULT_POLL_INTERVAL_MS
-  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 1000) {
-    throw new Error('@hitly/mastra-factory-plugin: HITLY_POLL_INTERVAL_MS must be a number >= 1000')
-  }
-
+  const pollIntervalMs = parsePollIntervalMs(env)
   const githubToken = env.HITLY_GITHUB_TOKEN?.trim() || undefined
 
   return {
@@ -66,5 +62,56 @@ export function parseRuntimeConfig(env: Record<string, string | undefined>): Plu
     mergeAfterAccept: parseBoolean(env.HITLY_MERGE_AFTER_ACCEPT, false),
     githubToken,
     pollIntervalMs,
+  }
+}
+
+function parsePollIntervalMs(env: Record<string, string | undefined>): number {
+  const raw = env.HITLY_POLL_INTERVAL_MS?.trim()
+  const pollIntervalMs = raw ? Number(raw) : DEFAULT_POLL_INTERVAL_MS
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 1000) {
+    throw new Error('@hitly/mastra-factory-plugin: HITLY_POLL_INTERVAL_MS must be a number >= 1000')
+  }
+  return pollIntervalMs
+}
+
+/** Deployment-level parsed environment for the registry-mode entry point. */
+export interface HitlyDeploymentConfig {
+  /**
+   * Deployment-level config. With `envFallback.mode === 'none'` the HITLy
+   * credential vars are absent and this carries only deployment facts
+   * (publicBaseUrl, poll interval, github token) — connections come from the
+   * per-factory registry instead.
+   */
+  config: PluginRuntimeConfig
+  envFallback: EnvFallback
+}
+
+/**
+ * Parse the environment for a Factory deployment. HITLY_PUBLIC_URL is always
+ * required (resume URLs are built from it); the HITLy credential vars are
+ * only required when HITLY_ENV_FALLBACK opts factories into env credentials.
+ */
+export function parseDeploymentConfig(env: Record<string, string | undefined>): HitlyDeploymentConfig {
+  const envFallback = parseEnvFallback(env.HITLY_ENV_FALLBACK)
+  if (envFallback.mode !== 'none') {
+    return { config: parseRuntimeConfig(env), envFallback }
+  }
+  // No env fallback: the HITLy credential vars are optional. A deployment
+  // that only uses per-factory saved connections still needs the public
+  // base URL (callbacks point back at it) and may still carry a GitHub token.
+  const publicBaseUrl = normalizeUrl(required(env, 'HITLY_PUBLIC_URL'))
+  return {
+    envFallback,
+    config: {
+      hitlyBaseUrl: '',
+      hitlyApiKey: '',
+      projectId: '',
+      publicBaseUrl,
+      webhookSigningSecrets: [],
+      gates: { plan: true, review: true, ask_user: true },
+      mergeAfterAccept: false,
+      githubToken: env.HITLY_GITHUB_TOKEN?.trim() || undefined,
+      pollIntervalMs: parsePollIntervalMs(env),
+    },
   }
 }
