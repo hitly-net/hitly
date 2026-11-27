@@ -206,3 +206,44 @@ test('annotateApproval swallows transport failures — a lost note must not chan
   const client = new HitlyClient({ ...config, fetchImpl })
   assert.deepEqual(await client.annotateApproval('apv_1', 'note'), { recorded: false })
 })
+
+// --- request deadline -------------------------------------------------------
+// The observer path runs inline with the tool pipeline, so every HITLy call
+// has to carry a deadline: a wedged server must not be able to hold a tool
+// call (or a reconciler tick) open forever.
+
+test('every HITLy call carries an abort signal so a wedged server cannot hang the caller', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({ status: 200, body: { id: 'apv_1', status: 'pending' } }))
+  const client = new HitlyClient({ ...config, fetchImpl })
+  await client.createApproval({ plugin: 'mastra-factory', runId: 'r1' }, 'idem-1')
+  await client.getApproval('apv_1')
+  for (const call of calls) {
+    assert.ok(call.init.signal instanceof AbortSignal, `signal on ${call.url}`)
+  }
+})
+
+test('a server that never answers is cut off at the deadline', async () => {
+  // Stands in for a hung connection: resolves only when the caller aborts,
+  // with the abort reason — which is what fetch does on the wire.
+  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const signal = init?.signal
+    if (!signal) throw new Error('no deadline was passed — the call would hang forever')
+    // AbortSignal.timeout does not keep the event loop alive on its own.
+    const hold = setTimeout(() => undefined, 2_000)
+    return new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        clearTimeout(hold)
+        reject(signal.reason)
+      }, { once: true })
+    })
+  }) as unknown as typeof fetch
+  const client = new HitlyClient({ ...config, fetchImpl, requestTimeoutMs: 25 })
+  await assert.rejects(() => client.createApproval({ plugin: 'mastra-factory', runId: 'r1' }, 'idem-1'), /abort|timeout/i)
+})
+
+test('requestTimeoutMs: 0 opts out of the deadline', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({ status: 201, body: { id: 'apv_1', status: 'pending' } }))
+  const client = new HitlyClient({ ...config, fetchImpl, requestTimeoutMs: 0 })
+  await client.createApproval({ plugin: 'mastra-factory', runId: 'r1' }, 'idem-1')
+  assert.equal(calls[0]!.init.signal, undefined)
+})

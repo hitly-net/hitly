@@ -139,6 +139,42 @@ test('a record with no org is kept in memory only', async () => {
   assert.equal((await store.load(item.key))?.status, 'open')
 })
 
+test('a terminal save that lost its org stays durable via the row it replaces', async () => {
+  const logged: Array<{ level: string; message: string }> = []
+  const { storage, rows } = fakeStorage()
+  const ref: HostContextRef = { current: { storage } as never }
+  const store = createSubscriptionGateStateStore(ref, (level, message) => logged.push({ level, message }))
+  const item = record()
+  await store.save(item)
+  // The HITLy snapshot that drives this transition may carry no org of its own.
+  await store.save({ ...item, orgId: undefined, status: 'hitly_applied', hitlyDecision: 'accept' })
+
+  assert.equal(rows.length, 1, 'the gate is still durable after the org-less transition')
+  assert.equal((rows[0]!.data as GateRecord).status, 'hitly_applied')
+  assert.equal(rows[0]!.orgId, 'org_1', 'the replacement row keeps the gate in the same org')
+  assert.equal(logged.length, 0, 'an inherited org is not a degradation worth logging')
+
+  // And it survived: a restart still sees the applied gate, so a late replay
+  // cannot be mistaken for a fresh decision.
+  const restarted = createSubscriptionGateStateStore(ref)
+  assert.equal((await restarted.load(item.key))?.status, 'hitly_applied')
+})
+
+test('a terminal status that cannot be persisted is warned about, not skipped quietly', async () => {
+  const logged: Array<{ level: string; message: string }> = []
+  const { storage, rows } = fakeStorage()
+  const ref: HostContextRef = { current: { storage } as never }
+  const store = createSubscriptionGateStateStore(ref, (level, message) => logged.push({ level, message }))
+  const item = { ...record(), orgId: undefined, status: 'conflict' as const }
+  await store.save(item)
+
+  assert.equal(rows.length, 0)
+  assert.ok(
+    logged.some((entry) => entry.level === 'warn' && entry.message.includes('not persisted')),
+    'losing a conflict across a restart is worth a warn; an unopened gate is not',
+  )
+})
+
 test('a foreign or corrupt row is not read as this gate', async () => {
   const { storage, rows } = fakeStorage()
   const ref: HostContextRef = { current: { storage } as never }

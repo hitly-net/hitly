@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { applyDecision, type ApplyDeps } from './apply.ts'
 import type { ApprovalSnapshot, Gate } from './types.ts'
+import { createMemoryGateStateStore, gateStateKey, type GateRecord } from './gate-state.ts'
 
 interface Call {
   kind: 'parked' | 'signal' | 'merge' | 'merge-ready'
@@ -262,4 +263,106 @@ test('missing session identity fails closed with no calls', async () => {
   const outcome = await applyDecision(snapshot('plan', { decision: 'accept', sessionId: undefined }), deps)
   assert.equal(outcome.applied, false)
   assert.equal(deps.calls.length, 0)
+})
+
+// ---------------------------------------------------------------------------
+// Gate memory: a gate the Factory already answered
+// ---------------------------------------------------------------------------
+
+function factoryResolvedRecord(overrides: Partial<GateRecord> = {}): GateRecord {
+  return {
+    key: gateStateKey('sess-1', 'tc-1', 'plan'),
+    sessionId: 'sess-1',
+    toolCallId: 'tc-1',
+    gate: 'plan',
+    orgId: 'org_1',
+    approvalId: 'apv_1',
+    status: 'factory_resolved',
+    factoryDecision: 'approved',
+    factoryChannel: 'ui',
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  }
+}
+
+function withGateStore(...records: GateRecord[]) {
+  const deps = fakeDeps()
+  const store = createMemoryGateStateStore()
+  for (const record of records) void store.save(record)
+  return { deps: { ...deps, gateStore: store }, store }
+}
+
+test('a HITLy decision on a gate the Factory answered is a conflict, never a second verdict', async () => {
+  const { deps, store } = withGateStore(factoryResolvedRecord())
+  const outcome = await applyDecision(snapshot('plan', { decision: 'accept' }), deps)
+  assert.equal(outcome.applied, false)
+  assert.equal(outcome.conflict, true)
+  assert.equal(deps.calls.length, 0, 'the parked call is not touched a second time')
+  const stored = await store.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(stored?.status, 'conflict')
+  assert.equal(stored?.conflict?.hitlyDecision, 'accept')
+})
+
+test('a HITLy cancel on a Factory-answered gate is a clean close, not a conflict', async () => {
+  // Withdrawing the HITLy item (including this plugin's own requester cancel)
+  // records no decision, so nothing contradicts the Factory's answer.
+  for (const cancelledAt of [undefined, new Date().toISOString()]) {
+    const { deps, store } = withGateStore(factoryResolvedRecord({ cancelledAt }))
+    const outcome = await applyDecision(snapshot('plan', { status: 'cancelled', decision: null }), deps)
+    assert.equal(outcome.applied, false)
+    assert.equal(outcome.conflict, undefined, `cancelledAt=${cancelledAt}`)
+    assert.equal(deps.calls.length, 0, 'no expiry-style decline is injected')
+    const stored = await store.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+    assert.equal(stored?.status, 'factory_resolved', 'the record stays as the Factory answer it is')
+  }
+})
+
+test('a HITLy expiry on a Factory-answered gate is a clean close, not a conflict', async () => {
+  const { deps, store } = withGateStore(factoryResolvedRecord())
+  const outcome = await applyDecision(snapshot('plan', { status: 'expired', decision: null }), deps)
+  assert.equal(outcome.applied, false)
+  assert.equal(outcome.conflict, undefined)
+  assert.equal(deps.calls.length, 0)
+  const stored = await store.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(stored?.status, 'factory_resolved')
+})
+
+test('a repeated late decision on a recorded conflict stays terminal and silent', async () => {
+  const { deps } = withGateStore(factoryResolvedRecord({ status: 'conflict', conflict: { hitlyDecision: 'accept', factoryDecision: 'approved', factoryChannel: 'ui', detectedAt: new Date().toISOString(), detail: 'x' } }))
+  const outcome = await applyDecision(snapshot('plan', { decision: 'accept' }), deps)
+  assert.equal(outcome.applied, false)
+  assert.equal(outcome.conflict, true)
+  assert.equal(deps.calls.length, 0)
+})
+
+test('applying a HITLy decision records the gate as applied, so a later Factory answer cannot double-apply', async () => {
+  const { deps, store } = withGateStore()
+  const outcome = await applyDecision(snapshot('plan', { decision: 'accept' }), deps)
+  assert.equal(outcome.applied, true)
+  const stored = await store.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(stored?.status, 'hitly_applied')
+  assert.equal(stored?.hitlyDecision, 'accept')
+})
+
+test('the applied record keeps the identity the gate was opened with', async () => {
+  // A HITLy snapshot can be thinner than the gate the plugin opened — an
+  // older row, or a response that omits the org. Dropping those would make
+  // the record undurable and send a later cancel to the wrong project.
+  const opened = factoryResolvedRecord({
+    status: 'open',
+    orgId: 'org_9',
+    factoryProjectId: 'proj_9',
+    factoryDecision: undefined,
+    factoryChannel: undefined,
+  })
+  const { deps, store } = withGateStore(opened)
+  const outcome = await applyDecision(
+    snapshot('plan', { decision: 'accept', orgId: undefined, factoryProjectId: undefined }),
+    deps,
+  )
+  assert.equal(outcome.applied, true)
+  const stored = await store.load(gateStateKey('sess-1', 'tc-1', 'plan'))
+  assert.equal(stored?.status, 'hitly_applied')
+  assert.equal(stored?.orgId, 'org_9', 'the org the gate was opened with survives')
+  assert.equal(stored?.factoryProjectId, 'proj_9', 'so a later cancel reaches the owning factory')
 })

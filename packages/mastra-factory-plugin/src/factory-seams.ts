@@ -63,6 +63,7 @@ export interface HostContextRef {
 /** The subset of the Factory integration-subscription surface the gate store uses. */
 interface SubscriptionRow {
   id: string
+  orgId?: string
   data: unknown
   updatedAt?: Date
 }
@@ -132,15 +133,24 @@ export function createSubscriptionGateStateStore(
       await memory.save(record)
       const subscriptions = handle()
       if (!subscriptions) return
-      if (!record.orgId) {
-        log?.('debug', 'hitly gate store: no org on record, not persisted', { key: record.key })
-        return
-      }
       const targetKey = `${GATE_TARGET_PREFIX}${record.key}`
       try {
         const existing = await subscriptions.listByTarget(targetKey)
+        // The org normally rides on the record itself. It does not when the
+        // gate was opened before the session's org was known, or when a
+        // snapshot from HITLy arrives without one — and the `hitly_applied` /
+        // `conflict` saves are exactly those. Fall back to the org of the row
+        // this save replaces, so a gate that was durable once stays durable.
+        const orgId = record.orgId ?? existing[0]?.orgId
+        if (!orgId) {
+          log?.(record.status === 'open' ? 'debug' : 'warn', 'hitly gate store: no org for record, not persisted', {
+            key: record.key,
+            status: record.status,
+          })
+          return
+        }
         await subscriptions.create({
-          orgId: record.orgId,
+          orgId,
           targetKey,
           sessionId: record.sessionId,
           status: record.status,

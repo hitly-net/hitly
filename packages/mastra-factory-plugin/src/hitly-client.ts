@@ -26,7 +26,17 @@ export interface HitlyClientConfig {
   hitlyApiKey: string
   projectId: string
   fetchImpl?: typeof fetch
+  /**
+   * Upper bound on a single HITLy HTTP call, in milliseconds. The observer
+   * path runs inline with the tool pipeline, so a wedged HITLy server must
+   * not be able to hold a tool call open indefinitely. Defaults to
+   * {@link DEFAULT_REQUEST_TIMEOUT_MS}; `0` disables the bound.
+   */
+  requestTimeoutMs?: number
 }
+
+/** Default per-request bound for HITLy HTTP calls. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000
 
 export interface RemoteIntegrationConfig {
   gates: Record<Gate, boolean>
@@ -58,17 +68,23 @@ export class HitlyClient {
   private readonly apiKey: string
   private readonly projectId: string
   private readonly fetchImpl: typeof fetch
+  private readonly requestTimeoutMs: number
 
   constructor(config: HitlyClientConfig) {
     this.baseUrl = config.hitlyBaseUrl.replace(/\/+$/, '')
     this.apiKey = config.hitlyApiKey
     this.projectId = config.projectId
     this.fetchImpl = config.fetchImpl ?? fetch
+    this.requestTimeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
   }
 
   private async request(path: string, init: RequestInit): Promise<{ status: number; body: unknown }> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,
+      // A HITLy server that never answers must not wedge the caller: the
+      // observer path sits in the tool pipeline, and the reconciler would
+      // otherwise stall a whole connection's tick on one hung read.
+      signal: this.requestTimeoutMs > 0 ? AbortSignal.timeout(this.requestTimeoutMs) : init.signal,
       headers: {
         authorization: `Bearer ${this.apiKey}`,
         'content-type': 'application/json',

@@ -237,6 +237,11 @@ export class HitlyReconciler {
         hitlyDecision: record.hitlyDecision,
         factoryDecision: record.factoryDecision,
       })
+      // A recorded conflict means HITLy DID hold a human decision whose
+      // callback was still arriving. We received it and chose not to apply
+      // it, so ack the row: without the receipt it stays `failed_resume`
+      // forever and re-seeds itself as an open gate on every restart.
+      await this.settleUndeliveredRow(entry.approvalId)
       return { settled: true, conflict: false }
     }
     if (record.cancelledAt) return { settled: true, conflict: false }
@@ -257,7 +262,36 @@ export class HitlyReconciler {
       log: this.deps.log,
     })
     if (outcome === 'retry') return { settled: false, conflict: false }
+    if (outcome === 'conflict') {
+      // Same reasoning as above: the cancel hit 409 because HITLy had already
+      // recorded a decision, and that row is still mid-delivery.
+      await this.settleUndeliveredRow(entry.approvalId)
+    }
     return { settled: true, conflict: outcome === 'conflict' }
+  }
+
+  /**
+   * Settle a HITLy row whose resume callbacks are still arriving, for the case
+   * where the plugin has received the decision and deliberately will not apply
+   * it (a gate the Factory answered first). HITLy does not retry
+   * `failed_resume` on its own, and the restart-seed feed lists it as open, so
+   * a row left unacked never stops replaying.
+   */
+  private async settleUndeliveredRow(approvalId: string): Promise<void> {
+    if (!this.deps.ackResume || !this.deps.getApproval) return
+    try {
+      const state = await this.deps.getApproval(approvalId)
+      if (state.status !== 'failed_resume') return
+      await this.deps.ackResume(approvalId)
+      this.deps.log?.('info', 'hitly reconcile: settled undelivered row after conflict', { approvalId })
+    } catch (error) {
+      // A missed receipt only means the row replays; the conflict is already
+      // recorded and the decision stays unapplied either way.
+      this.deps.log?.('warn', 'hitly reconcile: settling undelivered row failed', {
+        approvalId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   private async persistConflict(

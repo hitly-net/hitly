@@ -192,10 +192,13 @@ export async function applyDecision(snapshot: ApprovalSnapshot, deps: ApplyDeps)
   const gateKey = gateStateKey(snapshot.sessionId, snapshot.toolCallId, snapshot.gate)
   const stored = deps.gateStore ? await deps.gateStore.load(gateKey) : null
   if (stored?.status === 'factory_resolved') {
-    if (snapshot.status === 'cancelled' && stored.cancelledAt) {
-      // The lifecycle echo of the plugin's own requester cancel (the Factory
-      // decided this gate and we closed the HITLy item). Nothing to deliver.
-      return { applied: false, reason: 'closed by the plugin after a Factory-side decision' }
+    if (snapshot.decision === null && (snapshot.status === 'cancelled' || snapshot.status === 'expired')) {
+      // Nobody decided on the HITLy side — the item was withdrawn (including
+      // by this plugin's own requester cancel) or it timed out. A gate the
+      // Factory already answered and a HITLy item that expired are simply
+      // consistent: there is no second verdict to contradict, so this is a
+      // clean close, not a conflict.
+      return { applied: false, reason: `HITLy item ${snapshot.status}; gate was already answered in the Factory` }
     }
     return recordConflict(snapshot, deps, stored, gateKey)
   }
@@ -215,8 +218,15 @@ export async function applyDecision(snapshot: ApprovalSnapshot, deps: ApplyDeps)
   if (outcome.applied) {
     await deps.markApplied(key)
     if (deps.gateStore) {
+      const fromSnapshot = recordFromSnapshot(snapshot, gateKey)
       await deps.gateStore.save({
-        ...recordFromSnapshot(snapshot, gateKey),
+        // Carry the identity the gate was opened with: a HITLy snapshot can
+        // arrive without an org or factory, and losing those would drop the
+        // record's durability and route a later cancel to the wrong project.
+        ...(stored ?? fromSnapshot),
+        ...fromSnapshot,
+        orgId: fromSnapshot.orgId ?? stored?.orgId,
+        factoryProjectId: fromSnapshot.factoryProjectId ?? stored?.factoryProjectId,
         status: 'hitly_applied',
         hitlyDecision: snapshot.decision ?? snapshot.status,
         updatedAt: new Date().toISOString(),
@@ -233,6 +243,7 @@ function recordFromSnapshot(snapshot: ApprovalSnapshot, key: string): GateRecord
     toolCallId: snapshot.toolCallId,
     gate: snapshot.gate,
     orgId: snapshot.orgId,
+    factoryProjectId: snapshot.factoryProjectId,
     approvalId: snapshot.id,
     status: 'open',
     updatedAt: new Date().toISOString(),

@@ -418,6 +418,86 @@ test('a cancel rejected because the item is already closed elsewhere is a clean 
   assert.equal(h.notes.length, 0)
 })
 
+test('a conflict whose HITLy row is mid-delivery is acked, so it stops replaying', async () => {
+  // HITLy only retries a resume for ~1s and never auto-retries failed_resume,
+  // but the restart-seed feed lists it as open forever. Receiving the decision
+  // and refusing to apply it is delivery from HITLy's point of view: without
+  // the receipt this row resurrects itself as an open gate on every restart.
+  const gateStore = createMemoryGateStateStore()
+  await gateStore.save(planRecord({ status: 'factory_resolved', factoryDecision: 'approved' }))
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'failed_resume', decision: 'reject', metadata: {} }),
+    gateStore,
+    cancel: async () => {
+      throw Object.assign(new Error('409 not awaiting a decision'), { status: 409 })
+    },
+  })
+  const result = await h.reconciler.tick()
+  assert.equal(result.conflicts, 1)
+  assert.deepEqual(h.acks, ['apv_1'])
+  assert.deepEqual(h.closed, ['apv_1'])
+})
+
+test('a conflict on an already-settled HITLy row is not acked', async () => {
+  // `decided` means the callbacks landed; there is nothing to receipt.
+  const gateStore = createMemoryGateStateStore()
+  await gateStore.save(
+    planRecord({
+      status: 'conflict',
+      factoryDecision: 'approved',
+      hitlyDecision: 'reject',
+      conflict: {
+        hitlyDecision: 'reject',
+        factoryDecision: 'approved',
+        factoryChannel: 'ui',
+        detectedAt: new Date(1).toISOString(),
+        detail: 'recorded earlier',
+      },
+    }),
+  )
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'decided', decision: 'reject', metadata: {} }),
+    gateStore,
+    cancel: async () => {
+      throw new Error('must not be called')
+    },
+  })
+  await h.reconciler.tick()
+  assert.deepEqual(h.acks, [])
+  assert.equal(h.cancels.length, 0)
+  assert.deepEqual(h.closed, ['apv_1'])
+})
+
+test('a failed ack on a conflicted HITLy row does not stall the gate', async () => {
+  const gateStore = createMemoryGateStateStore()
+  await gateStore.save(
+    planRecord({
+      status: 'conflict',
+      factoryDecision: 'approved',
+      hitlyDecision: 'reject',
+      conflict: {
+        hitlyDecision: 'reject',
+        factoryDecision: 'approved',
+        factoryChannel: 'ui',
+        detectedAt: new Date(1).toISOString(),
+        detail: 'recorded earlier',
+      },
+    }),
+  )
+  const h = harness({
+    approvals: [open('plan')],
+    state: async () => ({ id: 'apv_1', status: 'failed_resume', decision: 'reject', metadata: {} }),
+    gateStore,
+    ackFails: true,
+  })
+  const result = await h.reconciler.tick()
+  assert.equal(h.acks.length, 0, 'the receipt was attempted and failed')
+  assert.deepEqual(h.closed, ['apv_1'], 'a missed receipt does not stall the gate')
+  assert.equal(result.errors, 0)
+})
+
 test('a Factory-decided gate with no cancel path is dropped, not retried forever', async () => {
   const gateStore = createMemoryGateStateStore()
   await gateStore.save(planRecord({ status: 'factory_resolved', factoryDecision: 'approved' }))

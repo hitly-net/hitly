@@ -39,6 +39,7 @@ Resolution per gate call: a factory's **saved connection wins**; otherwise, if `
 - Resume callbacks are verified (bearer + HMAC signature + timestamp window + event-id dedupe) and the authoritative approval state is re-read from HITLy before anything is applied.
 - A gate answered on the Factory side closes its HITLy item as decided-elsewhere (requester cancel) instead of staying pending. A later HITLy decision on that gate is never applied: it is reported as a conflict.
 - Gate state (open / decided in Factory / applied from HITLy / conflict) is persisted through the host's integration storage, so a restart cannot resurrect a gate that is already closed.
+- The tool pipeline never waits on HITLy: the observer queues its gate work and returns, and every HITLy request carries a deadline (`requestTimeoutMs`, default 10s), so a wedged HITLy cannot hold a parked tool call open.
 
 ## Layout
 
