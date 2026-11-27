@@ -71,6 +71,12 @@ export interface ApprovalSnapshot {
 export interface ApplyOutcome {
   applied: boolean
   reason?: string
+  /**
+   * HITLy recorded a decision on a gate the Factory surface had already
+   * resolved. Terminal for delivery (stop replaying) but NOT applied, and
+   * never counted as delivered: the decision was reported, not honoured.
+   */
+  conflict?: boolean
 }
 
 /** Body posted to HITLy POST /api/v1/approvals (HTTP-plugin ingest contract superset). */

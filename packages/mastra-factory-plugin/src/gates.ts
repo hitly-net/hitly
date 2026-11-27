@@ -66,6 +66,14 @@ export interface HitlyClientLike {
   listPending?(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>>
   /** Host receipt that a failed_resume decision was converged; settles the row to decided. */
   ackResume?(approvalId: string): Promise<void>
+  /**
+   * Requester cancel: close an item the requester owns without a decision.
+   * 409 when HITLy already has one — the caller re-reads the authority state
+   * and reports a conflict rather than treating it as delivered.
+   */
+  cancelApproval?(approvalId: string, reason?: string): Promise<void>
+  /** Best-effort audit note. The server API is #213; absent → plugin-side only. */
+  annotateApproval?(approvalId: string, note: string): Promise<{ recorded: boolean }>
 }
 
 export function isGateTool(toolName: string): boolean {

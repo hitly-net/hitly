@@ -1,5 +1,11 @@
 import { METADATA_KEYS } from './gates.ts'
-import type { ApprovalSnapshot, Gate } from './types.ts'
+import {
+  closeGateAsDecidedElsewhere,
+  gateStateKey,
+  type GateRecord,
+  type GateStateStore,
+} from './gate-state.ts'
+import type { ApplyOutcome, ApprovalSnapshot, Gate } from './types.ts'
 
 const VALID_GATES: readonly Gate[] = ['plan', 'review', 'ask_user']
 
@@ -32,10 +38,20 @@ export interface ReconcilerDeps {
   closeOpen(approvalId: string): void
   getApproval(approvalId: string): Promise<ReconcilerApprovalState>
   refreshConfig?(): Promise<void>
-  apply(snapshot: ApprovalSnapshot): Promise<{ applied: boolean; reason?: string }>
+  apply(snapshot: ApprovalSnapshot): Promise<ApplyOutcome>
   /** Host receipt that settled a converged failed_resume row on HITLy (optional; best-effort). */
   ackResume?(approvalId: string): Promise<void>
+  /** Per-gate memory. Without it the reconciler cannot tell a lost callback from a Factory-side decision. */
+  gateStore?: GateStateStore
+  /** Requester cancel: retries a Factory-side close that did not reach HITLy. */
+  cancelApproval?(approvalId: string, reason?: string): Promise<void>
+  annotateApproval?(approvalId: string, note: string): Promise<{ recorded: boolean }>
   log?(level: string, message: string, meta?: Record<string, unknown>): void
+}
+
+function metaValue(metadata: Record<string, unknown>, key: string): string | undefined {
+  const value = metadata[key]
+  return typeof value === 'string' && value ? value : undefined
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -55,6 +71,12 @@ function optionalString(value: unknown): string | undefined {
  * nothing, so expiry/pending can never be turned into approval here either.
  * After converging a `failed_resume` decision it POSTs a resume-ack receipt
  * so the row settles to `decided` and stops replaying on every restart.
+ *
+ * It also finishes Factory-side closes: a gate the Factory surface answered
+ * (recorded in the gate store) is never converged from HITLy state — the
+ * reconciler retries the requester cancel that closes the HITLy item and, if
+ * HITLy turns out to have decided in the meantime, reports a conflict instead
+ * of silently counting the decision as delivered.
  */
 export class HitlyReconciler {
   private readonly deps: ReconcilerDeps
@@ -63,7 +85,13 @@ export class HitlyReconciler {
     this.deps = deps
   }
 
-  async tick(): Promise<{ checked: number; applied: number; errors: number; configRefreshed: boolean }> {
+  async tick(): Promise<{
+    checked: number
+    applied: number
+    errors: number
+    conflicts: number
+    configRefreshed: boolean
+  }> {
     let configRefreshed = false
     if (this.deps.refreshConfig) {
       try {
@@ -81,8 +109,19 @@ export class HitlyReconciler {
     let checked = 0
     let applied = 0
     let errors = 0
+    let conflicts = 0
     for (const entry of this.deps.listOpen()) {
       checked += 1
+      const record = await this.loadRecord(entry)
+      if (record?.status === 'factory_resolved' || record?.status === 'conflict') {
+        // The Factory answered this tool call. There is no HITLy decision to
+        // converge: finish closing the item instead, and never feed HITLy
+        // state into the apply matrix for this gate again.
+        const { settled, conflict } = await this.convergeFactoryResolved(entry, record)
+        if (conflict) conflicts += 1
+        if (settled) this.deps.closeOpen(entry.approvalId)
+        continue
+      }
       let state: ReconcilerApprovalState
       try {
         state = await this.deps.getApproval(entry.approvalId)
@@ -121,17 +160,37 @@ export class HitlyReconciler {
       const settle = state.status === 'failed_resume' && state.decision !== null
       try {
         const outcome = await this.deps.apply(snapshot)
-        if (outcome.applied) applied += 1
+        if (outcome.conflict) {
+          conflicts += 1
+        } else if (outcome.applied) {
+          applied += 1
+        }
         await this.settleOnHitly(entry.approvalId, settle)
         this.deps.closeOpen(entry.approvalId)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (NOTHING_WAITING_ON_TOOL_CALL.test(message)) {
-          // Replay against an already-answered parked call — the "lost"
-          // callback actually landed, or a previous process converged it.
-          // The decision is fully delivered: count it, settle the HITLy row,
-          // and stop replaying (otherwise a plan gate errors every tick).
-          applied += 1
+          // The parked call is already answered. WHAT answered it decides
+          // whether that is a converged delivery or a conflict — deciding
+          // silently here is exactly how a Factory-side approval used to
+          // swallow a HITLy decision. A `factory_resolved` record never
+          // reaches this branch: it is converged above, before the apply.
+          if (record && record.status === 'open') {
+            // Nobody recorded a Factory-side decision, yet nothing is parked:
+            // the gate was answered outside this plugin's view (typically a
+            // Factory restart between the answer and the observer call).
+            conflicts += 1
+            await this.persistConflict(entry, record, snapshot.decision ?? snapshot.status, message, 'an unobserved surface')
+          } else {
+            // No gate record (a row predating gate memory) whose parked call
+            // is answered: the "lost" callback actually landed, or a previous
+            // process converged it. The decision is fully delivered: count it,
+            // settle the HITLy row, and stop replaying.
+            applied += 1
+            this.deps.log?.('info', 'hitly reconcile: decision was already delivered', {
+              approvalId: entry.approvalId,
+            })
+          }
           await this.settleOnHitly(entry.approvalId, settle)
           this.deps.closeOpen(entry.approvalId)
           continue
@@ -143,7 +202,136 @@ export class HitlyReconciler {
         })
       }
     }
-    return { checked, applied, errors, configRefreshed }
+    return { checked, applied, errors, conflicts, configRefreshed }
+  }
+
+  private async loadRecord(entry: OpenApproval): Promise<GateRecord | null> {
+    if (!this.deps.gateStore) return null
+    const sessionId = metaValue(entry.metadata, METADATA_KEYS.sessionId)
+    if (!sessionId) return null
+    const toolCallId = metaValue(entry.metadata, METADATA_KEYS.toolCallId)
+    try {
+      return await this.deps.gateStore.load(gateStateKey(sessionId, toolCallId, entry.gate))
+    } catch (error) {
+      this.deps.log?.('warn', 'hitly reconcile: gate state read failed', {
+        approvalId: entry.approvalId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return null
+    }
+  }
+
+  /**
+   * Finish the work the observer started for a Factory-resolved gate: retry a
+   * requester cancel that never reached HITLy, then stop tracking the item.
+   * Returns whether the open entry can be dropped.
+   */
+  private async convergeFactoryResolved(
+    entry: OpenApproval,
+    record: GateRecord,
+  ): Promise<{ settled: boolean; conflict: boolean }> {
+    if (record.status === 'conflict') {
+      this.deps.log?.('warn', 'hitly reconcile: gate conflict already recorded, dropping', {
+        approvalId: entry.approvalId,
+        gate: entry.gate,
+        hitlyDecision: record.hitlyDecision,
+        factoryDecision: record.factoryDecision,
+      })
+      // A recorded conflict means HITLy DID hold a human decision whose
+      // callback was still arriving. We received it and chose not to apply
+      // it, so ack the row: without the receipt it stays `failed_resume`
+      // forever and re-seeds itself as an open gate on every restart.
+      await this.settleUndeliveredRow(entry.approvalId)
+      return { settled: true, conflict: false }
+    }
+    if (record.cancelledAt) return { settled: true, conflict: false }
+    if (!this.deps.cancelApproval || !record.approvalId) {
+      this.deps.log?.('warn', 'hitly reconcile: no cancel path for Factory-decided gate; leaving it to a human', {
+        approvalId: entry.approvalId,
+        gate: entry.gate,
+      })
+      return { settled: true, conflict: false }
+    }
+    const outcome = await closeGateAsDecidedElsewhere(record, {
+      cancelApproval: (approvalId, reason) => this.deps.cancelApproval!(approvalId, reason),
+      getApproval: this.deps.getApproval ? (approvalId) => this.deps.getApproval(approvalId) : undefined,
+      annotateApproval: this.deps.annotateApproval
+        ? (approvalId, note) => this.deps.annotateApproval!(approvalId, note)
+        : undefined,
+      save: (next) => this.deps.gateStore!.save(next),
+      log: this.deps.log,
+    })
+    if (outcome === 'retry') return { settled: false, conflict: false }
+    if (outcome === 'conflict') {
+      // Same reasoning as above: the cancel hit 409 because HITLy had already
+      // recorded a decision, and that row is still mid-delivery.
+      await this.settleUndeliveredRow(entry.approvalId)
+    }
+    return { settled: true, conflict: outcome === 'conflict' }
+  }
+
+  /**
+   * Settle a HITLy row whose resume callbacks are still arriving, for the case
+   * where the plugin has received the decision and deliberately will not apply
+   * it (a gate the Factory answered first). HITLy does not retry
+   * `failed_resume` on its own, and the restart-seed feed lists it as open, so
+   * a row left unacked never stops replaying.
+   */
+  private async settleUndeliveredRow(approvalId: string): Promise<void> {
+    if (!this.deps.ackResume || !this.deps.getApproval) return
+    try {
+      const state = await this.deps.getApproval(approvalId)
+      if (state.status !== 'failed_resume') return
+      await this.deps.ackResume(approvalId)
+      this.deps.log?.('info', 'hitly reconcile: settled undelivered row after conflict', { approvalId })
+    } catch (error) {
+      // A missed receipt only means the row replays; the conflict is already
+      // recorded and the decision stays unapplied either way.
+      this.deps.log?.('warn', 'hitly reconcile: settling undelivered row failed', {
+        approvalId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  private async persistConflict(
+    entry: OpenApproval,
+    record: GateRecord,
+    hitlyDecision: string | undefined,
+    detail: string,
+    decidedBy: string,
+  ): Promise<void> {
+    const detectedAt = new Date().toISOString()
+    const note =
+      `A HITLy decision (${hitlyDecision ?? 'unknown'}) reached a ${entry.gate} gate whose parked tool call was ` +
+      `already answered by ${decidedBy}. The decision was not applied. Detail: ${detail}`
+    try {
+      await this.deps.gateStore?.save({
+        ...record,
+        status: 'conflict',
+        hitlyDecision: hitlyDecision ?? record.hitlyDecision,
+        conflict: {
+          hitlyDecision: hitlyDecision ?? record.hitlyDecision,
+          factoryDecision: record.factoryDecision,
+          factoryChannel: record.factoryChannel,
+          detectedAt,
+          detail: note,
+        },
+        updatedAt: detectedAt,
+      })
+    } catch (error) {
+      this.deps.log?.('warn', 'hitly reconcile: failed to persist gate conflict', {
+        approvalId: entry.approvalId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    this.deps.log?.('warn', 'hitly reconcile: gate conflict, decision not applied', {
+      approvalId: entry.approvalId,
+      gate: entry.gate,
+      hitlyDecision,
+      decidedBy,
+      detail,
+    })
   }
 
   /**

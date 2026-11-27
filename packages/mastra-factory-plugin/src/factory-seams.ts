@@ -10,6 +10,7 @@ import { deliverFactorySessionNotification, resolveSessionThread } from '@mastra
 import type { FactoryIntegration, IntegrationContext } from '@mastra/factory/integrations/base'
 import type { ApplySeams, HitlyPluginOptions, SessionTargetSeams } from './index.ts'
 import { HitlyMastraFactoryPlugin } from './index.ts'
+import { createMemoryGateStateStore, type GateRecord, type GateStateStore } from './gate-state.ts'
 import { HitlyClient } from './hitly-client.ts'
 import { attemptSquashMerge, createGitHubApi, parsePrUrl } from './merge.ts'
 import {
@@ -57,6 +58,114 @@ export const sessionTargetSeams: SessionTargetSeams = { resolveSessionTarget }
 /** Late-bound host context: MastraFactory supplies IntegrationContext at prepare time. */
 export interface HostContextRef {
   current: IntegrationContext | undefined
+}
+
+/** The subset of the Factory integration-subscription surface the gate store uses. */
+interface SubscriptionRow {
+  id: string
+  orgId?: string
+  data: unknown
+  updatedAt?: Date
+}
+
+interface SubscriptionHandle {
+  create(input: {
+    orgId: string
+    targetKey: string
+    sessionId?: string | null
+    status?: string
+    data: unknown
+  }): Promise<unknown>
+  listByTarget(targetKey: string, opts?: { status?: string }): Promise<SubscriptionRow[]>
+  delete(id: string): Promise<boolean>
+}
+
+const GATE_TARGET_PREFIX = 'hitly-gate:'
+
+/**
+ * Durable gate store over the host's generic integration storage
+ * (`subscriptions` namespace), with an in-process memory layer in front.
+ *
+ * The subscriptions row keeps the gate state machine in `status` (queryable)
+ * and the full record in `data`. `data` cannot be updated in place, so a save
+ * writes the new row first and only then removes the older ones: a crash
+ * between the two leaves duplicates that read as the newest row, never a
+ * gap. Storage failures degrade to memory-only — gate tracking must never
+ * take the tool pipeline or a resume callback down with it.
+ */
+export function createSubscriptionGateStateStore(
+  ref: HostContextRef,
+  log?: (level: string, message: string, meta?: Record<string, unknown>) => void,
+): GateStateStore {
+  const memory = createMemoryGateStateStore()
+
+  function handle(): SubscriptionHandle | null {
+    const storage = ref.current?.storage as { generic?: { subscriptions?: unknown } } | undefined
+    return (storage?.generic?.subscriptions as SubscriptionHandle | undefined) ?? null
+  }
+
+  return {
+    async load(key: string): Promise<GateRecord | null> {
+      const local = await memory.load(key)
+      if (local) return local
+      const subscriptions = handle()
+      if (!subscriptions) return null
+      try {
+        const rows = await subscriptions.listByTarget(`${GATE_TARGET_PREFIX}${key}`)
+        let best: SubscriptionRow | undefined
+        for (const row of rows) {
+          if (!best || (row.updatedAt && best.updatedAt && row.updatedAt > best.updatedAt)) best = row
+        }
+        const record = best?.data as GateRecord | undefined
+        if (!record || record.key !== key) return null
+        await memory.save(record)
+        return record
+      } catch (error) {
+        log?.('warn', 'hitly gate store: durable read failed, using memory only', {
+          key,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return null
+      }
+    },
+
+    async save(record: GateRecord): Promise<void> {
+      await memory.save(record)
+      const subscriptions = handle()
+      if (!subscriptions) return
+      const targetKey = `${GATE_TARGET_PREFIX}${record.key}`
+      try {
+        const existing = await subscriptions.listByTarget(targetKey)
+        // The org normally rides on the record itself. It does not when the
+        // gate was opened before the session's org was known, or when a
+        // snapshot from HITLy arrives without one — and the `hitly_applied` /
+        // `conflict` saves are exactly those. Fall back to the org of the row
+        // this save replaces, so a gate that was durable once stays durable.
+        const orgId = record.orgId ?? existing[0]?.orgId
+        if (!orgId) {
+          log?.(record.status === 'open' ? 'debug' : 'warn', 'hitly gate store: no org for record, not persisted', {
+            key: record.key,
+            status: record.status,
+          })
+          return
+        }
+        await subscriptions.create({
+          orgId,
+          targetKey,
+          sessionId: record.sessionId,
+          status: record.status,
+          data: record,
+        })
+        for (const row of existing) await subscriptions.delete(row.id)
+      } catch (error) {
+        log?.('warn', 'hitly gate store: durable write failed, memory only until the next save', {
+          key: record.key,
+          status: record.status,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    },
+  }
 }
 
 export function createApplySeams(ref: HostContextRef): ApplySeams {
@@ -233,7 +342,16 @@ export function createHitlyIntegration(options: HitlyIntegrationOptions): HitlyM
       const token = options.config.githubToken
       return attemptSquashMerge({ api: createGitHubApi(token ?? ''), pr, expectedHeadSha: args.headSha, token })
     })
-  const integration = new HitlyMastraFactoryPlugin({ ...options, client, seams, applySeams, attemptMerge })
+  const integration = new HitlyMastraFactoryPlugin({
+    ...options,
+    client,
+    seams,
+    applySeams,
+    attemptMerge,
+    // Durable by default: gate state survives a restart through the host's
+    // integration storage, with a memory layer in front.
+    gateStore: options.gateStore ?? createSubscriptionGateStateStore(hostRef, options.log),
+  })
 
   const bind = integration as HitlyMastraFactoryPlugin & {
     initialize?(args: unknown): void | Promise<void>

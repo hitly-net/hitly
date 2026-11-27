@@ -1,6 +1,9 @@
 import { timingSafeEqual } from 'node:crypto'
 import { verifyHttpSignature, HEADER_EVENT_ID, HEADER_KEY_ID, HEADER_SIGNATURE, HEADER_TIMESTAMP } from '@hitly/plugin-http'
-import type { PluginRuntimeConfig } from './types.ts'
+import type { ApplyOutcome, PluginRuntimeConfig } from './types.ts'
+
+/** See worker.ts: answerParkedCall throws this when the parked call is already answered. */
+const NOTHING_WAITING_ON_TOOL_CALL = /nothing is waiting on that tool call/i
 
 export interface SeenEventStore {
   check(eventId: string): boolean
@@ -34,7 +37,7 @@ export interface ResumeDeps {
   /** Expected callback bearer for this approval (the cbAuthToken sent at create). Undefined → reject. */
   bearerFor(approvalId: string): string | undefined
   fetchApprovalState(approvalId: string): Promise<ApprovalAuthorityState>
-  apply(cmd: ResumeDispatch): Promise<{ applied: boolean; reason?: string }>
+  apply(cmd: ResumeDispatch): Promise<ApplyOutcome>
   log?(level: string, message: string, meta?: Record<string, unknown>): void
 }
 
@@ -72,6 +75,10 @@ function bearerEquals(value: string, expected: string | undefined): boolean {
  *  5. HITLy is the AUTHORITY: the callback's claim is re-checked against
  *     GET /api/v1/approvals/:id. pending/expired/cancelled/failed_resume
  *     never dispatch — a callback can never upgrade state into approval.
+ *  5. A dispatch whose parked tool call is already answered is ACKed as
+ *     `alreadyResolved` and never reported as applied. Who answered it is the
+ *     gate store's business: applyDecision turns a Factory-side answer into a
+ *     recorded conflict instead of a silent success.
  */
 export async function handleResumeRequest(args: {
   headers: Headers
@@ -193,8 +200,37 @@ export async function handleResumeRequest(args: {
   const responseValue = typeof body.response === 'string' ? body.response : typeof body.answer === 'string' ? body.answer : undefined
   if (responseValue) cmd.response = responseValue
 
-  const outcome = await deps.apply(cmd)
+  let outcome: ApplyOutcome
+  try {
+    outcome = await deps.apply(cmd)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (NOTHING_WAITING_ON_TOOL_CALL.test(message)) {
+      // The parked tool call was already answered — by the Factory surface or
+      // by an earlier dispatch. ApplyDecision recorded a conflict when it
+      // could attribute one. Either way this is terminal for delivery: ACK so
+      // HITLy stops replaying, and never report it as applied.
+      deps.dedupe.remember(eventId)
+      deps.log?.('warn', 'hitly resume: parked call already answered, decision not applied', {
+        approvalId,
+        gate,
+        decision: authority.decision,
+      })
+      return json(200, { ok: true, applied: false, alreadyResolved: true })
+    }
+    deps.log?.('error', 'hitly resume: apply failed', { approvalId, gate, error: message })
+    // 502 so HITLy retries; the reconciliation worker is the backstop.
+    return json(502, { error: 'apply_failed' })
+  }
   deps.dedupe.remember(eventId)
+  if (outcome.conflict) {
+    deps.log?.('warn', 'hitly resume: decision conflicts with a Factory-side resolution, not applied', {
+      approvalId,
+      gate,
+      decision: authority.decision,
+    })
+    return json(200, { ok: true, applied: false, conflict: true })
+  }
   deps.log?.('info', 'hitly resume: decision applied', { approvalId, gate, decision: authority.decision, applied: outcome.applied })
   return json(200, { ok: true, applied: outcome.applied, reason: outcome.reason })
 }

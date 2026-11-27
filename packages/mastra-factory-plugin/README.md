@@ -37,6 +37,9 @@ Resolution per gate call: a factory's **saved connection wins**; otherwise, if `
 - `pending`, `expired`, and `cancelled` are never approval. An expired plan declines the parked call; expiry never merges.
 - `ask_user` answers are delivered verbatim via a session signal; the plugin never fabricates an answer.
 - Resume callbacks are verified (bearer + HMAC signature + timestamp window + event-id dedupe) and the authoritative approval state is re-read from HITLy before anything is applied.
+- A gate answered on the Factory side closes its HITLy item as decided-elsewhere (requester cancel) instead of staying pending. A later HITLy decision on that gate is never applied: it is reported as a conflict.
+- Gate state (open / decided in Factory / applied from HITLy / conflict) is persisted through the host's integration storage, so a restart cannot resurrect a gate that is already closed.
+- The tool pipeline never waits on HITLy: the observer queues its gate work and returns, and every HITLy request carries a deadline (`requestTimeoutMs`, default 10s), so a wedged HITLy cannot hold a parked tool call open.
 
 ## Layout
 
@@ -49,6 +52,7 @@ Resolution per gate call: a factory's **saved connection wins**; otherwise, if `
 | `connections.ts` | Per-factory connection registry: resolution (saved → env fallback → none), encrypted settings, non-secret directory, client cache. |
 | `settings-routes.ts` | Interim org-admin settings page + JSON API at `/web/integrations/hitly/settings`. |
 | `apply.ts` | Decision matrix (plan/review/ask_user × accept/reject/edit/respond/expiry). |
+| `gate-state.ts` | Per-gate record (open / decided-in-Factory / applied-from-HITLy / conflict), the requester-cancel close, conflict detection. |
 | `worker.ts` | Reconciliation: polls HITLy so missed callbacks still land. |
 | `merge.ts` | GitHub REST squash merge with head-SHA recheck. |
 | `server.ts` | HITLy-side `HitlyPlugin` (delegates to `@hitly/plugin-http`). |

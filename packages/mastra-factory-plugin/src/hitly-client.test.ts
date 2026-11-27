@@ -143,3 +143,107 @@ test('config endpoint read returns gate state from HITLy (source of truth)', asy
   assert.equal(remote.mergeAfterAccept, true)
   assert.match(calls[0]!.url, /\/api\/v1\/projects\/proj-1\/integrations\/mastra-factory$/)
 })
+
+// ---------------------------------------------------------------------------
+// Requester cancel (closes a gate the Factory surface decided) and the
+// best-effort conflict annotation (#213 endpoint, absent until it lands).
+// ---------------------------------------------------------------------------
+
+test('cancelApproval POSTs the decided-elsewhere reason to the requester cancel endpoint', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({ status: 200, body: { id: 'apv_1', status: 'cancelled' } }))
+  const client = new HitlyClient({ ...config, fetchImpl })
+  await client.cancelApproval('apv_1', 'Decided in Mastra Factory: approved')
+  assert.equal(calls[0]!.url, 'https://hitly.example.com/api/v1/approvals/apv_1/cancel')
+  assert.equal(calls[0]!.init.method, 'POST')
+  assert.equal(new Headers(calls[0]!.init.headers).get('authorization'), 'Bearer hk_test_1')
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { reason: 'Decided in Mastra Factory: approved' })
+})
+
+test('cancelApproval sends an empty body without a reason and accepts 204', async () => {
+  const calls: Array<{ url: string; init: RequestInit }> = []
+  const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} })
+    // 204 must carry no body, so this cannot go through the JSON stub helper.
+    return new Response(null, { status: 204 })
+  }) as unknown as typeof fetch
+  const client = new HitlyClient({ ...config, fetchImpl })
+  await client.cancelApproval('apv_1')
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), {})
+})
+
+test('cancelApproval surfaces 409 with its status so the caller can read the authority', async () => {
+  // 409 means HITLy no longer awaits a decision — usually a reviewer decided
+  // first (mid-air). The caller must be able to tell that from a network error.
+  const { fetchImpl } = stubFetch(() => ({ status: 409, body: { error: 'conflict', message: 'Approval is not awaiting a decision' } }))
+  const client = new HitlyClient({ ...config, fetchImpl })
+  await assert.rejects(
+    () => client.cancelApproval('apv_1', 'Decided in Mastra Factory: approved'),
+    (error: unknown) => (error as { status?: number }).status === 409,
+  )
+})
+
+test('annotateApproval records a conflict note when HITLy accepts it', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({ status: 201, body: { id: 'ann_1' } }))
+  const client = new HitlyClient({ ...config, fetchImpl })
+  const result = await client.annotateApproval('apv_1', 'HITLy decided first')
+  assert.deepEqual(result, { recorded: true })
+  assert.match(calls[0]!.url, /\/api\/v1\/approvals\/apv_1\/annotations$/)
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { note: 'HITLy decided first' })
+})
+
+test('annotateApproval is best-effort: a missing #213 endpoint reports recorded=false and never throws', async () => {
+  for (const status of [404, 405, 500]) {
+    const { fetchImpl } = stubFetch(() => ({ status, body: { error: 'not_found' } }))
+    const client = new HitlyClient({ ...config, fetchImpl })
+    assert.deepEqual(await client.annotateApproval('apv_1', 'note'), { recorded: false }, String(status))
+  }
+})
+
+test('annotateApproval swallows transport failures — a lost note must not change what happens to a decision', async () => {
+  const fetchImpl = (async () => {
+    throw new Error('ECONNREFUSED')
+  }) as unknown as typeof fetch
+  const client = new HitlyClient({ ...config, fetchImpl })
+  assert.deepEqual(await client.annotateApproval('apv_1', 'note'), { recorded: false })
+})
+
+// --- request deadline -------------------------------------------------------
+// The observer path runs inline with the tool pipeline, so every HITLy call
+// has to carry a deadline: a wedged server must not be able to hold a tool
+// call (or a reconciler tick) open forever.
+
+test('every HITLy call carries an abort signal so a wedged server cannot hang the caller', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({ status: 200, body: { id: 'apv_1', status: 'pending' } }))
+  const client = new HitlyClient({ ...config, fetchImpl })
+  await client.createApproval({ plugin: 'mastra-factory', runId: 'r1' }, 'idem-1')
+  await client.getApproval('apv_1')
+  for (const call of calls) {
+    assert.ok(call.init.signal instanceof AbortSignal, `signal on ${call.url}`)
+  }
+})
+
+test('a server that never answers is cut off at the deadline', async () => {
+  // Stands in for a hung connection: resolves only when the caller aborts,
+  // with the abort reason — which is what fetch does on the wire.
+  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const signal = init?.signal
+    if (!signal) throw new Error('no deadline was passed — the call would hang forever')
+    // AbortSignal.timeout does not keep the event loop alive on its own.
+    const hold = setTimeout(() => undefined, 2_000)
+    return new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        clearTimeout(hold)
+        reject(signal.reason)
+      }, { once: true })
+    })
+  }) as unknown as typeof fetch
+  const client = new HitlyClient({ ...config, fetchImpl, requestTimeoutMs: 25 })
+  await assert.rejects(() => client.createApproval({ plugin: 'mastra-factory', runId: 'r1' }, 'idem-1'), /abort|timeout/i)
+})
+
+test('requestTimeoutMs: 0 opts out of the deadline', async () => {
+  const { fetchImpl, calls } = stubFetch(() => ({ status: 201, body: { id: 'apv_1', status: 'pending' } }))
+  const client = new HitlyClient({ ...config, fetchImpl, requestTimeoutMs: 0 })
+  await client.createApproval({ plugin: 'mastra-factory', runId: 'r1' }, 'idem-1')
+  assert.equal(calls[0]!.init.signal, undefined)
+})

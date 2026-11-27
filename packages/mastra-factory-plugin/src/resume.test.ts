@@ -212,3 +212,52 @@ test('a decided callback for an expired approval never dispatches (expiry is not
   assert.equal(res.status, 200)
   assert.equal(deps.dispatched.length, 0)
 })
+
+test('a dispatch onto an already-answered parked call ACKs as alreadyResolved, never as applied', async () => {
+  // The issue's silent-success path: answerParkedCall throws when the Factory
+  // surface answered the tool call first. ACK so HITLy stops replaying, report
+  // it as not applied, and remember the event so a retry costs nothing.
+  const req = makeRequest(decidedEvent())
+  let attempts = 0
+  const deps = fakeDeps({
+    apply: async () => {
+      attempts += 1
+      throw new Error('Nothing is waiting on that tool call any more: the run that asked has ended or it was already answered.')
+    },
+  })
+  const res = await handleResumeRequest({ headers: req.headers, rawBody: req.rawBody, config, deps }, NOW)
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { ok: true, applied: false, alreadyResolved: true })
+  assert.equal(attempts, 1)
+  const replay = await handleResumeRequest({ headers: req.headers, rawBody: req.rawBody, config, deps }, NOW)
+  assert.equal(replay.status, 200)
+  assert.equal(attempts, 1, 'the terminal outcome must be remembered so HITLy stops replaying')
+})
+
+test('a genuine apply failure stays retryable: 502 and the event is not remembered', async () => {
+  const req = makeRequest(decidedEvent())
+  let attempts = 0
+  const deps = fakeDeps({
+    apply: async () => {
+      attempts += 1
+      throw new Error('storage backend exploded')
+    },
+  })
+  const res = await handleResumeRequest({ headers: req.headers, rawBody: req.rawBody, config, deps }, NOW)
+  assert.equal(res.status, 502)
+  assert.deepEqual(await res.json(), { error: 'apply_failed' })
+  const retry = await handleResumeRequest({ headers: req.headers, rawBody: req.rawBody, config, deps }, NOW)
+  assert.equal(retry.status, 502)
+  assert.equal(attempts, 2, 'HITLy must be able to retry a real failure')
+})
+
+test('a conflict outcome is ACKed and reported as conflict, not applied', async () => {
+  const req = makeRequest(decidedEvent())
+  const deps = fakeDeps({ apply: async (cmd) => { deps.dispatched.push(cmd); return { applied: false, conflict: true } } })
+  const res = await handleResumeRequest({ headers: req.headers, rawBody: req.rawBody, config, deps }, NOW)
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { ok: true, applied: false, conflict: true })
+  const replay = await handleResumeRequest({ headers: req.headers, rawBody: req.rawBody, config, deps }, NOW)
+  assert.equal(replay.status, 200)
+  assert.equal(deps.dispatched.length, 1)
+})
