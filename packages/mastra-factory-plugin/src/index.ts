@@ -13,9 +13,29 @@ import {
 import { HitlyReconciler, type OpenApproval } from './worker.ts'
 import type { FactoryProjectLister, HitlyConnectionRegistry, ResolvedConnection } from './connections.ts'
 import { buildSettingsRoutes, type SettingsRouteAuth } from './settings-routes.ts'
+import { registerHitlyConnectionCard } from './hitly-connection-card.ts'
 import type { ApprovalSnapshot, Gate, PluginRuntimeConfig } from './types.ts'
 
 export { DEFAULT_POLL_INTERVAL_MS, parseRuntimeConfig, parseDeploymentConfig, type HitlyDeploymentConfig } from './config.ts'
+
+// Interim Factory Connections card registry (hitly-net/hitly#218). Other
+// plugins register their own card with these until upstream ships the
+// extension point (#211); everything here goes away with the UI patch.
+export {
+  registerConnectionCard,
+  unregisterConnectionCard,
+  listConnectionCards,
+  clearConnectionCards,
+  collectConnectionCards,
+  DEFAULT_CARD_TIMEOUT_MS,
+  DEFAULT_STATUS_LABELS,
+  type ConnectionCard,
+  type ConnectionCardContext,
+  type ConnectionCardResult,
+  type ConnectionCardStatus,
+  type ConnectionCardView,
+} from './connection-cards.ts'
+export { createHitlyConnectionCard, registerHitlyConnectionCard, HITLY_CARD_ID } from './hitly-connection-card.ts'
 
 /**
  * Session-identity extraction is injected so this module never imports
@@ -208,6 +228,11 @@ export class HitlyMastraFactoryPlugin {
     this.gates = { ...options.config.gates, ...(options.gateOverrides ?? {}) }
     this.mergeAfterAccept = options.mergeAfterAcceptOverride ?? options.config.mergeAfterAccept
     this.gateStore = options.gateStore ?? createMemoryGateStateStore()
+    // Interim Settings → Connections card (hitly-net/hitly#218) until upstream
+    // ships the extension point (#211). Status is resolved lazily, so the card
+    // is right whether the registry came in with these options or arrived later
+    // through attachRegistry().
+    registerHitlyConnectionCard({ getRegistry: () => this.options.registry ?? null })
   }
 
   /**

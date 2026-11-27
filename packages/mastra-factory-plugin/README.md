@@ -27,6 +27,30 @@ Resolution per gate call: a factory's **saved connection wins**; otherwise, if `
 
 `HITLY_ENV_FALLBACK` is opt-in: unset (default — no env credentials consulted), `all`, or a comma-separated list of factory project ids. Resume callbacks are scoped by factory (`/custom/integrations/hitly/resume/:factoryProjectId`) and a callback carrying another factory's token, signature, or approval is rejected.
 
+## Factory Settings → Connections card (interim)
+
+Factory has no extension point for its Settings → Connections screen yet ([hitly-net/hitly#211](https://github.com/hitly-net/hitly/issues/211); UI plan approval in [#212](https://github.com/hitly-net/hitly/issues/212)), so until upstream ships one this plugin contributes a **HITLy card** through a version-guarded, reversible post-build overlay of the **built** SPA. It does **not** fork `@mastra/factory`, does not edit the SPA's source or its minified chunks, and does not change how Factory encrypts integration settings.
+
+The card shows the current factory's HITLy status (`Connected` / `Not connected` / `Env fallback`) and links to `/web/integrations/hitly/settings`. It is visible to organization admins only — the card API sits behind the same `ensureUser → tenant → isOrganizationAdmin` check as the settings page, and it never returns a secret (status text is derived from the same masked projection the settings API uses).
+
+**How it works:** plugins register a card server-side with `registerConnectionCard()` (`src/connection-cards.ts`, kept generic so any installed connection plugin can contribute a card — HITLy is just the first). A small bootstrap (`src/connections-boot.ts`) is loaded by a `<script>` tag injected into the built `index.html`; it waits for the Connections screen, fetches `GET /web/integrations/hitly/settings/cards`, and renders the cards with `textContent` only. A card that throws or exceeds its 2 s budget is dropped with a `warn` and cannot break the page.
+
+**Apply after building/deploying the Factory app** (there is deliberately no `postinstall` hook — it would fire in CI and in consumers that never deploy Factory):
+
+```bash
+yarn workspace @hitly/mastra-factory-plugin patch:factory-ui   # inject
+yarn workspace @hitly/mastra-factory-plugin check:factory-ui   # verify (--check, exits 1 when stale/absent)
+npx tsx packages/mastra-factory-plugin/scripts/patch-factory-ui.ts --revert   # remove
+```
+
+The CLI writes **only** its marker block (`<!-- hitly:connection-cards:start|end -->`) into `index.html`, resolves the built SPA from `--index <file>`, `--dist <dir>`, `MASTRACODE_UI_DIST`, `./factory`, or `./src/mastra/public/factory`, and is idempotent (re-running replaces a stale block instead of stacking).
+
+**Version guard:** the patch is validated against `PINNED_FACTORY_UI_VERSION` (`0.30.0`) and the `devDependencies['@mastra/factory']` pin is kept equal to it by a test. If the installed `@mastra/factory` is missing or any other version, the CLI logs one warning and leaves the Factory UI **untouched** (exit 0) — upgrade path is to re-validate, bump `PINNED_FACTORY_UI_VERSION`, or pass `--force` after checking the screen yourself. The direct settings URL works regardless of whether the patch is applied.
+
+**Off-switch:** `HITLY_FACTORY_UI_PATCH=0` (also `false`/`off`/`no`) makes the CLI skip and the server 404 `boot.js`, so an already-injected tag simply loads nothing. Other knobs: `HITLY_CONNECTION_CARDS_ANCHOR` (extra CSS selector for the Connections anchor) and `cardTimeoutMs` on the settings routes.
+
+**Removal path, once upstream ships the extension point:** revert on deployed hosts, then delete `src/connection-cards.ts`, `src/hitly-connection-card.ts`, `src/connections-boot.ts`, `src/patch-factory-ui.ts`, `scripts/patch-factory-ui.ts`, the `patch:factory-ui` / `check:factory-ui` scripts, the `/cards` and `/boot.js` routes in `settings-routes.ts`, and this section.
+
 ## HITLy server
 
 `@hitly/mastra-factory-plugin/server` exports the `HitlyPlugin` implementation registered for the `mastra-factory` project type. It delegates ingest/resume to `@hitly/plugin-http` and never imports `@mastra/*`, so the HITLy app does not need Factory installed.

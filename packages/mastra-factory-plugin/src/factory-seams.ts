@@ -278,14 +278,68 @@ export interface HitlyIntegrationOptions extends Omit<HitlyPluginOptions, 'seams
   envFallback?: EnvFallback
 }
 
-/** Storage slice the connection registry needs, matched structurally against IntegrationContext. */
+/** What the registry needs, however the host happens to hand it over. */
+interface RegistryParts {
+  settings?: ConnectionSettingsStore
+  subscriptions?: ConnectionDirectory
+  projects?: FactoryProjectLister
+}
+
+/**
+ * The storage slice the connection registry needs, matched structurally
+ * against IntegrationContext.
+ *
+ * On @mastra/factory 0.30.0 (and 0.31.0) `IntegrationContext.storage.generic`
+ * IS the integration's scoped handle — `settings` and `subscriptions` sit on
+ * it directly. `forIntegration` belongs to the `IntegrationStorage` domain
+ * class, which the host never passes to an integration, so reading only
+ * through it silently disabled the whole per-factory feature
+ * (hitly-net/hitly#218). It stays as a fallback in case a host does expose a
+ * scoping factory.
+ */
 interface IntegrationStorageSlice {
   storage?: {
     generic?: {
+      settings?: ConnectionSettingsStore
+      subscriptions?: ConnectionDirectory
       forIntegration?(id: string): { settings?: ConnectionSettingsStore; subscriptions?: ConnectionDirectory }
     }
     projects?: FactoryProjectLister
   }
+}
+
+/** The `initialize({ storage, projects, … })` arguments, narrowed structurally. */
+interface InitializeArgsSlice {
+  storage?: { settings?: ConnectionSettingsStore; subscriptions?: ConnectionDirectory }
+  projects?: FactoryProjectLister
+}
+
+function registryFromParts(
+  parts: RegistryParts,
+  options: HitlyIntegrationOptions,
+): HitlyConnectionRegistry | null {
+  if (!parts.settings || !parts.subscriptions || !parts.projects) return null
+  return new HitlyConnectionRegistry({
+    settings: parts.settings,
+    directory: parts.subscriptions,
+    projects: parts.projects,
+    envConfig: options.config,
+    envFallback: options.envFallback ?? { mode: 'none' },
+    log: options.log,
+  })
+}
+
+/** Log the precise reason a registry could not be built, so the next host-shape drift is diagnosable from boot output. */
+function reportMissingParts(parts: RegistryParts, options: HitlyIntegrationOptions, origin: string): void {
+  const missing = [
+    !parts.settings ? 'settings' : undefined,
+    !parts.subscriptions ? 'subscriptions' : undefined,
+    !parts.projects ? 'projects' : undefined,
+  ].filter((name): name is string => Boolean(name))
+  options.log?.(
+    'warn',
+    `hitly: host integration storage incomplete (${missing.join(', ')} missing from ${origin}) — per-factory connections and the settings page are disabled`,
+  )
 }
 
 function buildRegistryFromContext(
@@ -293,23 +347,19 @@ function buildRegistryFromContext(
   options: HitlyIntegrationOptions,
 ): HitlyConnectionRegistry | null {
   const slice = ctx as IntegrationContext & IntegrationStorageSlice
-  const handle = slice.storage?.generic?.forIntegration?.('hitly')
-  const projects = slice.storage?.projects
-  if (!handle?.settings || !handle?.subscriptions || !projects) {
-    options.log?.(
-      'warn',
-      'hitly: host integration storage unavailable — per-factory connections and the settings page are disabled',
-    )
-    return null
+  const generic = slice.storage?.generic
+  // Prefer the handle the host actually hands us; only scope through
+  // forIntegration when the direct members are absent.
+  const scoped =
+    generic?.settings && generic?.subscriptions ? generic : generic?.forIntegration?.('hitly')
+  const parts: RegistryParts = {
+    settings: scoped?.settings,
+    subscriptions: scoped?.subscriptions,
+    projects: slice.storage?.projects,
   }
-  return new HitlyConnectionRegistry({
-    settings: handle.settings,
-    directory: handle.subscriptions,
-    projects,
-    envConfig: options.config,
-    envFallback: options.envFallback ?? { mode: 'none' },
-    log: options.log,
-  })
+  const registry = registryFromParts(parts, options)
+  if (!registry) reportMissingParts(parts, options, 'IntegrationContext.storage')
+  return registry
 }
 
 /**
@@ -357,20 +407,39 @@ export function createHitlyIntegration(options: HitlyIntegrationOptions): HitlyM
     initialize?(args: unknown): void | Promise<void>
     workers?(ctx: unknown): MastraWorker[]
   }
-  bind.initialize = async () => {
-    // Host context arrives through routes()/workers() call sites below; the
-    // prepare-time context object is captured there instead.
-  }
-  // Host storage (which backs per-factory connections) only arrives with the
-  // IntegrationContext, so the registry is built on the first host call site
-  // unless the caller supplied one.
+  // Host storage backs per-factory connections, and it arrives twice: at
+  // prepare() through initialize({ storage, projects }) and again with the
+  // IntegrationContext at routes()/workers(). Bind from whichever comes first;
+  // attachRegistry is itself first-wins, so a caller-supplied registry survives.
   let registryAttempted = false
+  const bindRegistry = (registry: HitlyConnectionRegistry | null): boolean => {
+    if (!registry) return false
+    registryAttempted = true
+    integration.attachRegistry(registry)
+    options.log?.('info', 'hitly: per-factory connections enabled (registry bound to host integration storage)')
+    return true
+  }
+  bind.initialize = async (args: unknown) => {
+    if (registryAttempted || options.registry) return
+    const initArgs = (args ?? {}) as InitializeArgsSlice
+    // A handle that is unusable here is not a failure: leave the registry
+    // unattempted so the IntegrationContext path still gets its own chance.
+    bindRegistry(
+      registryFromParts(
+        {
+          settings: initArgs.storage?.settings,
+          subscriptions: initArgs.storage?.subscriptions,
+          projects: initArgs.projects,
+        },
+        options,
+      ),
+    )
+  }
   const ensureRegistry = (ctx: IntegrationContext) => {
     hostRef.current = ctx
     if (registryAttempted || options.registry) return
+    if (bindRegistry(buildRegistryFromContext(ctx, options))) return
     registryAttempted = true
-    const registry = buildRegistryFromContext(ctx, options)
-    if (registry) integration.attachRegistry(registry)
   }
   const originalRoutes = integration.routes.bind(integration)
   integration.routes = (ctx: IntegrationContext) => {

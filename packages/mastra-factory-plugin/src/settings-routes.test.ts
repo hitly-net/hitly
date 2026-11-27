@@ -2,6 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildSettingsRoutes, SETTINGS_BASE_PATH, type SettingsRouteAuth } from './settings-routes.ts'
 import {
+  clearConnectionCards,
+  registerConnectionCard,
+  type ConnectionCardResult,
+} from './connection-cards.ts'
+import { HITLY_CARD_ID, registerHitlyConnectionCard } from './hitly-connection-card.ts'
+import {
   HitlyConnectionRegistry,
   type ConnectionDirectory,
   type ConnectionSettingsStore,
@@ -127,7 +133,7 @@ function makeSetup(opts: SetupOptions = {}) {
       body: options.body === undefined || method === 'GET' ? undefined : JSON.stringify(options.body),
     })
     const context = { req: { raw: request }, anon: options.anon === true }
-    const response = await route(method, path).handler(context)
+    const response = await route(method, new URL(path, 'https://factory.example.com').pathname).handler(context)
     return { status: response.status, body: await response.text(), response }
   }
   const connect = (overrides: Record<string, unknown> = {}) =>
@@ -149,6 +155,7 @@ function makeSetup(opts: SetupOptions = {}) {
 for (const [label, path, method] of [
   ['page', SETTINGS_BASE_PATH, 'GET'],
   ['api', `${SETTINGS_BASE_PATH}/api`, 'GET'],
+  ['cards', `${SETTINGS_BASE_PATH}/cards/api`, 'GET'],
   ['connect', `${SETTINGS_BASE_PATH}/connect`, 'POST'],
   ['disconnect', `${SETTINGS_BASE_PATH}/disconnect`, 'POST'],
   ['test', `${SETTINGS_BASE_PATH}/test`, 'POST'],
@@ -165,6 +172,7 @@ test('settings: non-admin gets 403 on every route', async () => {
   for (const [method, path] of [
     ['GET', SETTINGS_BASE_PATH],
     ['GET', `${SETTINGS_BASE_PATH}/api`],
+    ['GET', `${SETTINGS_BASE_PATH}/cards/api`],
     ['POST', `${SETTINGS_BASE_PATH}/connect`],
     ['POST', `${SETTINGS_BASE_PATH}/disconnect`],
     ['POST', `${SETTINGS_BASE_PATH}/test`],
@@ -308,4 +316,147 @@ test('settings: env-fallback factories are listed and badged distinctly', async 
   const after = await t.call('GET', `${SETTINGS_BASE_PATH}/api`)
   const rows = JSON.parse(after.body) as { connections: Array<{ source: string }> }
   assert.equal(rows.connections[0].source, 'saved')
+})
+
+// ─── Connections card API (hitly-net/hitly#218) ──────────────────────────────
+
+interface Card {
+  id: string
+  name: string
+  description: string
+  icon: string
+  settingsPath: string | null
+  status: string
+  label: string
+  detail: string | null
+}
+
+async function cardsOf(t: { call: (m: 'GET', p: string, o?: { anon?: boolean }) => Promise<{ body: string }> }) {
+  const res = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/api`)
+  return JSON.parse(res.body) as { cards: Card[] }
+}
+
+test('cards: hitly card reports not-connected with no saved connection', async () => {
+  const t = makeSetup()
+  registerHitlyConnectionCard({ getRegistry: () => t.registry })
+  try {
+    const { cards } = await cardsOf(t)
+    assert.equal(cards.length, 1)
+    assert.equal(cards[0]!.id, HITLY_CARD_ID)
+    assert.equal(cards[0]!.status, 'not-connected')
+    assert.equal(cards[0]!.label, 'Not connected')
+    assert.equal(cards[0]!.settingsPath, SETTINGS_BASE_PATH)
+  } finally {
+    clearConnectionCards()
+  }
+})
+
+test('cards: a saved connection shows as connected, without leaking the api key or signing secret', async () => {
+  const t = makeSetup()
+  registerHitlyConnectionCard({ getRegistry: () => t.registry })
+  try {
+    await t.connect()
+    const res = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/api`)
+    const { cards } = JSON.parse(res.body) as { cards: Card[] }
+    assert.equal(cards[0]!.status, 'connected')
+    assert.equal(cards[0]!.label, 'Connected')
+    assert.match(cards[0]!.detail ?? '', /1 factory connected/, 'aggregate counts the connected factories')
+
+    const perFactory = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/api?factoryProjectId=fproj_1`)
+    const single = JSON.parse(perFactory.body) as { cards: Card[] }
+    assert.equal(single.cards[0]!.status, 'connected')
+    assert.ok(single.cards[0]!.detail?.includes('https://hitly.example.com'), 'per-factory detail names the HITLy project')
+    assert.ok(single.cards[0]!.detail?.includes('prj_1'))
+    assert.ok(!res.body.includes(SECRET_API_KEY), 'the card payload never carries the api key')
+    assert.ok(!res.body.includes(SECRET_SIGNING), 'nor the webhook signing secret')
+  } finally {
+    clearConnectionCards()
+  }
+})
+
+test('cards: an env-fallback factory is badged as such, per factory and in aggregate', async () => {
+  const t = makeSetup({ envFallback: 'fproj_1' })
+  registerHitlyConnectionCard({ getRegistry: () => t.registry })
+  try {
+    const { cards } = await cardsOf(t)
+    assert.equal(cards[0]!.status, 'env-fallback')
+    assert.match(cards[0]!.detail ?? '', /env fallback/)
+
+    const perFactory = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/api?factoryProjectId=fproj_1`)
+    const single = JSON.parse(perFactory.body) as { cards: Card[] }
+    assert.equal(single.cards[0]!.status, 'env-fallback')
+
+    const unknown = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/api?factoryProjectId=fproj_missing`)
+    const missing = JSON.parse(unknown.body) as { cards: Card[] }
+    assert.equal(missing.cards[0]!.status, 'not-connected')
+  } finally {
+    clearConnectionCards()
+  }
+})
+
+test('cards: a card that throws or stalls is dropped, the rest of the screen survives', async () => {
+  const t = makeSetup()
+  registerHitlyConnectionCard({ getRegistry: () => t.registry })
+  registerConnectionCard({
+    id: 'stalls',
+    name: 'Stalls',
+    description: 'never answers',
+    order: 1,
+    status: () => new Promise<ConnectionCardResult>(() => undefined),
+  })
+  try {
+    const res = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/api`)
+    assert.equal(res.status, 200)
+    const { cards } = JSON.parse(res.body) as { cards: Card[] }
+    assert.deepEqual(cards.map((card) => card.id), [HITLY_CARD_ID], 'the stalled card is skipped, not shown broken')
+  } finally {
+    clearConnectionCards()
+  }
+})
+
+test('cards: no registry means no card, so the screen offers no dead link', async () => {
+  registerHitlyConnectionCard({ getRegistry: () => null })
+  const t = makeSetup()
+  // The card is registered but cannot resolve; the route still answers 200 with an empty list.
+  const res = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/api`)
+  assert.equal(res.status, 200)
+  assert.deepEqual(JSON.parse(res.body), { cards: [] })
+  clearConnectionCards()
+})
+
+// ─── injected bootstrap ──────────────────────────────────────────────────────
+
+test('boot.js: public, javascript, and pointed at the gated cards API', async () => {
+  const t = makeSetup()
+  const res = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/boot.js`, { anon: true })
+  assert.equal(res.status, 200, 'the static bootstrap carries no secrets, so it needs no session')
+  assert.match(res.response.headers.get('content-type') ?? '', /text\/javascript/)
+  assert.ok(res.body.includes(`"${SETTINGS_BASE_PATH}"`), 'the bootstrap knows where its cards API lives')
+  assert.ok(res.body.includes('/cards/api'), 'cards come from the admin-gated API')
+  assert.equal(res.response.headers.get('cache-control'), 'no-store', 'a reverted patch must not linger in the browser cache')
+})
+
+test('boot.js: HITLY_CONNECTION_CARDS_ANCHOR prepends an operator-supplied anchor', async () => {
+  const t = makeSetup()
+  process.env.HITLY_CONNECTION_CARDS_ANCHOR = 'section[data-page="connections"]'
+  try {
+    const res = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/boot.js`, { anon: true })
+    assert.ok(
+      res.body.includes('"section[data-page=\\"connections\\"]"'),
+      'a drifted Factory build can be handled without a redeploy of this package',
+    )
+  } finally {
+    delete process.env.HITLY_CONNECTION_CARDS_ANCHOR
+  }
+})
+
+test('boot.js: 404 while the Factory UI patch is switched off', async () => {
+  const t = makeSetup()
+  process.env.HITLY_FACTORY_UI_PATCH = '0'
+  try {
+    const res = await t.call('GET', `${SETTINGS_BASE_PATH}/cards/boot.js`)
+    assert.equal(res.status, 404)
+  } finally {
+    delete process.env.HITLY_FACTORY_UI_PATCH
+  }
 })
