@@ -1,10 +1,12 @@
-import { buildApprovalRequest, detectGate, METADATA_KEYS, RESUME_PATH, type HitlyClientLike } from './gates.ts'
+import { buildApprovalRequest, detectGate, idempotencyKeyFor, isGateTool, METADATA_KEYS, RESUME_PATH, type HitlyClientLike } from './gates.ts'
 import { handleResumeRequest, type ResumeDeps } from './resume.ts'
 import { applyDecision, type ApplyDeps } from './apply.ts'
 import { HitlyReconciler, type OpenApproval } from './worker.ts'
+import type { FactoryProjectLister, HitlyConnectionRegistry, ResolvedConnection } from './connections.ts'
+import { buildSettingsRoutes, type SettingsRouteAuth } from './settings-routes.ts'
 import type { ApprovalSnapshot, Gate, PluginRuntimeConfig } from './types.ts'
 
-export { DEFAULT_POLL_INTERVAL_MS, parseRuntimeConfig } from './config.ts'
+export { DEFAULT_POLL_INTERVAL_MS, parseRuntimeConfig, parseDeploymentConfig, type HitlyDeploymentConfig } from './config.ts'
 
 /**
  * Session-identity extraction is injected so this module never imports
@@ -36,28 +38,21 @@ export interface ApplySeams {
 }
 
 export interface HitlyPluginOptions {
+  /**
+   * Deployment-level env config. With a `registry` this is bootstrap +
+   * publicBaseUrl/poll source and env-fallback credentials; without one
+   * (tests, single-project wiring) it is also the gate config as before.
+   */
   config: PluginRuntimeConfig
-  client: HitlyClientLike & {
-    getApproval?(
-      id: string,
-    ): Promise<{
-      id: string
-      status: string
-      decision: string | null
-      metadata: Record<string, unknown>
-      reason?: string
-      editedArgs?: Record<string, unknown>
-      response?: string
-      answer?: string
-    }>
-    getIntegrationConfig?(): Promise<{ gates: Record<Gate, boolean>; mergeAfterAccept: boolean }>
-    /** Restart re-adoption feed: open gate approvals (pending + failed_resume) with create-time metadata. */
-    listPending?(): Promise<Array<{ id: string; status: string; decision: string | null; metadata: Record<string, unknown> }>>
-    /** Host receipt that a failed_resume decision was converged; settles the row to decided. */
-    ackResume?(approvalId: string): Promise<void>
-  }
+  client: HitlyClientLike
   seams: SessionTargetSeams
   applySeams?: ApplySeams
+  /**
+   * Per-factory HITLy connections (#211). When present, every gate call is
+   * routed through the factory's own connection — no connection → no HITLy
+   * items — and resume callbacks verify with that connection's secrets.
+   */
+  registry?: HitlyConnectionRegistry
   /** HITLy project-config overrides (authoritative once fetched; env is bootstrap/fallback). */
   gateOverrides?: Partial<Record<Gate, boolean>>
   mergeAfterAcceptOverride?: boolean
@@ -99,6 +94,28 @@ function rawRequestFrom(context: unknown): Request {
   const candidate = context as { req?: { raw?: unknown } } | null
   if (candidate?.req?.raw instanceof Request) return candidate.req.raw
   throw new TypeError('hitly resume: expected a Request or Hono context')
+}
+
+/**
+ * Pull the factoryProjectId out of a `.../resume/<fpid>` request URL.
+ * Done from the URL rather than hono's `c.req.param()` so the same code
+ * path serves raw Requests (tests) and the mounted route (production).
+ */
+export function extractFactoryProjectId(request: Request): string | undefined {
+  let pathname: string
+  try {
+    pathname = new URL(request.url).pathname
+  } catch {
+    return undefined
+  }
+  if (!pathname.startsWith(`${RESUME_PATH}/`)) return undefined
+  const rest = pathname.slice(RESUME_PATH.length + 1)
+  if (!rest || rest.includes('/')) return undefined
+  try {
+    return decodeURIComponent(rest) || undefined
+  } catch {
+    return rest
+  }
 }
 
 const VALID_GATES: readonly Gate[] = ['plan', 'review', 'ask_user']
@@ -155,6 +172,8 @@ export class HitlyMastraFactoryPlugin {
   /** runId → generated token held between create start and create resolve. */
   private readonly pendingCbAuthTokens = new Map<string, string>()
   private seededFromHitly = false
+  /** Connections whose open set has been re-seeded from HITLy (restart backstop). */
+  private readonly seededConnections = new Set<string>()
   private reconciler?: HitlyReconciler
 
   constructor(options: HitlyPluginOptions) {
@@ -163,47 +182,142 @@ export class HitlyMastraFactoryPlugin {
     this.mergeAfterAccept = options.mergeAfterAcceptOverride ?? options.config.mergeAfterAccept
   }
 
+  /**
+   * Attach the connection registry after construction. Host storage (where
+   * connections live) only arrives with the IntegrationContext, so
+   * createHitlyIntegration builds and attaches the registry there. A
+   * registry passed up front is never replaced.
+   */
+  attachRegistry(registry: HitlyConnectionRegistry): void {
+    if (!this.options.registry) this.options.registry = registry
+  }
+
   /** Refresh gate state from HITLy (source of truth). Fail-closed: never called with stale/failed reads. */
   updateRemoteConfig(remote: { gates: Record<Gate, boolean>; mergeAfterAccept: boolean }): void {
     this.gates = { ...remote.gates }
     this.mergeAfterAccept = remote.mergeAfterAccept
   }
 
-  routes(_ctx: unknown): Array<{ path: string; method: 'POST'; requiresAuth: boolean; handler: (context: unknown) => Promise<Response> }> {
-    return [
-      {
-        path: RESUME_PATH,
-        method: 'POST',
-        // HITLy posts with its own bearer + HMAC signature — it has no
-        // Factory interactive auth, and the signature IS the credential.
-        requiresAuth: false,
-        handler: (context: unknown) => this.handleResume(rawRequestFrom(context)),
-      },
+  routes(ctx: unknown): Array<{
+    path: string
+    method: 'GET' | 'POST'
+    requiresAuth: boolean
+    handler: (context: unknown) => Promise<Response>
+  }> {
+    const handler = (context: unknown) => this.handleResume(rawRequestFrom(context))
+    // HITLy posts with its own per-approval bearer + HMAC signature — it has
+    // no Factory interactive auth, and the signature IS the credential.
+    // The un-parameterized path stays for rows created before per-factory
+    // URLs (and for legacy single-project wiring without a registry).
+    const routes: Array<{
+      path: string
+      method: 'GET' | 'POST'
+      requiresAuth: boolean
+      handler: (context: unknown) => Promise<Response>
+    }> = [
+      { path: `${RESUME_PATH}/:factoryProjectId`, method: 'POST', requiresAuth: false, handler },
+      { path: RESUME_PATH, method: 'POST', requiresAuth: false, handler },
     ]
+    if (this.options.registry) {
+      // Interim admin surface until upstream ships a Connections extension
+      // point (#211). Auth/tenant/admin gating happens inside the handlers,
+      // against the host context's RouteAuth (fail-closed when absent).
+      const host = ctx as { auth?: SettingsRouteAuth; storage?: { projects?: FactoryProjectLister } } | null
+      routes.push(
+        ...buildSettingsRoutes({
+          registry: this.options.registry,
+          auth: host?.auth,
+          projects: host?.storage?.projects,
+          log: this.options.log,
+        }),
+      )
+    }
+    return routes
+  }
+
+  /** Route a gate call / callback to the factory's connection (registry mode). */
+  private async resolveConnectionFor(session: {
+    orgId?: string
+    factoryProjectId?: string
+  }): Promise<ResolvedConnection | null> {
+    const registry = this.options.registry
+    if (!registry || !session.factoryProjectId) return null
+    if (session.orgId) return registry.resolve(session.orgId, session.factoryProjectId)
+    return registry.resolveByFactoryProjectId(session.factoryProjectId)
+  }
+
+  private clientFor(conn: ResolvedConnection | null): HitlyClientLike {
+    if (conn && this.options.registry) return this.options.registry.clientFor(conn)
+    return this.options.client
   }
 
   private async handleResume(request: Request): Promise<Response> {
     const rawBody = await request.text()
+    const factoryProjectId = extractFactoryProjectId(request)
+    let conn: ResolvedConnection | null = null
+    if (factoryProjectId && this.options.registry) {
+      conn = await this.options.registry.resolveByFactoryProjectId(factoryProjectId)
+      if (!conn) {
+        // Disconnected or never connected: nothing to authenticate against.
+        // 404 stops HITLy retries; in-flight approvals converge (or expire)
+        // via the reconcile worker while the connection existed.
+        this.options.log?.('warn', 'hitly resume: no connection for factory', { factoryProjectId })
+        return new Response(JSON.stringify({ error: 'unknown_connection' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+    }
+    const client = this.clientFor(conn)
+    // Event ids are unique per HITLy project; scope the dedupe store by
+    // factory so two projects can never shadow each other's events.
+    const eventScope = conn ? `${conn.factoryProjectId}|` : ''
     const deps: ResumeDeps = {
       dedupe: {
-        check: (eventId) => this.seenEvents.has(eventId),
-        remember: (eventId) => this.remember(this.seenEvents, eventId),
+        check: (eventId) => this.seenEvents.has(eventScope + eventId),
+        remember: (eventId) => this.remember(this.seenEvents, eventScope + eventId),
       },
       bearerFor: (approvalId) => this.cbAuthTokens.get(approvalId),
       fetchApprovalState: async (approvalId) => {
-        if (!this.options.client.getApproval) throw Object.assign(new Error('no approval read path'), { status: 502 })
-        return this.options.client.getApproval(approvalId)
+        if (!client.getApproval) throw Object.assign(new Error('no approval read path'), { status: 502 })
+        const state = await client.getApproval(approvalId)
+        if (conn) {
+          const owner = state.metadata?.[METADATA_KEYS.projectId]
+          if (typeof owner === 'string' && owner && owner !== conn.factoryProjectId) {
+            // Wrong factory's approval reached this factory's callback URL.
+            // The per-approval bearer already gates it; this is the belt.
+            this.options.log?.('warn', 'hitly resume: approval belongs to another factory', {
+              approvalId,
+              factoryProjectId: conn.factoryProjectId,
+            })
+            throw Object.assign(new Error('cross-factory approval'), { status: 404 })
+          }
+        }
+        return state
       },
       apply: (cmd) => this.dispatchApply(cmd),
       log: this.options.log,
     }
-    return handleResumeRequest({ headers: request.headers, rawBody, config: this.options.config, deps })
+    const response = await handleResumeRequest({
+      headers: request.headers,
+      rawBody,
+      config: conn ? conn.config : this.options.config,
+      deps,
+    })
+    if (conn && this.options.registry && response.ok) {
+      try {
+        await this.options.registry.touchCallback(conn.orgId, conn.factoryProjectId)
+      } catch {
+        // Status telemetry only.
+      }
+    }
+    return response
   }
 
   private async dispatchApply(cmd: import('./resume.ts').ResumeDispatch) {
     const snapshot = snapshotFromDispatch(cmd)
     if (!snapshot) return { applied: false, reason: 'unknown gate' }
-    const deps = this.buildApplyDeps()
+    const deps = await this.buildApplyDepsFor(snapshot)
     return applyDecision(snapshot, deps)
   }
 
@@ -211,15 +325,27 @@ export class HitlyMastraFactoryPlugin {
     try {
       const toolContext = args.toolContext
       if (!toolContext || toolContext.error) return
-      const gate = detectGate(toolContext.toolName, this.gates)
-      if (!gate) return
+      if (!isGateTool(toolContext.toolName)) return
       const session = this.options.seams.resolveSessionTarget(args.requestContext)
       if (!session) {
         this.options.log?.('warn', 'hitly: gate tool call without resolvable session', { toolName: toolContext.toolName })
         return
       }
+      const conn = await this.resolveConnectionFor(session)
+      if (this.options.registry && !conn) {
+        // No saved connection and no env fallback for this factory: the
+        // factory simply does not use HITLy — no gate, no pause.
+        this.options.log?.('warn', 'hitly: no connection for factory, gate skipped', {
+          toolName: toolContext.toolName,
+          factoryProjectId: session.factoryProjectId ?? null,
+        })
+        return
+      }
+      const gates = conn ? conn.config.gates : this.gates
+      const gate = detectGate(toolContext.toolName, gates)
+      if (!gate) return
       const toolCallId = typeof toolContext.toolCallId === 'string' && toolContext.toolCallId ? toolContext.toolCallId : 'unknown'
-      const dedupeKey = `${session.sessionId}:${toolCallId}:${gate}`
+      const dedupeKey = `${conn ? conn.factoryProjectId : 'default'}:${session.sessionId}:${toolCallId}:${gate}`
       if (this.seenToolCalls.has(dedupeKey)) return
       this.remember(this.seenToolCalls, dedupeKey)
 
@@ -231,24 +357,30 @@ export class HitlyMastraFactoryPlugin {
         input: toolContext.input,
         output: toolContext.output,
         pr,
-        config: this.options.config,
+        config: conn ? conn.config : this.options.config,
       })
       // Hold the generated cbAuthToken from create start; once HITLy assigns
       // the approval id it is re-keyed for resume-callback verification.
       if (request.cbAuthToken) this.pendingCbAuthTokens.set(request.runId, request.cbAuthToken)
+      const client = this.clientFor(conn)
       void Promise.resolve(
-        this.options.client.createApproval(request as unknown as Record<string, unknown>, request.idempotencyKey!),
+        client.createApproval(request as unknown as Record<string, unknown>, request.idempotencyKey!),
       ).then(
         (ref) => {
           const token = this.pendingCbAuthTokens.get(request.runId)
           this.pendingCbAuthTokens.delete(request.runId)
           if (token) this.cbAuthTokens.set(ref.id, token)
-          this.openApprovals.set(ref.id, {
+          this.openApprovals.set(this.openKey(conn, ref.id), {
             approvalId: ref.id,
             gate,
             metadata: (request.metadata ?? {}) as Record<string, unknown>,
           })
-          this.options.log?.('info', 'hitly: gate approval opened', { gate, approvalId: ref.id, sessionId: session.sessionId })
+          this.options.log?.('info', 'hitly: gate approval opened', {
+            gate,
+            approvalId: ref.id,
+            sessionId: session.sessionId,
+            factoryProjectId: conn?.factoryProjectId ?? null,
+          })
         },
         (error: unknown) => {
           this.pendingCbAuthTokens.delete(request.runId)
@@ -287,6 +419,7 @@ export class HitlyMastraFactoryPlugin {
    * the resume route. Called by the Factory worker; safe to call ad hoc.
    */
   async reconcileNow(): Promise<{ checked: number; applied: number; errors: number; configRefreshed: boolean }> {
+    if (this.options.registry) return this.reconcilePerConnection()
     // After a Factory restart the in-process open set is empty; re-seed it
     // from HITLy's open list (pending + failed_resume rows, whose callbacks
     // exhausted HITLy's ~1s retries) once, so decisions made while we were
@@ -299,8 +432,8 @@ export class HitlyMastraFactoryPlugin {
           const gate = approval.metadata[METADATA_KEYS.gate]
           if (typeof gate !== 'string' || !VALID_GATES.includes(gate as Gate)) continue
           if (typeof approval.metadata[METADATA_KEYS.sessionId] !== 'string') continue
-          if (this.openApprovals.has(approval.id)) continue
-          this.openApprovals.set(approval.id, { approvalId: approval.id, gate: gate as Gate, metadata: approval.metadata })
+          if (this.openApprovals.has(this.openKey(undefined, approval.id))) continue
+          this.openApprovals.set(this.openKey(undefined, approval.id), { approvalId: approval.id, gate: gate as Gate, metadata: approval.metadata })
         }
       } catch (error) {
         this.seededFromHitly = false
@@ -312,7 +445,7 @@ export class HitlyMastraFactoryPlugin {
     this.reconciler ??= new HitlyReconciler({
       listOpen: () => [...this.openApprovals.values()],
       closeOpen: (approvalId) => {
-        this.openApprovals.delete(approvalId)
+        this.openApprovals.delete(this.openKey(undefined, approvalId))
         this.cbAuthTokens.delete(approvalId)
       },
       getApproval: async (approvalId) => {
@@ -336,11 +469,137 @@ export class HitlyMastraFactoryPlugin {
     return this.reconciler.tick()
   }
 
+  /**
+   * Registry-mode reconciliation (#211): every connected factory is polled
+   * through ITS OWN credentials — listPending, approval reads, gate config,
+   * and resume-ack all go to that factory's HITLy project. One unreachable
+   * HITLy server slows only its own connections; the pass keeps going and
+   * records the failure on that connection's status.
+   */
+  private async reconcilePerConnection(): Promise<{ checked: number; applied: number; errors: number; configRefreshed: boolean }> {
+    const registry = this.options.registry!
+    const totals = { checked: 0, applied: 0, errors: 0, configRefreshed: true }
+    for (const conn of await registry.listAll()) {
+      const client = registry.clientFor(conn)
+      const prefix = this.openKeyPrefix(conn)
+      if (!this.seededConnections.has(prefix) && client.listPending) {
+        this.seededConnections.add(prefix)
+        try {
+          const pending = await client.listPending()
+          for (const approval of pending) {
+            const gate = approval.metadata[METADATA_KEYS.gate]
+            if (typeof gate !== 'string' || !VALID_GATES.includes(gate as Gate)) continue
+            if (typeof approval.metadata[METADATA_KEYS.sessionId] !== 'string') continue
+            if (this.openApprovals.has(`${prefix}${approval.id}`)) continue
+            this.openApprovals.set(`${prefix}${approval.id}`, {
+              approvalId: approval.id,
+              gate: gate as Gate,
+              metadata: approval.metadata,
+            })
+          }
+        } catch (error) {
+          this.seededConnections.delete(prefix)
+          totals.errors += 1
+          this.options.log?.('warn', 'hitly reconcile: seeding from pending list failed', {
+            factoryProjectId: conn.factoryProjectId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+          await registry
+            .recordError(conn.orgId, conn.factoryProjectId, error instanceof Error ? error.message : String(error))
+            .catch(() => {})
+        }
+      }
+      const reconciler = new HitlyReconciler({
+        listOpen: () =>
+          [...this.openApprovals.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([, entry]) => entry),
+        closeOpen: (approvalId) => {
+          this.openApprovals.delete(`${prefix}${approvalId}`)
+        },
+        getApproval: async (approvalId) => {
+          if (!client.getApproval) throw Object.assign(new Error('no approval read path'), { status: 502 })
+          return client.getApproval(approvalId)
+        },
+        refreshConfig: client.getIntegrationConfig
+          ? async () => {
+              const remote = await client.getIntegrationConfig!()
+              await registry.updateRemoteState(conn.orgId, conn.factoryProjectId, {
+                gates: remote.gates,
+                mergeAfterAccept: remote.mergeAfterAccept,
+              })
+            }
+          : undefined,
+        apply: async (snapshot) => applyDecision(snapshot, await this.buildApplyDepsFor(snapshot)),
+        ackResume: client.ackResume
+          ? async (approvalId) => {
+              await client.ackResume!(approvalId)
+            }
+          : undefined,
+        log: this.options.log,
+      })
+      try {
+        const result = await reconciler.tick()
+        totals.checked += result.checked
+        totals.applied += result.applied
+        totals.errors += result.errors
+        if (client.getIntegrationConfig && !result.configRefreshed) totals.configRefreshed = false
+        if (result.errors > 0) {
+          await registry
+            .recordError(conn.orgId, conn.factoryProjectId, `reconcile: ${result.errors} error(s) on last pass`)
+            .catch(() => {})
+        }
+      } catch (error) {
+        totals.errors += 1
+        this.options.log?.('warn', 'hitly reconcile: connection pass failed', {
+          factoryProjectId: conn.factoryProjectId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        await registry
+          .recordError(conn.orgId, conn.factoryProjectId, error instanceof Error ? error.message : String(error))
+          .catch(() => {})
+      }
+    }
+    return totals
+  }
+
+  /**
+   * openApprovals are keyed by connection scope: two HITLy projects on
+   * different HITLy servers can hand out the same approval id, so the
+   * reconcile pass must never confuse them.
+   */
+  private openKey(conn: ResolvedConnection | null | undefined, approvalId: string): string {
+    return `${conn?.orgId ?? 'default'}|${conn?.factoryProjectId ?? 'default'}|${approvalId}`
+  }
+
+  private openKeyPrefix(conn: ResolvedConnection): string {
+    return `${conn.orgId}|${conn.factoryProjectId}|`
+  }
+
+  /**
+   * Apply deps for a resolved snapshot. In registry mode the factory's own
+   * connection carries its gate switches and merge preference (HITLy project
+   * config wins via the reconcile refresh); otherwise the deployment config.
+   */
+  private async buildApplyDepsFor(snapshot: ApprovalSnapshot): Promise<ApplyDeps> {
+    if (this.options.registry && snapshot.factoryProjectId) {
+      const conn = await this.options.registry.resolveByFactoryProjectId(snapshot.factoryProjectId)
+      if (conn) {
+        const gateOverrides = this.options.gateOverrides ?? {}
+        return this.buildApplyDeps({
+          gates: { ...conn.config.gates, ...gateOverrides },
+          mergeAfterAccept: conn.config.mergeAfterAccept,
+        })
+      }
+    }
+    return this.buildApplyDeps()
+  }
+
   /** Shared apply wiring — reused by the resume route and the reconciliation worker. */
-  buildApplyDeps(): ApplyDeps {
+  buildApplyDeps(overrides?: { gates?: Record<Gate, boolean>; mergeAfterAccept?: boolean }): ApplyDeps {
     return {
-      gates: this.gates,
-      mergeAfterAccept: this.mergeAfterAccept,
+      gates: overrides?.gates ?? this.gates,
+      mergeAfterAccept: overrides?.mergeAfterAccept ?? this.mergeAfterAccept,
       answerParked: async (args) => {
         if (!this.options.applySeams) throw new Error('hitly: applySeams.answerParked not wired')
         return this.options.applySeams.answerParked(args)

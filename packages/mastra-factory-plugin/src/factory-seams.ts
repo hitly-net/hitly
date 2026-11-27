@@ -12,6 +12,13 @@ import type { ApplySeams, HitlyPluginOptions, SessionTargetSeams } from './index
 import { HitlyMastraFactoryPlugin } from './index.ts'
 import { HitlyClient } from './hitly-client.ts'
 import { attemptSquashMerge, createGitHubApi, parsePrUrl } from './merge.ts'
+import {
+  HitlyConnectionRegistry,
+  type ConnectionDirectory,
+  type ConnectionSettingsStore,
+  type EnvFallback,
+  type FactoryProjectLister,
+} from './connections.ts'
 
 type RequestContext = { get(key: string): unknown }
 
@@ -153,6 +160,47 @@ export interface HitlyIntegrationOptions extends Omit<HitlyPluginOptions, 'seams
   /** Override in tests; defaults to the real host-context-backed seams. */
   seams?: SessionTargetSeams
   applySeams?: ApplySeams
+  /**
+   * Parsed HITLY_ENV_FALLBACK. With no explicit `registry`, factories in
+   * this set fall back to the env credentials when they have no saved
+   * connection; default `{ mode: 'none' }` (connections come only from the
+   * per-factory settings surface).
+   */
+  envFallback?: EnvFallback
+}
+
+/** Storage slice the connection registry needs, matched structurally against IntegrationContext. */
+interface IntegrationStorageSlice {
+  storage?: {
+    generic?: {
+      forIntegration?(id: string): { settings?: ConnectionSettingsStore; subscriptions?: ConnectionDirectory }
+    }
+    projects?: FactoryProjectLister
+  }
+}
+
+function buildRegistryFromContext(
+  ctx: IntegrationContext,
+  options: HitlyIntegrationOptions,
+): HitlyConnectionRegistry | null {
+  const slice = ctx as IntegrationContext & IntegrationStorageSlice
+  const handle = slice.storage?.generic?.forIntegration?.('hitly')
+  const projects = slice.storage?.projects
+  if (!handle?.settings || !handle?.subscriptions || !projects) {
+    options.log?.(
+      'warn',
+      'hitly: host integration storage unavailable — per-factory connections and the settings page are disabled',
+    )
+    return null
+  }
+  return new HitlyConnectionRegistry({
+    settings: handle.settings,
+    directory: handle.subscriptions,
+    projects,
+    envConfig: options.config,
+    envFallback: options.envFallback ?? { mode: 'none' },
+    log: options.log,
+  })
 }
 
 /**
@@ -195,13 +243,24 @@ export function createHitlyIntegration(options: HitlyIntegrationOptions): HitlyM
     // Host context arrives through routes()/workers() call sites below; the
     // prepare-time context object is captured there instead.
   }
+  // Host storage (which backs per-factory connections) only arrives with the
+  // IntegrationContext, so the registry is built on the first host call site
+  // unless the caller supplied one.
+  let registryAttempted = false
+  const ensureRegistry = (ctx: IntegrationContext) => {
+    hostRef.current = ctx
+    if (registryAttempted || options.registry) return
+    registryAttempted = true
+    const registry = buildRegistryFromContext(ctx, options)
+    if (registry) integration.attachRegistry(registry)
+  }
   const originalRoutes = integration.routes.bind(integration)
   integration.routes = (ctx: IntegrationContext) => {
-    hostRef.current = ctx
+    ensureRegistry(ctx)
     return originalRoutes(ctx)
   }
   bind.workers = (ctx: IntegrationContext) => {
-    hostRef.current = ctx
+    ensureRegistry(ctx)
     return [new HitlyReconcileWorker(integration, options.config.pollIntervalMs, options.log)]
   }
 
