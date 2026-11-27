@@ -1,0 +1,11 @@
+{
+  // The Factory UI patch CLI lives outside `src` (it is run by host operators,
+  // not imported by the plugin), but it is shipped code and must typecheck.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["scripts", "src/patch-factory-ui.ts", "src/connections-boot.ts"]
+}

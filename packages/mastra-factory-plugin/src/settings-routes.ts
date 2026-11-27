@@ -15,6 +15,9 @@
 
 import { HitlyConnectionRegistry, type FactoryProjectLister, type ResolvedConnection, type SaveConnectionInput } from './connections.ts'
 import { HitlyClient } from './hitly-client.ts'
+import { collectConnectionCards } from './connection-cards.ts'
+import { renderConnectionsBootScript, anchorSelectorsWithEnv } from './connections-boot.ts'
+import { isFactoryUiPatchEnabled } from './patch-factory-ui.ts'
 
 export const SETTINGS_BASE_PATH = '/web/integrations/hitly/settings'
 
@@ -39,6 +42,8 @@ export interface SettingsRoutesDeps {
   projects?: FactoryProjectLister
   /** Overridable so tests can prove the probe is read-only. */
   connectionTester?: (input: SaveConnectionInput) => Promise<ConnectionTestResult>
+  /** Per-card status timeout for the Connections card API. */
+  cardTimeoutMs?: number
   fetchImpl?: typeof fetch
   log?(level: string, message: string, context?: Record<string, unknown>): void
 }
@@ -384,6 +389,51 @@ export function buildSettingsRoutes(deps: SettingsRoutesDeps): SettingsApiRoute[
         } catch (error) {
           return json(400, { error: error instanceof Error ? error.message : String(error) })
         }
+      },
+    },
+    {
+      // Card data for the version-patched Settings → Connections screen. Same
+      // org-admin gate as the settings page: cards are admin-visible only.
+      path: `${SETTINGS_BASE_PATH}/cards/api`,
+      method: 'GET',
+      requiresAuth: false,
+      handler: async (context) => {
+        const authed = await authorize(deps, context)
+        if (authed instanceof Response) return authed
+        let factoryProjectId: string | undefined
+        try {
+          const raw = requestFrom(context).url
+          const param = new URL(raw, 'http://localhost').searchParams.get('factoryProjectId')
+          factoryProjectId = param && param.trim() ? param.trim() : undefined
+        } catch {
+          return json(400, { error: 'invalid request url' })
+        }
+        const cards = await collectConnectionCards(
+          { orgId: authed.orgId, userId: authed.userId, factoryProjectId },
+          { timeoutMs: deps.cardTimeoutMs, log: deps.log },
+        )
+        return json(200, { cards })
+      },
+    },
+    {
+      // The DOM bootstrap the built SPA loads. Public: it is static, secret-free
+      // code, and the cards it fetches are gated by the route above.
+      path: `${SETTINGS_BASE_PATH}/cards/boot.js`,
+      method: 'GET',
+      requiresAuth: false,
+      handler: async () => {
+        if (!isFactoryUiPatchEnabled()) return json(404, { error: 'hitly Factory UI patch is disabled' })
+        return new Response(
+          renderConnectionsBootScript({ basePath: SETTINGS_BASE_PATH, anchorSelectors: anchorSelectorsWithEnv() }),
+          {
+            status: 200,
+            headers: {
+              'content-type': 'text/javascript; charset=utf-8',
+              // The patch is removable at runtime, so a stale script must not linger.
+              'cache-control': 'no-store',
+            },
+          },
+        )
       },
     },
   ]
