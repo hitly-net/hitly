@@ -15,14 +15,19 @@ export function isWellFormedApiKey(raw: string): boolean {
 
 /**
  * Cheap shape check for a delegated OAuth access token presented as a bearer
- * credential (MCP marketplace connectors, e.g. Grok). Shaped like a compact
- * JWT — URL-safe characters plus the two separators. Malformed guesses are
- * refused BEFORE any per-key rate-limit counting or host round-trip, and the
- * `hitly_` prefix never matches (that space belongs to API keys, including
- * revoked/malformed ones, so they keep failing as keys, not as tokens).
+ * credential (MCP marketplace connectors, e.g. Grok). Delegated tokens are
+ * compact HS256 JWTs — three non-empty base64url segments separated by dots.
+ * The full JWT shape is the point: bearer SESSION tokens (Better Auth session
+ * ids contain no dots) must NOT pass this check, so they fall through to the
+ * session check instead of being classified — and possibly budget-counted —
+ * as key attempts. Malformed guesses are refused BEFORE any per-key
+ * rate-limit counting or host round-trip, and the `hitly_` prefix never
+ * matches (that space belongs to API keys, including revoked/malformed ones,
+ * so they keep failing as keys, not as tokens).
  */
 export function isWellFormedDelegatedToken(raw: string): boolean {
-  return !raw.startsWith('hitly_') && /^[A-Za-z0-9._~+\/-]{20,512}$/.test(raw)
+  if (raw.startsWith('hitly_') || raw.length < 20 || raw.length > 512) return false
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(raw)
 }
 
 /**
