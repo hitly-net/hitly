@@ -1,25 +1,20 @@
-import { NextResponse } from 'next/server'
 import { handleVerifyToken } from '@hitly/cloud/mcp-oauth/routes'
-
-/** Same token grammar the MCP server forwards (see apps/mcp/src/oauth.ts). */
-const TOKEN_PATTERN = /^[A-Za-z0-9._~+/-]{20,512}$/
+import { handleMcpVerifyTokenFactory } from '@/lib/mcp-verify-token-route'
 
 /**
- * Pre-flight check for the MCP server: "is this bearer one of our delegated
- * access tokens?" A malformed credential is refused locally so probing
- * garbage never reaches the verification path. The response says only
- * acceptable/not — identity and project stay on the host side, where the
- * same token is resolved again through the edition seam.
+ * Pre-flight check for the HITLy MCP edge: "is this bearer one of our
+ * delegated access tokens?" The token arrives ONLY in the Authorization
+ * header (no body); the edge authenticates with x-hitly-mcp-secret and the
+ * budget keys on the caller, never the presented token (see
+ * lib/mcp-verify-token-route.ts for the full contract). The answer says
+ * only acceptable/not — identity and project stay on the host side, where
+ * the same token is resolved again through the edition seam.
  */
+const handlePost = handleMcpVerifyTokenFactory({
+  callerSecret: process.env.HITLY_MCP_VERIFY_TOKEN_SECRET,
+  delegate: (request) => handleVerifyToken(request),
+})
+
 export async function POST(request: Request) {
-  let token: unknown
-  try {
-    token = (await request.json()).token
-  } catch {
-    token = null
-  }
-  if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) {
-    return NextResponse.json({ error: 'invalid_token' }, { status: 401 })
-  }
-  return handleVerifyToken(request)
+  return handlePost(request)
 }

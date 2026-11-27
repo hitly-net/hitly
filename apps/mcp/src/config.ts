@@ -69,6 +69,12 @@ export interface McpConfig {
    * resource metadata; defaults to apiUrl when unset.
    */
   oauthIssuerUrl?: string
+  /**
+   * Shared secret (HITLY_MCP_VERIFY_TOKEN_SECRET) proving verify-token calls
+   * come from this MCP deployment. The host route fails closed without its
+   * half of the pair; unset here means the delegated flow will not start.
+   */
+  verifyTokenSecret?: string
   capabilities: Set<HostCapability>
 }
 
@@ -134,6 +140,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     rateWindowMs: parseRate(env.HITLY_MCP_RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_WINDOW_MS, 'HITLY_MCP_RATE_LIMIT_WINDOW_MS', 1),
     rateDatabaseUrl: env.HITLY_MCP_DATABASE_URL?.trim() || undefined,
     oauthIssuerUrl: env.HITLY_MCP_OAUTH_ISSUER?.trim() ? trimUrl(env.HITLY_MCP_OAUTH_ISSUER) : undefined,
+    verifyTokenSecret: env.HITLY_MCP_VERIFY_TOKEN_SECRET?.trim() || undefined,
     capabilities,
   }
 }

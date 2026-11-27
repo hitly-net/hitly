@@ -7,7 +7,7 @@ import { clientIdFor, createLogger, type Logger } from './logger.ts'
 import { createRateLimiter, type McpRateAcquire } from './rate-limit.ts'
 import { hostHeaderAllowed, isLoopbackBind, originAllowed } from './security.ts'
 import { registerTools } from './tools.ts'
-import { extractBearer, protectedResourceMetadata, PROTECTED_RESOURCE_PATH, verifyDelegatedToken, type TokenVerification } from './oauth.ts'
+import { extractBearer, protectedResourceMetadata, PROTECTED_RESOURCE_PATH, verifyDelegatedToken, type Bearer, type TokenVerification } from './oauth.ts'
 
 export const SERVER_NAME = 'hitly'
 export const SERVER_VERSION = '0.0.1'
@@ -60,6 +60,19 @@ export function extractApiKey(header: string | undefined): { key: string } | { e
 function bearerChallenge(config: McpConfig): string {
   const base = 'Bearer realm="hitly-mcp"'
   return config.publicUrl ? `${base}, resource_metadata="${config.publicUrl}${PROTECTED_RESOURCE_PATH}"` : base
+}
+
+/**
+ * Stable rate-limit subject for a request. Keys hash to their usual client
+ * id; delegated tokens hash to the client address (X-Forwarded-For's first
+ * hop behind a proxy, else the socket address) so rotating presented tokens
+ * cannot mint a fresh budget.
+ */
+export function rateLimitSubjectFor(req: IncomingMessage, auth: Bearer): string {
+  if ('kind' in auth && auth.kind === 'apikey') return clientIdFor(auth.key)
+  const xff = req.headers['x-forwarded-for']
+  const first = (Array.isArray(xff) ? xff[0] : xff)?.split(',')[0]?.trim()
+  return clientIdFor(`addr:${first || req.socket.remoteAddress || 'unknown'}`)
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
@@ -192,11 +205,17 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         })
         return
       }
-      const budget = await rateAcquire(clientIdFor(auth.kind === 'apikey' ? auth.key : auth.token))
+      // Rate-limit subject: API keys keep their own per-key identity; a
+      // delegated token is billed to the CLIENT ADDRESS instead of the
+      // presented credential — tokens are attacker-chosen strings, so keying
+      // on them would let a caller mint a fresh budget with every guessed
+      // token shape.
+      const clientId = rateLimitSubjectFor(req, auth)
+      const budget = await rateAcquire(clientId)
       if (!budget.ok) {
         req.resume()
         const retryAfterSec = Math.max(1, Math.ceil(budget.retryAfterMs / 1000))
-        logger.log({ event: 'rate_limit', clientId: clientIdFor(auth.kind === 'apikey' ? auth.key : auth.token), status: 'rate_limited' })
+        logger.log({ event: 'rate_limit', clientId, status: 'rate_limited' })
         jsonRpcError(res, 429, -32005, 'Rate limit exceeded; retry later', { 'retry-after': String(retryAfterSec) })
         return
       }
@@ -209,6 +228,14 @@ export function createMcpHttpServer(config: McpConfig, deps: ServerDeps = {}): S
         const verified = await (deps.verifyToken ?? ((token) => verifyDelegatedToken(config, token, deps.fetchImpl)))(auth.token)
         if (!verified.ok) {
           req.resume()
+          if (verified.status === 429) {
+            // The host says this deployment is over budget: pass the 429 and
+            // its Retry-After through rather than disguising it as a 401.
+            const retryAfterSec = Math.max(1, Math.ceil((verified.retryAfterMs ?? 60_000) / 1000))
+            logger.log({ event: 'auth', status: 'host_rate_limited' })
+            jsonRpcError(res, 429, -32005, 'HITLy host rate limit exceeded; retry later', { 'retry-after': String(retryAfterSec) })
+            return
+          }
           logger.log({ event: 'auth', status: verified.status === 502 ? 'host_unreachable' : 'invalid_token' })
           jsonRpcError(res, verified.status === 502 ? 502 : 401, -32001, verified.status === 502 ? 'HITLy host unreachable' : 'Invalid access token', {
             'www-authenticate': bearerChallenge(config),

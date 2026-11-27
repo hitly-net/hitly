@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { extractBearer, protectedResourceMetadata, verifyDelegatedToken, MCP_SCOPE } from './oauth.ts'
+import { extractBearer, protectedResourceMetadata, verifyDelegatedToken, MCP_SCOPE, VERIFY_TOKEN_SECRET_HEADER } from './oauth.ts'
 import { loadConfig } from './config.ts'
 import { startHarness, TEST_KEY, baseApproval, structured } from './test-helpers.ts'
 
@@ -20,22 +20,60 @@ test('extractBearer classifies keys, delegated tokens and junk', () => {
 })
 
 test('verifyDelegatedToken trusts only an explicit host acceptance', async () => {
-  const config = loadConfig({ HITLY_API_URL: 'https://hitly.example' })
-  const calls: { url: string; auth?: string }[] = []
+  const config = loadConfig({ HITLY_API_URL: 'https://hitly.example', HITLY_MCP_VERIFY_TOKEN_SECRET: 'edge-secret-1' })
+  const calls: { url: string; auth?: string; secret?: string; body?: BodyInit | null }[] = []
   const ok = await verifyDelegatedToken(config, OPAQUE_TOKEN, async (url, init) => {
-    calls.push({ url, auth: (init.headers as Record<string, string>).authorization })
-    return new Response('{}', { status: 200 })
+    const headers = init.headers as Record<string, string>
+    calls.push({ url, auth: headers.authorization, secret: headers[VERIFY_TOKEN_SECRET_HEADER], body: init.body })
+    return new Response('{"ok":true}', { status: 200 })
   })
   assert.deepEqual(ok, { ok: true })
-  assert.deepEqual(calls, [{ url: 'https://hitly.example/api/v1/mcp/verify-token', auth: `Bearer ${OPAQUE_TOKEN}` }])
+  // Token in the Authorization header only: no body, plus the caller secret.
+  assert.deepEqual(calls, [
+    { url: 'https://hitly.example/api/v1/mcp/verify-token', auth: `Bearer ${OPAQUE_TOKEN}`, secret: 'edge-secret-1', body: undefined },
+  ])
+
+  // A bare 200 (or any other body) is NOT acceptance.
+  const hollow = await verifyDelegatedToken(config, OPAQUE_TOKEN, async () => new Response('{}', { status: 200 }))
+  assert.deepEqual(hollow, { ok: false, status: 401 })
+  const brokenJson = await verifyDelegatedToken(config, OPAQUE_TOKEN, async () => new Response('not json', { status: 200 }))
+  assert.deepEqual(brokenJson, { ok: false, status: 401 })
 
   const rejected = await verifyDelegatedToken(config, OPAQUE_TOKEN, async () => new Response('{}', { status: 401 }))
   assert.deepEqual(rejected, { ok: false, status: 401 })
+
+  // The host's 429 keeps its status and Retry-After.
+  const limited = await verifyDelegatedToken(config, OPAQUE_TOKEN, async () => new Response('{}', { status: 429, headers: { 'retry-after': '30' } }))
+  assert.deepEqual(limited, { ok: false, status: 429, retryAfterMs: 30_000 })
+
+  // No secret configured: the header is simply absent (host fails closed).
+  const bare = loadConfig({ HITLY_API_URL: 'https://hitly.example' })
+  const bareCalls: (Record<string, string> | undefined)[] = []
+  await verifyDelegatedToken(bare, OPAQUE_TOKEN, async (_url, init) => {
+    bareCalls.push(init.headers as Record<string, string>)
+    return new Response('{"ok":true}', { status: 200 })
+  })
+  assert.equal(bareCalls[0]?.[VERIFY_TOKEN_SECRET_HEADER], undefined)
 
   const unreachable = await verifyDelegatedToken(config, OPAQUE_TOKEN, (async () => {
     throw new Error('boom')
   }) as never)
   assert.deepEqual(unreachable, { ok: false, status: 502 })
+})
+
+test('delegated token gate is the host gate: three base64url segments, 20-512 chars', () => {
+  // Session bearers (Better Auth ids: 40 base64url chars, no dots) must never
+  // classify as delegated tokens — same rule as isWellFormedDelegatedToken.
+  assert.deepEqual(extractBearer(`Bearer ${'K'.repeat(40)}`), { error: 'invalid' })
+  // Too short, too long, or hitly_-prefixed junk stays invalid.
+  assert.deepEqual(extractBearer('Bearer abc.de.f'), { error: 'invalid' })
+  assert.deepEqual(extractBearer(`Bearer ${'a'.repeat(510)}.b.c`), { error: 'invalid' })
+  assert.deepEqual(extractBearer('Bearer hitly_no.dots.here'), { error: 'invalid' })
+  // A realistic compact JWT classifies as a delegated token.
+  assert.deepEqual(extractBearer(`Bearer ${'a'.repeat(30)}.${'b'.repeat(30)}.${'c'.repeat(30)}`), {
+    kind: 'token',
+    token: `${'a'.repeat(30)}.${'b'.repeat(30)}.${'c'.repeat(30)}`,
+  })
 })
 
 test('protected resource metadata advertises issuer and scope only when public', () => {

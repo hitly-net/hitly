@@ -19,6 +19,11 @@ const KEY = 'hitly_' + 'b'.repeat(32)
 // Shape of a delegated OAuth access token (compact HS256 JWT) as issued by
 // the Cloud auth server; whether it VERIFIES is steered via fakes.authn.
 const DELEGATED_CANDIDATE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcGVyYXRvcl9tMiJ9.0123456789abcdefghijklmnopqrstuvwxyzABCDE'
+// A realistic mobile session bearer: Better Auth session ids are ~40
+// alphanumeric chars (>= the delegated-token minimum length) and carry no
+// dots, so the delegated-token shape gate must reject it and the request
+// must fall through to the session check.
+const SESSION_BEARER = 'kD9xR2mV7tL4nQ8sW1cB6yH3jP5fG0aZ2eT7uI4r'
 const VALID_INVITE = 'valid_invite_token_for_tests'
 const VALID_INVITE2 = 'valid_invite_token_for_tests_two'
 const VALID_INVITES = new Set([VALID_INVITE, VALID_INVITE2])
@@ -395,7 +400,7 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
     allowUntil(30)
     for (let i = 0; i < 20; i++) {
       const response = await cancelRoute.POST(
-        postJson('/api/v1/approvals/apr_m2/cancel', {}, { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        postJson('/api/v1/approvals/apr_m2/cancel', {}, { authorization: `Bearer ${SESSION_BEARER}`, 'x-forwarded-for': KEY_A_ADDR }),
         params('apr_m2'),
       )
       assert.notEqual(response.status, 429, `request ${String(i)} must never be rate limited`)
@@ -483,7 +488,7 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
     })
     for (let i = 0; i < 20; i++) {
       const response = await GET(
-        getJson('/api/v1/approvals/apr_m2', { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        getJson('/api/v1/approvals/apr_m2', { authorization: `Bearer ${SESSION_BEARER}`, 'x-forwarded-for': KEY_A_ADDR }),
         params('apr_m2'),
       )
       assert.equal(response.status, 200, `request ${String(i)} must never be rate limited`)
@@ -504,7 +509,7 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
         requireApiWorkspace: async () => ({ ok: false as const, error: new Response(null, { status }) }) as never,
       })
       const response = await GET(
-        getJson('/api/v1/approvals/apr_m2', { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        getJson('/api/v1/approvals/apr_m2', { authorization: `Bearer ${SESSION_BEARER}`, 'x-forwarded-for': KEY_A_ADDR }),
         params('apr_m2'),
       )
       assert.equal(response.status, status, `the ${String(status)} from the session check must pass through unchanged`)
