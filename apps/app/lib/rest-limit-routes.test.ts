@@ -16,6 +16,14 @@ import { setRestLimitAcquireOverrideForTests, type RestLimitKind } from './rest-
 import { hashApiKey } from './keys'
 
 const KEY = 'hitly_' + 'b'.repeat(32)
+// Shape of a delegated OAuth access token (compact HS256 JWT) as issued by
+// the Cloud auth server; whether it VERIFIES is steered via fakes.authn.
+const DELEGATED_CANDIDATE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcGVyYXRvcl9tMiJ9.0123456789abcdefghijklmnopqrstuvwxyzABCDE'
+// A realistic mobile session bearer: Better Auth session ids are ~40
+// alphanumeric chars (>= the delegated-token minimum length) and carry no
+// dots, so the delegated-token shape gate must reject it and the request
+// must fall through to the session check.
+const SESSION_BEARER = 'kD9xR2mV7tL4nQ8sW1cB6yH3jP5fG0aZ2eT7uI4r'
 const VALID_INVITE = 'valid_invite_token_for_tests'
 const VALID_INVITE2 = 'valid_invite_token_for_tests_two'
 const VALID_INVITES = new Set([VALID_INVITE, VALID_INVITE2])
@@ -392,12 +400,49 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
     allowUntil(30)
     for (let i = 0; i < 20; i++) {
       const response = await cancelRoute.POST(
-        postJson('/api/v1/approvals/apr_m2/cancel', {}, { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        postJson('/api/v1/approvals/apr_m2/cancel', {}, { authorization: `Bearer ${SESSION_BEARER}`, 'x-forwarded-for': KEY_A_ADDR }),
         params('apr_m2'),
       )
       assert.notEqual(response.status, 429, `request ${String(i)} must never be rate limited`)
     }
     assert.equal(seamCalls.some((c) => c.kind === 'failed-auth'), false, 'a valid session must never touch failed-auth')
+  })
+
+  it('POST cancel: a delegated token that fails verification counts per address, never per subject (F4n)', async () => {
+    // A JWT-shaped bearer is a delegated-token CANDIDATE: it enters the
+    // key path, but when verification fails it is a failed login — counted
+    // once in the per-client failed-auth budget, never in the per-subject
+    // write budget (and a second pass through the route, which falls
+    // through to the session check, must not count it again).
+    denySeam()
+    fakes.authn = null
+    fakes.sessionUser = null
+    const response = await cancelRoute.POST(
+      postJson('/api/v1/approvals/apr_m2/cancel', {}, { authorization: `Bearer ${DELEGATED_CANDIDATE}`, 'x-forwarded-for': KEY_A_ADDR }),
+      params('apr_m2'),
+    )
+    assert.equal(response.status, 429)
+    assert.equal(seamCalls.length, 1, 'exactly one limiter call — the failed-auth one')
+    assert.equal(seamCalls[0]!.kind, 'failed-auth')
+    assert.match(seamCalls[0]!.subject, /^addr:/)
+    fakes.sessionUser = { id: 'usr_m2', name: 'M2', email: 'm2@example.com' }
+    fakes.authn = { project: { id: 'prj_m2', workspaceId: 'ws_m2' } }
+  })
+
+  it('POST cancel: a verified delegated token counts per subject in the write budget (F4o)', async () => {
+    // Grok's MCP server cancels with its delegated OAuth access token.
+    // Authenticated, it is a subject like any API key: counted per token
+    // hash in the write budget, never in failed-auth.
+    denySeam()
+    fakes.sessionUser = null
+    const response = await cancelRoute.POST(
+      postJson('/api/v1/approvals/apr_m2/cancel', { reason: 'x' }, { authorization: `Bearer ${DELEGATED_CANDIDATE}`, 'x-forwarded-for': KEY_A_ADDR }),
+      params('apr_m2'),
+    )
+    assert.equal(response.status, 429)
+    expectLimited('write', hashApiKey(DELEGATED_CANDIDATE))
+    assert.equal(seamCalls.some((c) => c.kind === 'failed-auth'), false, 'an authenticated token must never touch failed-auth')
+    fakes.sessionUser = { id: 'usr_m2', name: 'M2', email: 'm2@example.com' }
   })
 
   it('GET [id]: a well-formed unknown key counts per address, never per key (M4a/F4g)', async () => {
@@ -443,7 +488,7 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
     })
     for (let i = 0; i < 20; i++) {
       const response = await GET(
-        getJson('/api/v1/approvals/apr_m2', { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        getJson('/api/v1/approvals/apr_m2', { authorization: `Bearer ${SESSION_BEARER}`, 'x-forwarded-for': KEY_A_ADDR }),
         params('apr_m2'),
       )
       assert.equal(response.status, 200, `request ${String(i)} must never be rate limited`)
@@ -464,7 +509,7 @@ describe('per-route failed-auth branches (M2 round 2)', () => {
         requireApiWorkspace: async () => ({ ok: false as const, error: new Response(null, { status }) }) as never,
       })
       const response = await GET(
-        getJson('/api/v1/approvals/apr_m2', { authorization: 'Bearer valid-session-token', 'x-forwarded-for': KEY_A_ADDR }),
+        getJson('/api/v1/approvals/apr_m2', { authorization: `Bearer ${SESSION_BEARER}`, 'x-forwarded-for': KEY_A_ADDR }),
         params('apr_m2'),
       )
       assert.equal(response.status, status, `the ${String(status)} from the session check must pass through unchanged`)

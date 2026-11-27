@@ -12,6 +12,9 @@
  *                            counted per client ADDRESS only (never per
  *                            unverified subject, so guesses cannot mint
  *                            per-subject buckets)
+ *   mcp-verify    600/min — HITLy MCP edge → /api/v1/mcp/verify-token calls,
+ *                            keyed by the authenticated caller address, never
+ *                            by the presented (rotatable) token
  *
  * The unauthenticated /api/v1/health probe is deliberately NOT limited at
  * all (monitoring must never be throttled and must not write to the DB).
@@ -40,18 +43,24 @@ export const INVITE_LIMIT = 30
 export const INVITE_WINDOW_MS = 60_000
 export const FAILED_AUTH_LIMIT = 60
 export const FAILED_AUTH_WINDOW_MS = 60_000
+export const MCP_VERIFY_LIMIT = 600
+export const MCP_VERIFY_WINDOW_MS = 60_000
 
 export function restLimitedLog(kind: RestLimitKind): string {
   return `[hitly rest] Request refused: too many requests (${kind}).`
 }
 
-export type RestLimitKind = 'read' | 'write' | 'invite' | 'failed-auth'
+export type RestLimitKind = 'read' | 'write' | 'invite' | 'failed-auth' | 'mcp-verify'
 
 const acquirers: Record<RestLimitKind, (subject: string) => Promise<RateLimitDecision>> = {
   read: createRateAcquire('rest-read', { limit: REST_READ_LIMIT, windowMs: REST_READ_WINDOW_MS }),
   write: createRateAcquire('rest-write', { limit: REST_WRITE_LIMIT, windowMs: REST_WRITE_WINDOW_MS }),
   invite: createRateAcquire('invite', { limit: INVITE_LIMIT, windowMs: INVITE_WINDOW_MS }),
   'failed-auth': createRateAcquire('failed-auth', { limit: FAILED_AUTH_LIMIT, windowMs: FAILED_AUTH_WINDOW_MS }),
+  // /api/v1/mcp/verify-token calls from the HITLy MCP edge: keyed by the
+  // authenticated caller (address behind the shared secret), never by the
+  // presented token — rotating throwaway tokens cannot mint fresh budgets.
+  'mcp-verify': createRateAcquire('mcp-verify', { limit: MCP_VERIFY_LIMIT, windowMs: MCP_VERIFY_WINDOW_MS }),
 }
 
 export type RestLimitAcquire = (subject: string) => Promise<RateLimitDecision> | RateLimitDecision

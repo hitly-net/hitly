@@ -95,11 +95,51 @@ test('the limit is per API key: one exhausted key never starves another', async 
   }
 })
 
+test('token budgets key on the client address: rotating delegated tokens cannot mint fresh budgets', async () => {
+  const seg = (c: string, n: number) => c.repeat(n)
+  const token = (c: string) => `${seg(c, 20)}.${seg('p', 20)}.${seg('q', 20)}`
+  const h = await startHarness({
+    env: { HITLY_MCP_RATE_LIMIT: '2', HITLY_MCP_RATE_LIMIT_WINDOW_MS: '60000' },
+    deps: { verifyToken: async () => ({ ok: true } as const) },
+  })
+  try {
+    assert.equal((await postMcp(h.url, token('a'))).status, 200)
+    assert.equal((await postMcp(h.url, token('b'))).status, 200)
+    // A third credential, never seen before, still hits the wall: the budget
+    // belongs to the address, not to the (rotatable) presented token.
+    assert.equal((await postMcp(h.url, token('c'))).status, 429)
+    // API keys keep their own per-key subject and are unaffected.
+    assert.equal((await postMcp(h.url, TEST_KEY)).status, 200)
+  } finally {
+    await h.close()
+  }
+})
+
+test('a host 429 during token verification propagates as 429 with Retry-After, not 401', async () => {
+  const seg = (c: string, n: number) => c.repeat(n)
+  const token = `${seg('t', 20)}.${seg('p', 20)}.${seg('q', 20)}`
+  const h = await startHarness({
+    deps: { verifyToken: async () => ({ ok: false, status: 429, retryAfterMs: 30_000 } as const) },
+  })
+  try {
+    const res = await postMcp(h.url, token)
+    assert.equal(res.status, 429, 'rate-limited by the host must not look like an invalid token')
+    assert.equal(res.headers.get('retry-after'), '30')
+    assert.ok(h.logs.some((line) => {
+      const entry = JSON.parse(line) as Record<string, unknown>
+      return entry.status === 'host_rate_limited'
+    }), 'host rate limiting must be logged')
+  } finally {
+    await h.close()
+  }
+})
+
 test('unauthenticated traffic does not consume a key budget, and HITLY_MCP_RATE_LIMIT=0 disables', async () => {
   const h = await startHarness({ env: { HITLY_MCP_RATE_LIMIT: '1' } })
   try {
     for (let i = 0; i < 4; i++) assert.equal((await postMcp(h.url, null)).status, 401, 'missing keys are refused as 401, never 429')
-    assert.equal((await postMcp(h.url, 'Bearer-nope-not-a-key')).status, 401)
+    // Malformed credentials are refused before verification and before the limiter.
+    assert.equal((await postMcp(h.url, 'nope!!')).status, 401)
     assert.equal((await postMcp(h.url, TEST_KEY)).status, 200, 'first authenticated request still allowed')
     assert.equal((await postMcp(h.url, TEST_KEY)).status, 429, 'limit of 1 really applied')
   } finally {

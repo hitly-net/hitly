@@ -17,7 +17,9 @@
     "./stripe/invoices": "./src/stripe/invoices.ts",
     "./stripe/webhook": "./src/stripe/webhook.ts",
     "./pages/billing": "./src/pages/billing.tsx",
-    "./pages/invoices": "./src/pages/invoices.tsx"
+    "./pages/invoices": "./src/pages/invoices.tsx",
+    "./pages/mcp-connections": "./src/pages/mcp-connections.tsx",
+    "./mcp-oauth/routes": "./src/mcp-oauth/routes.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

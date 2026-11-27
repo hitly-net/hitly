@@ -1,0 +1,202 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { extractBearer, protectedResourceMetadata, verifyDelegatedToken, MCP_SCOPE, VERIFY_TOKEN_SECRET_HEADER, DELEGATED_TOKEN_MAX_LENGTH } from './oauth.ts'
+import { loadConfig } from './config.ts'
+import { startHarness, TEST_KEY, baseApproval, structured } from './test-helpers.ts'
+
+const PUBLIC_URL = 'https://mcp.hitly.net'
+const OPAQUE_TOKEN = 'eyJhbGciOiJub25lIn0.dGVzdC1kZWxlZ2F0ZWQtdG9rZW4.sig_1234567890abcdef'
+const OPAQUE_TOKEN_HEADER = `Bearer ${OPAQUE_TOKEN}`
+
+test('extractBearer classifies keys, delegated tokens and junk', () => {
+  assert.deepEqual(extractBearer(undefined), { error: 'missing' })
+  assert.deepEqual(extractBearer(`Bearer ${TEST_KEY}`), { kind: 'apikey', key: TEST_KEY })
+  assert.deepEqual(extractBearer(OPAQUE_TOKEN_HEADER), { kind: 'token', token: OPAQUE_TOKEN })
+  assert.deepEqual(extractBearer('Bearer hitly_resume_AAAAAAAAAAAAAAAAAAAAAAAA'), { error: 'invalid' })
+  assert.deepEqual(extractBearer('Bearer hitly_short'), { error: 'invalid' })
+  assert.deepEqual(extractBearer('Bearer ab'), { error: 'invalid' })
+  assert.deepEqual(extractBearer(`Basic ${TEST_KEY}`), { error: 'invalid' })
+  assert.deepEqual(extractBearer(`Bearer ${TEST_KEY} extra`), { error: 'invalid' })
+})
+
+test('verifyDelegatedToken trusts only an explicit host acceptance', async () => {
+  const config = loadConfig({ HITLY_API_URL: 'https://hitly.example', HITLY_MCP_VERIFY_TOKEN_SECRET: 'edge-secret-1' })
+  const calls: { url: string; auth?: string; secret?: string; body?: BodyInit | null }[] = []
+  const ok = await verifyDelegatedToken(config, OPAQUE_TOKEN, async (url, init) => {
+    const headers = init.headers as Record<string, string>
+    calls.push({ url, auth: headers.authorization, secret: headers[VERIFY_TOKEN_SECRET_HEADER], body: init.body })
+    return new Response('{"ok":true}', { status: 200 })
+  })
+  assert.deepEqual(ok, { ok: true })
+  // Token in the Authorization header only: no body, plus the caller secret.
+  assert.deepEqual(calls, [
+    { url: 'https://hitly.example/api/v1/mcp/verify-token', auth: `Bearer ${OPAQUE_TOKEN}`, secret: 'edge-secret-1', body: undefined },
+  ])
+
+  // A bare 200 (or any other body) is NOT acceptance.
+  const hollow = await verifyDelegatedToken(config, OPAQUE_TOKEN, async () => new Response('{}', { status: 200 }))
+  assert.deepEqual(hollow, { ok: false, status: 401 })
+  const brokenJson = await verifyDelegatedToken(config, OPAQUE_TOKEN, async () => new Response('not json', { status: 200 }))
+  assert.deepEqual(brokenJson, { ok: false, status: 401 })
+
+  const rejected = await verifyDelegatedToken(config, OPAQUE_TOKEN, async () => new Response('{}', { status: 401 }))
+  assert.deepEqual(rejected, { ok: false, status: 401 })
+
+  // The host's 429 keeps its status and Retry-After.
+  const limited = await verifyDelegatedToken(config, OPAQUE_TOKEN, async () => new Response('{}', { status: 429, headers: { 'retry-after': '30' } }))
+  assert.deepEqual(limited, { ok: false, status: 429, retryAfterMs: 30_000 })
+
+  // No secret configured: the header is simply absent (host fails closed).
+  const bare = loadConfig({ HITLY_API_URL: 'https://hitly.example' })
+  const bareCalls: (Record<string, string> | undefined)[] = []
+  await verifyDelegatedToken(bare, OPAQUE_TOKEN, async (_url, init) => {
+    bareCalls.push(init.headers as Record<string, string>)
+    return new Response('{"ok":true}', { status: 200 })
+  })
+  assert.equal(bareCalls[0]?.[VERIFY_TOKEN_SECRET_HEADER], undefined)
+
+  const unreachable = await verifyDelegatedToken(config, OPAQUE_TOKEN, (async () => {
+    throw new Error('boom')
+  }) as never)
+  assert.deepEqual(unreachable, { ok: false, status: 502 })
+})
+
+test('delegated token gate is the host gate: three base64url segments, 20-1024 chars', () => {
+  // Session bearers (Better Auth ids: 40 base64url chars, no dots) must never
+  // classify as delegated tokens — same rule as isWellFormedDelegatedToken.
+  assert.deepEqual(extractBearer(`Bearer ${'K'.repeat(40)}`), { error: 'invalid' })
+  // Too short, too long, or hitly_-prefixed junk stays invalid.
+  assert.deepEqual(extractBearer('Bearer abc.de.f'), { error: 'invalid' })
+  assert.deepEqual(extractBearer(`Bearer ${'a'.repeat(1030)}.b.c`), { error: 'invalid' })
+  assert.deepEqual(extractBearer('Bearer hitly_no.dots.here'), { error: 'invalid' })
+  // A realistic compact JWT classifies as a delegated token.
+  assert.deepEqual(extractBearer(`Bearer ${'a'.repeat(30)}.${'b'.repeat(30)}.${'c'.repeat(30)}`), {
+    kind: 'token',
+    token: `${'a'.repeat(30)}.${'b'.repeat(30)}.${'c'.repeat(30)}`,
+  })
+})
+
+test('protected resource metadata advertises issuer and scope only when public', () => {
+  const publicConfig = loadConfig({ HITLY_MCP_PUBLIC_URL: PUBLIC_URL, HITLY_API_URL: 'https://hitly.example' })
+  assert.deepEqual(protectedResourceMetadata(publicConfig), {
+    resource: PUBLIC_URL,
+    authorization_servers: ['https://hitly.example'],
+    bearer_methods_supported: ['header'],
+    scopes_supported: [MCP_SCOPE],
+  })
+  const issuerConfig = loadConfig({ HITLY_MCP_PUBLIC_URL: PUBLIC_URL, HITLY_MCP_OAUTH_ISSUER: 'https://cloud.hitly.net/' })
+  assert.deepEqual(protectedResourceMetadata(issuerConfig)?.authorization_servers, ['https://cloud.hitly.net'])
+  assert.equal(protectedResourceMetadata(loadConfig({ HITLY_API_URL: 'https://hitly.example' })), undefined)
+})
+
+test('PRM endpoint serves metadata; 401 challenges point clients at it', async () => {
+  const h = await startHarness({ env: { HITLY_MCP_PUBLIC_URL: PUBLIC_URL } })
+  try {
+    const prm = await fetch(`${h.url}/.well-known/oauth-protected-resource`)
+    assert.equal(prm.status, 200)
+    assert.deepEqual(await prm.json(), {
+      resource: PUBLIC_URL,
+      authorization_servers: ['https://hitly.example'],
+      bearer_methods_supported: ['header'],
+      scopes_supported: [MCP_SCOPE],
+    })
+    const unauth = await fetch(`${h.url}/mcp`, { method: 'POST', body: '{}' })
+    assert.equal(unauth.status, 401)
+    assert.match(
+      String(unauth.headers.get('www-authenticate')),
+      /^Bearer realm="hitly-mcp", resource_metadata="https:\/\/mcp\.hitly\.net\/\.well-known\/oauth-protected-resource"$/,
+    )
+  } finally {
+    await h.close()
+  }
+})
+
+test('delegated token: verified once, then forwarded to the host as presented', async () => {
+  const verified: string[] = []
+  const h = await startHarness({
+    deps: {
+      verifyToken: (token) => {
+        verified.push(token)
+        return Promise.resolve(token === OPAQUE_TOKEN ? { ok: true } : { ok: false, status: 401 })
+      },
+    },
+  })
+  try {
+    const res = await fetch(`${h.url}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${OPAQUE_TOKEN}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    assert.equal(res.status, 200)
+    const tools = ((await res.json()) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name)
+    assert.deepEqual(tools, ['request_approval', 'ask_user', 'get_decision', 'list_pending', 'cancel'])
+
+    // The host call carries the presented token — never a swapped-in key —
+    // so tenancy and revocation stay entirely the host's business.
+    h.host.validKeys.add(OPAQUE_TOKEN)
+    const client = await h.client(OPAQUE_TOKEN)
+    const ingested = structured(await client.callTool({ name: 'request_approval', arguments: { ...baseApproval } }))
+    assert.equal(ingested.state, 'pending')
+    assert.equal(h.host.ingests.length, 1)
+    assert.equal(h.host.ingests[0].key, OPAQUE_TOKEN)
+    assert.ok(verified.includes(OPAQUE_TOKEN))
+
+    const bad = await fetch(`${h.url}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer notmytoken000000000000' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+    })
+    assert.equal(bad.status, 401)
+    assert.match(String(bad.headers.get('www-authenticate')), /^Bearer realm="hitly-mcp"$/)
+  } finally {
+    await h.close()
+  }
+})
+
+test('delegated token: host trouble surfaces as 502, never as acceptance', async () => {
+  const h = await startHarness({ deps: { verifyToken: () => Promise.resolve({ ok: false, status: 502 }) } })
+  try {
+    const res = await fetch(`${h.url}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${OPAQUE_TOKEN}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    assert.equal(res.status, 502)
+  } finally {
+    await h.close()
+  }
+})
+
+/** A delegated JWT with production-shaped claims: uuid ids, anchor key id, iss/aud URLs. */
+function realisticDelegatedToken(): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+  const header = b64({ alg: 'HS256', typ: 'JWT' })
+  const payload = b64({
+    iss: 'https://cloud.hitly.net',
+    sub: '0f1e2d3c-4b5a-4978-8675-6453f2e1d0c9',
+    aud: 'https://mcp.hitly.net',
+    exp: 1_800_000_000,
+    iat: 1_799_996_400,
+    jti: '9a8b7c6d-5e4f-4a1b-9c8d-7e6f5a4b3c2d',
+    workspace_id: '3f2e1d0c-9b8a-4765-9483-7261504f3e2d',
+    project_id: '7a6b5c4d-3e2f-4109-8765-4321fedcba09',
+    key_id: 'key_mcp_0123456789abcdef0123456789abcdef',
+    client_id: 'grok-bot',
+    scope: 'hitly.mcp',
+  })
+  return `${header}.${payload}.sig_1234567890abcdefghijklmnopqrstuvwxyzABCDEFG`
+}
+
+test('a realistically sized production JWT classifies as a delegated token', () => {
+  const token = realisticDelegatedToken()
+  // Review B4: production tokens measure 579–597 chars; the old 512 cap
+  // rejected every one of them before any host round-trip.
+  assert.ok(token.length >= 550 && token.length <= DELEGATED_TOKEN_MAX_LENGTH, `unexpected length ${token.length}`)
+  assert.deepEqual(extractBearer(`Bearer ${token}`), { kind: 'token', token })
+})
+
+test('a credential beyond the shared token cap is refused as malformed', () => {
+  const oversized = `${'a'.repeat(400)}.${'b'.repeat(400)}.${'c'.repeat(300)}`
+  assert.ok(oversized.length > DELEGATED_TOKEN_MAX_LENGTH)
+  assert.deepEqual(extractBearer(`Bearer ${oversized}`), { error: 'invalid' })
+})

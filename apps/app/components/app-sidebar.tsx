@@ -12,6 +12,7 @@ import {
   Inbox,
   PanelLeftClose,
   PanelLeftOpen,
+  Plug,
   Users,
   type LucideIcon,
 } from 'lucide-react'
@@ -33,6 +34,7 @@ const FOOTER: { href: string; label: string; icon: LucideIcon; external?: boolea
   { href: '/settings/workspace', label: 'Workspace', icon: Building2 },
   { href: '/settings/team', label: 'Team', icon: Users },
   { href: '/settings/billing', label: 'Billing', icon: CreditCard },
+  { href: '/settings/integrations', label: 'Integrations', icon: Plug },
   { href: `${WEB_URL}/docs`, label: 'Docs', icon: BookOpen, external: true },
 ]
 

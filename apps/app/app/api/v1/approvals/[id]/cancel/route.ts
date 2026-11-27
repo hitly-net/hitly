@@ -6,7 +6,7 @@ import { canDecide, getProjectAccess } from '@/lib/rbac'
 import { withApiTenant } from '@/lib/api-session'
 import { requireDb } from '@/lib/tenant'
 import { applyFailedAuthLimit, applyRestLimit, apiKeyRestSubject } from '@/lib/rest-limit'
-import { isWellFormedApiKey } from '@/lib/keys'
+import { isWellFormedBearer } from '@/lib/keys'
 
 async function readReason(request: Request): Promise<string | undefined> {
   const text = await request.text().catch(() => '')
@@ -28,8 +28,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   // login up front. It counts in failed-auth only if the session check
   // below then fails to authenticate.
   const apiKey = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-  const malformedBearer = apiKey ? !isWellFormedApiKey(apiKey) : false
-  if (apiKey && isWellFormedApiKey(apiKey)) {
+  const malformedBearer = apiKey ? !isWellFormedBearer(apiKey) : false
+  if (apiKey && isWellFormedBearer(apiKey)) {
     // Count per key (by hash) only once the key has authenticated; a failed
     // attempt counts per client address in the failed-auth budget instead.
     const authn = await authenticateProjectKey(apiKey)
